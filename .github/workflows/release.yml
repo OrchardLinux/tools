@@ -1,0 +1,247 @@
+name: Release
+
+# Builds the generic installer and Orchard, the launcher, for macOS (universal)
+# and Linux (x86_64, aarch64), with the iPad companion they carry. A tag
+# vX.Y.Z (the workspace version) also attests the assets and drafts a release
+# with them; a distribution stamps the installer from it (packaging/stamp.py).
+
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: '0'
+  CARGO_TERM_COLOR: never
+
+jobs:
+  companion:
+    name: Build the iPad companion
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Read the pinned resize-apfs commit
+        id: pin
+        run: echo "commit=$(sed -n 's/^RESIZE_APFS_COMMIT=//p' companion/build.sh)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: OrchardLinux/resize-apfs
+          ref: ${{ steps.pin.outputs.commit }}
+          path: resize-apfs
+          persist-credentials: false
+
+      - name: Install ldid
+        run: brew install ldid
+
+      - name: Build
+        env:
+          RESIZE_APFS: ${{ github.workspace }}/resize-apfs
+        run: companion/build.sh
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: companion
+          path: companion/out
+          if-no-files-found: error
+
+  macos:
+    name: Build and test macOS
+    needs: companion
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          name: companion
+          path: companion/out
+
+      - name: Install the Rust toolchain
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup target add x86_64-apple-darwin --toolchain 1.98.0
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Build (Apple Silicon and Intel)
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+        run: |
+          cargo build --release -p orchard-installer-app
+          cargo build --release -p orchard-installer-app --target x86_64-apple-darwin
+
+      - name: Package
+        run: |
+          packaging/build-macos.sh
+          ditto -x -k out/generic/Orchard-macOS.zip "$RUNNER_TEMP/check"
+          codesign --verify --strict "$RUNNER_TEMP/check/Orchard.app"
+          "$RUNNER_TEMP/check/Orchard.app/Contents/MacOS/orchard" --version
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: macos
+          path: |
+            out/generic/*-macOS.zip
+            out/generic/VERSION
+          if-no-files-found: error
+
+  linux:
+    name: Build and test Linux ${{ matrix.arch }}
+    needs: companion
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          name: companion
+          path: companion/out
+
+      # glibc 2.35 (Ubuntu 22.04): the binaries run on current Arch and Omarchy.
+      - name: Install the build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang pkg-config libwayland-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libvulkan-dev \
+            libfontconfig-dev libfreetype-dev libasound2-dev libssl-dev
+          rustup toolchain install 1.98.0 --profile minimal
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Build
+        run: |
+          cargo build --release -p orchard-installer-app
+          mkdir -p out/linux
+          for bin in orchard-installer orchard; do
+            cp "target/release/$bin" "out/linux/$bin-${{ matrix.arch }}"
+          done
+          out/linux/orchard-${{ matrix.arch }} --version
+
+      - name: Package
+        run: packaging/package-linux.sh ${{ matrix.arch }}
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: linux-${{ matrix.arch }}
+          path: |
+            out/generic/orchard-installer-linux-${{ matrix.arch }}
+            out/generic/Orchard-linux-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+
+  draft-release:
+    name: Prepare draft release
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: [macos, linux]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write      # sign the attestation as this workflow
+      attestations: write  # store it
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          pattern: '{macos,linux-*}'
+          path: dist
+          merge-multiple: true
+
+      - name: Assemble the release
+        working-directory: dist
+        shell: bash
+        run: |
+          version=$(cat VERSION)
+          if [[ "v$version" != "$GITHUB_REF_NAME" ]]; then
+            echo "The tag $GITHUB_REF_NAME isn't the workspace version $version" >&2
+            exit 1
+          fi
+          assets=(Orchard-Installer-macOS.zip Orchard-macOS.zip
+                  orchard-installer-linux-{x86_64,aarch64} Orchard-linux-{x86_64,aarch64}.tar.gz VERSION)
+          for asset in "${assets[@]}"; do
+            test -s "$asset"
+          done
+          sha256sum "${assets[@]}" > SHA256SUMS
+          {
+            printf 'Orchard tools %s: the generic installer and Orchard, the launcher. ' "$version"
+            printf '%s\n\n' 'Distributions stamp the installer (packaging/stamp.py) and offer it in their own releases.'
+            printf '%s\n' '| Asset | Bytes | SHA-256 |' '| --- | ---: | --- |'
+            while read -r hash asset; do
+              printf "| \`%s\` | %s | \`%s\` |\n" "$asset" "$(stat -c %s "$asset")" "$hash"
+            done < SHA256SUMS
+          } > release-notes.md
+          tee -a "$GITHUB_STEP_SUMMARY" < release-notes.md
+
+      # Private repositories can't attest; a public one attests every asset, as
+      # orchard does, so publishing can check the build with gh attestation verify.
+      - name: Attest the build
+        if: toJSON(github.event.repository.private) == 'false'
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: |
+            dist/Orchard-*
+            dist/orchard-installer-linux-*
+            dist/VERSION
+            dist/SHA256SUMS
+
+      # The same attestation as a file next to the assets, for checking
+      # without asking GitHub.
+      - name: Add the attestation bundle
+        if: toJSON(github.event.repository.private) == 'false'
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: cp "$BUNDLE_PATH" dist/orchard-tools.sigstore.jsonl
+
+      - name: Create or update the draft
+        working-directory: dist
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          assets=(Orchard-Installer-macOS.zip Orchard-macOS.zip
+                  orchard-installer-linux-{x86_64,aarch64} Orchard-linux-{x86_64,aarch64}.tar.gz VERSION SHA256SUMS)
+          if [[ -f orchard-tools.sigstore.jsonl ]]; then
+            assets+=(orchard-tools.sigstore.jsonl)
+          fi
+          if is_draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [[ "$is_draft" != true ]]; then
+              echo "Refusing to replace assets for published release $TAG" >&2
+              exit 1
+            fi
+            gh release edit "$TAG" --notes-file release-notes.md
+            gh release upload "$TAG" --clobber "${assets[@]}"
+          else
+            gh release create "$TAG" --verify-tag --draft \
+              --title "Orchard tools ${TAG#v}" \
+              --notes-file release-notes.md "${assets[@]}"
+          fi

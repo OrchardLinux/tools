@@ -1,0 +1,54 @@
+[workspace]
+members = [
+    "crates/formats",
+    "crates/usb",
+    "crates/cache",
+    "crates/boards",
+    "crates/device",
+    "crates/cli",
+    "crates/flow",
+    "crates/runtime",
+    "crates/app",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+publish = false
+
+[workspace.dependencies]
+orchard-formats = { path = "crates/formats" }
+orchard-usb = { path = "crates/usb" }
+orchard-cache = { path = "crates/cache" }
+orchard-boards = { path = "crates/boards" }
+orchard-device = { path = "crates/device" }
+clap = { version = "4", features = ["derive", "env"] }
+nusb = "0.2"
+unicode-width = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+plist = "1.10"
+toml = { version = "0.8", features = ["preserve_order"] }
+tempfile = "3"
+crc32fast = "1"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+
+[patch.crates-io]
+# See vendor/gpui/PATCHED.md.
+gpui = { path = "vendor/gpui" }
+gpui_media = { path = "vendor/gpui_media" }
+# libc dropped ENOATTR on Linux; zed-async-tar still pins xattr 0.2 (vendor/xattr).
+xattr = { path = "vendor/xattr" }
+
+# A small shipped binary: size over speed, one codegen unit, whole-program
+# optimisation, no unwinding tables, no symbols.
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

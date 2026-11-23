@@ -1,0 +1,27 @@
+[package]
+name = "orchard-boards"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+orchard-cache.workspace = true
+orchard-formats.workspace = true
+serde.workspace = true
+crc32fast.workspace = true
+flate2.workspace = true
+ureq.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+toml.workspace = true
+tempfile.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[build-dependencies]
+cc = "1"
+
+[dev-dependencies]
+plist.workspace = true

@@ -1,0 +1,23 @@
+[package]
+name = "orchard-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "orchard2"
+path = "src/main.rs"
+
+[dependencies]
+orchard-boards.workspace = true
+orchard-cache.workspace = true
+orchard-device.workspace = true
+orchard-formats.workspace = true
+orchard-usb.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+unicode-width.workspace = true
+tempfile.workspace = true

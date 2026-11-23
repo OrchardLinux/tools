@@ -1,0 +1,32 @@
+---
+If:
+  PathMatch: [src/.*\.c]
+CompileFlags:
+  Add:
+    - -O2
+    - -g
+    - -Wall
+    - -Wextra
+    - -Wno-unused-parameter
+    - -Wno-unused-variable
+    - -Wno-unused-includes
+    - -I../include
+
+---
+If:
+  PathMatch: [src/.*\.c]
+CompileFlags:
+  Add:
+    - -I../../include
+
+---
+If:
+  PathMatch: [.*\.h]
+CompileFlags:
+  Add:
+    - -xc-header
+    - -std=c2x
+    - -Wall
+    - -Wextra
+    - -Wno-unused-function
+    - -Werror=implicit-function-declaration

@@ -1,0 +1,9 @@
+[package]
+name = "orchard-flow"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The installer's and launcher's state: one statechart, one update function, no I/O."
+
+[dependencies]

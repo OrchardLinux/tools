@@ -1,0 +1,30 @@
+[package]
+name = "orchard-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Runs the installer's flow: turns USB and work into flow events and carries out its effects."
+
+[dependencies]
+orchard-flow = { path = "../flow" }
+orchard-usb.workspace = true
+orchard-boards.workspace = true
+orchard-cache.workspace = true
+orchard-formats.workspace = true
+sha2.workspace = true
+flate2.workspace = true
+toml.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+plist.workspace = true
+getrandom = "0.3"
+
+# sha2 0.10 only builds its ARMv8 SHA-2 instruction backend with `asm` (x86
+# SHA-NI is detected at runtime without it). Features unify across the build,
+# so every crate's hashing on Apple silicon and ARM Linux gets the hardware path.
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+sha2 = { workspace = true, features = ["asm"] }
+
+[build-dependencies]
+orchard-formats.workspace = true

@@ -1,0 +1,13 @@
+# Builds the installer for Linux on Arch (Omarchy's base), as orchard builds
+# under podman. BASE: archlinux (x86_64) or Arch Linux ARM (aarch64).
+ARG BASE=docker.io/library/archlinux:base-devel
+FROM ${BASE}
+# pacman's sandbox (seccomp, landlock) fails under emulation (x86_64 on Apple
+# Silicon); the build container doesn't need it.
+RUN if pacman --help -S 2>&1 | grep -q disable-sandbox; then sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf; fi \
+ && pacman -Syu --noconfirm --needed base-devel clang pkgconf rustup \
+      wayland libxkbcommon libxkbcommon-x11 libxcb vulkan-icd-loader vulkan-headers \
+      fontconfig freetype2 alsa-lib openssl git \
+ && pacman -Scc --noconfirm
+RUN rustup toolchain install 1.98.0 --profile minimal && rustup default 1.98.0
+WORKDIR /src

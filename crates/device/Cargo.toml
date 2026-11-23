@@ -1,0 +1,19 @@
+[package]
+name = "orchard-device"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+orchard-boards.workspace = true
+orchard-cache.workspace = true
+orchard-formats.workspace = true
+orchard-usb.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+tempfile.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

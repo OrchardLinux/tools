@@ -1,0 +1,7 @@
+target/
+out/
+.DS_Store
+companion/out/
+ARCHITECTURE.md
+NEXT.md
+CLAUDE.md

@@ -1,0 +1,27 @@
+[package]
+name = "orchard-installer-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The graphical installer: draws the flow's screens with GPUI."
+
+[lib]
+path = "src/lib.rs"
+
+# The installer (stamped per distro) and Orchard, the neutral launcher.
+[[bin]]
+name = "orchard-installer"
+path = "src/bin/orchard-installer.rs"
+
+[[bin]]
+name = "orchard"
+path = "src/bin/orchard.rs"
+
+[dependencies]
+orchard-flow = { path = "../flow" }
+orchard-runtime = { path = "../runtime" }
+orchard-boards.workspace = true
+orchard-usb.workspace = true
+gpui = "0.2.2"
+unicode-segmentation = "1"
