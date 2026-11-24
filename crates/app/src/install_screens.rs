@@ -351,7 +351,7 @@ fn choose_split(layout: &Layout, shown_gb: f32, approved: bool, connected: bool,
 
 /// 2.3's confirmation, opened by Continue: what the split erases and the
 /// backup approval (draft copy). Cancel is the safe default.
-pub fn split_erase_dialog(layout: &Layout, approved: bool, focus: &gpui::FocusHandle, cx: &mut Context<Installer>) -> Div {
+pub fn split_erase_dialog(layout: &Layout, approved: bool, connected: bool, stuck: bool, focus: &gpui::FocusHandle, cx: &mut Context<Installer>) -> Div {
     let cancel = div()
         .id("cancel-split")
         .track_focus(focus)
@@ -376,11 +376,16 @@ pub fn split_erase_dialog(layout: &Layout, approved: bool, focus: &gpui::FocusHa
                 .w_full()
                 .flex()
                 .flex_row()
-                .justify_end()
+                .items_center()
                 .gap(px(10.))
                 .pt(px(4.))
+                // The companion's connection dropped: Split storage waits for it.
+                .child(div().flex_1().min_w(px(0.)).text_size(px(13.)).line_height(px(19.)).when(!connected, |d| {
+                    let (line, color) = if stuck { ("Unplug the cable from your iPad and plug it back in.", AMBER) } else { ("Reconnecting…", MUTED) };
+                    d.text_color(c(color)).child(line)
+                }))
                 .child(cancel)
-                .child(gated("confirm-split", "Split storage", approved, Event::Continue, cx)),
+                .child(gated("confirm-split", "Split storage", approved && connected, Event::Continue, cx)),
         )
 }
 

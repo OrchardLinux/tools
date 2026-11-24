@@ -519,7 +519,8 @@ pub fn overlay(installer: &Installer, cx: &mut Context<Installer>) -> Option<Any
         crate::DialogKind::Replug => crate::install_screens::replug_dialog(),
         crate::DialogKind::SplitErase => {
             let (layout, approved) = installer.split_erase_shown.clone()?;
-            crate::install_screens::split_erase_dialog(&layout, approved, &focus, cx)
+            let (connected, stuck) = (installer.flow.companion, installer.link_stuck());
+            crate::install_screens::split_erase_dialog(&layout, approved, connected, stuck, &focus, cx)
         }
         crate::DialogKind::Erase => {
             let (layout, approved) = installer.erase_shown.clone()?;
