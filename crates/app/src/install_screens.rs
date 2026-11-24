@@ -803,36 +803,46 @@ fn installing(percent: u8, shown: f32, streamed: bool, since: Instant) -> Div {
 
 /// 3.5: the system is starting.
 fn starting(took: Option<std::time::Duration>, ssh_user: Option<&str>, cx: &mut Context<Installer>) -> Div {
-    column()
-        .child(title(format!("{} is starting", sys())))
-        // The install time (Omarchy's own installer shows it too), in the
-        // progress bar's gradient, one shade per character.
-        .children(took.map(|t| div().font_family(MONO).text_size(px(13.)).child(gradient_text(&format!("Installed {} in {:.1}s", sys(), t.as_secs_f64())))))
+    // Tighter than column(): the title with its time, then two short sections.
+    let section = || div().w(px(342.)).flex().flex_col().gap(px(10.));
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .gap(px(28.))
         .child(
-            div().w(px(342.)).flex().flex_col().gap(px(10.)).child(heading("Starting it again later")).child({
-                // "Orchard" in the accent: the app to open.
-                let text_35 = format!("After a restart your iPad starts iPadOS as usual. To start {}, open the Orchard app on this computer and put your iPad in DFU mode.", sys());
-                let at = text_35.find("Orchard").unwrap();
-                let blue = gpui::HighlightStyle { color: Some(c(BLUE)), ..Default::default() };
-                div()
-                    .w_full()
-                    .text_size(px(14.))
-                    .line_height(px(21.))
-                    .text_color(c(SUBTITLE))
-                    .child(gpui::StyledText::new(text_35).with_highlights(vec![(at..at + "Orchard".len(), blue)]))
-            }),
-        )
-        .children(launcher_line())
-        .children(ssh_user.map(|user| {
             div()
-                .w(px(342.))
                 .flex()
                 .flex_col()
-                .gap(px(10.))
+                .gap(px(12.))
+                .child(title(format!("{} is starting", sys())))
+                // The install time (Omarchy's own installer shows it too), in the
+                // progress bar's gradient, one shade per character.
+                .children(took.map(|t| div().font_family(MONO).text_size(px(13.)).child(gradient_text(&format!("Installed {} in {:.1}s", sys(), t.as_secs_f64()))))),
+        )
+        .child(
+            section()
+                .child(heading("Starting it again later"))
+                .child({
+                    // "Orchard" in the accent: the app to open.
+                    let text_35 = format!("After a restart your iPad starts iPadOS as usual. To start {}, open the Orchard app on this computer and put your iPad in DFU mode.", sys());
+                    let at = text_35.find("Orchard").unwrap();
+                    let blue = gpui::HighlightStyle { color: Some(c(BLUE)), ..Default::default() };
+                    div()
+                        .w_full()
+                        .text_size(px(14.))
+                        .line_height(px(21.))
+                        .text_color(c(SUBTITLE))
+                        .child(gpui::StyledText::new(text_35).with_highlights(vec![(at..at + "Orchard".len(), blue)]))
+                })
+                .children(launcher_line()),
+        )
+        .children(ssh_user.map(|user| {
+            section()
                 .child(heading("Signing in from this computer"))
                 .child(div().font_family(MONO).text_size(px(13.)).text_color(c(SUBTITLE)).child(format!("ssh {user}@{USB_ADDRESS}")))
         }))
-        .child(actions().child(primary("done", "Done", 18., 9., Event::Continue, cx)))
+        .child(actions().pt(px(8.)).child(primary("done", "Done", 18., 9., Event::Continue, cx)))
 }
 
 /// Monospace text in the progress bar's blue-to-violet gradient.
@@ -1039,11 +1049,10 @@ pub fn text_column(installer: &mut Installer, cx: &mut Context<Installer>) -> Op
                 .child(header("Reconnect your iPad", "The connection to your iPad was lost. Plug it back in to continue.", RED))
                 .into_any_element()
         }
-        // 99 % at most until the device reports done: the image being
-        // written isn't the end (finishing up follows); 100 % is 3.5.
+        // 99 % at most while the image is written; once it is written and
+        // verified ("Finishing up") the bar is full.
         State::Installing { percent, streamed, .. } => {
-            // (100 only in the moment after done, before 3.5: see hold_finish.)
-            let percent = if installer.finish_hold.is_some() { 100 } else { (*percent).min(99) };
+            let percent = if installer.finish_hold.is_some() || *streamed { 100 } else { (*percent).min(99) };
             installer.progress.set(percent as f32);
             installing(percent, installer.progress.value(), *streamed, installer.since).into_any_element()
         }
