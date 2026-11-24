@@ -214,9 +214,10 @@ pub fn device(view: &DeviceView, seconds: f32, guide: Option<crate::guide::Look>
         if u <= 0. {
             return 1.;
         }
-        let hz = 2. + 4. * u;
+        let hz = 3. + 4. * u;
         let wave = 0.5 + 0.5 * (g.seconds * hz * std::f32::consts::TAU).sin();
-        1. - (0.7 * u) * (1. - wave)
+        // From the first moment clearly visible, down to near the muted level.
+        1. - (0.45 + 0.45 * u) * (1. - wave)
     };
     let button = |b: Button| {
         if !pressed.contains(&b) {

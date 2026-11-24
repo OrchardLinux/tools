@@ -98,7 +98,7 @@ pub fn at(sequence: Sequence, elapsed: f32) -> Option<Moment> {
 }
 
 /// How long a glow takes to come on or go out.
-const FADE: f32 = 0.25;
+const FADE: f32 = 0.7;
 
 /// Each button's glow (Home, Power, Volume Up, Volume Down), 0…1, at
 /// `elapsed`: it fades in where the button's stretch starts and out where it
@@ -152,7 +152,7 @@ impl Button {
 }
 
 /// How long before a held button's release it starts pulsing.
-const URGENT: f32 = 2.;
+const URGENT: f32 = 1.5;
 
 /// Each button's urgency (Home, Power, Volume Up, Volume Down), 0…1: a
 /// button held through a countdown pulses in the last URGENT seconds before
@@ -210,12 +210,11 @@ mod tests {
     fn glows_fade_and_stay_lit_across_steps() {
         let s = Sequence::VolumeSequence;
         let at = |t: f32| levels(s, t);
-        // Volume Up 3–4 s: half-way into its fade at 3.125, full at 3.5.
-        assert!((at(3.125)[2] - 0.5).abs() < 1e-3);
-        assert_eq!(at(3.5)[2], 1.);
-        // At the hand-over to Volume Down, both are half-way.
+        // Volume Up 3–4 s: rising, then falling; at the hand-over to Volume
+        // Down both are out, and Volume Down rises.
+        assert!(at(3.2)[2] > 0. && at(3.2)[2] < at(3.5)[2]);
         assert!(at(4.)[2] < 0.01 && at(4.)[3] < 0.01);
-        assert_eq!(at(4.5)[3], 1.);
+        assert!(at(4.5)[3] > 0.5);
         // Power from 5 to 20 s, through the step change at 15 s without a dip.
         assert_eq!(at(15.)[1], 1.);
         assert_eq!(at(1.)[1], 0.);
@@ -226,7 +225,8 @@ mod tests {
         let s = Sequence::VolumeSequence;
         // Power: held 5–20 s, let go at 20: urgent from 18, not at 14 (held on at 15).
         assert_eq!(urgency(s, 14.)[1], 0.);
-        assert_eq!(urgency(s, 18.5)[1], 0.25);
+        assert_eq!(urgency(s, 18.5)[1], 0.);
+        assert!((urgency(s, 19.25)[1] - 0.5).abs() < 1e-5);
         // Volume Down held on from 15 to the end: not urgent at 19, urgent at 29.
         assert_eq!(urgency(s, 19.)[3], 0.);
         assert!(urgency(s, 29.)[3] > 0.4);
