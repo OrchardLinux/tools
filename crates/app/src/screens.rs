@@ -258,7 +258,17 @@ fn waiting_for_dfu(tab: Sequence, rows: f32, unresponsive: bool, launcher: Optio
     let problem = launcher.flatten();
     column()
         .child(top)
-        .child(div().w_full().flex().flex_col().gap(px(16.)).child(tabs(tab, cx)).child(steps(list, rows)))
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap(px(16.))
+                .child(tabs(tab, cx))
+                .child(steps(list, rows))
+                // The iPhone 8 has a Home button but the no-Home-button steps.
+                .when(tab == Sequence::HomePower, |d| d.child(div().text_size(px(13.)).text_color(c(MUTED)).child("iPhone 8 or later? Use No Home button."))),
+        )
         // The launcher's last start failed: why (draft copy).
         .children(problem.map(|p| {
             div().w_full().text_size(px(13.)).line_height(px(19.)).text_color(c(RED)).child(orchard_flow::for_device(&format!("Orchard couldn't start your iPad: {p}")).to_owned())
