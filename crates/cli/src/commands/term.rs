@@ -203,15 +203,10 @@ impl Term {
         let text = self.paint(&prompt);
         let _ = write!(self.out, "{text}");
         let _ = self.out.flush();
-        let saved = if secret { echo(false) } else { None };
         let mut line = String::new();
         ASKING.store(true, Ordering::SeqCst);
-        let read = std::io::stdin().read_line(&mut line);
+        let read = if secret { self.read_secret(&mut line) } else { std::io::stdin().read_line(&mut line).map(|_| ()) };
         ASKING.store(false, Ordering::SeqCst);
-        if let Some(t) = saved {
-            restore(t);
-            let _ = writeln!(self.out);
-        }
         if let Some(log) = self.log.as_mut() {
             let plain: String = prompt.iter().map(|(t, _)| t.as_str()).collect();
             let _ = writeln!(log, "{plain}{}", if secret { "(hidden)" } else { line.trim() });
@@ -219,6 +214,54 @@ impl Term {
         self.live = live;
         read.ok()?;
         Some(line.trim_end_matches(['\r', '\n']).to_owned())
+    }
+
+    /// A secret line, a dot per character: Backspace takes one back, Ctrl-U
+    /// all. Ctrl-C still quits (the signal handler, ISIG stays on).
+    fn read_secret(&mut self, line: &mut String) -> std::io::Result<()> {
+        let Some(saved) = cbreak() else {
+            return std::io::stdin().read_line(line).map(|_| ());
+        };
+        let dot = self.paint(&[s("•", BLUE)]);
+        let mut bytes = Vec::new();
+        let result = loop {
+            let mut b = [0u8; 1];
+            match std::io::stdin().read(&mut b) {
+                Ok(0) => break Ok(()),
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => break Err(e),
+            }
+            match b[0] {
+                b'\r' | b'\n' => break Ok(()),
+                0x7f | 0x08 => {
+                    let text = String::from_utf8_lossy(&bytes).into_owned();
+                    if let Some(ch) = text.chars().last() {
+                        bytes.truncate(bytes.len() - ch.len_utf8());
+                        let _ = write!(self.out, "\x08 \x08");
+                    }
+                }
+                0x15 => {
+                    let n = String::from_utf8_lossy(&bytes).chars().count();
+                    let _ = write!(self.out, "{}", "\x08 \x08".repeat(n));
+                    bytes.clear();
+                }
+                0x1b => {}
+                c if c < 0x20 => {}
+                c => {
+                    bytes.push(c);
+                    // A dot when a character is complete (UTF-8 lead or ASCII).
+                    if std::str::from_utf8(&bytes).is_ok() {
+                        let _ = write!(self.out, "{dot}");
+                    }
+                }
+            }
+            let _ = self.out.flush();
+        };
+        restore(saved);
+        let _ = writeln!(self.out);
+        line.push_str(&String::from_utf8_lossy(&bytes));
+        result
     }
 
     /// Single keys without Enter (while waiting for DFU mode), or back to lines.
@@ -264,7 +307,8 @@ impl Drop for Term {
     }
 }
 
-fn echo(on: bool) -> Option<libc::termios> {
+/// Keys one at a time without echo (signals still on); the old settings back.
+fn cbreak() -> Option<libc::termios> {
     // SAFETY: termios on stdin.
     unsafe {
         let mut t: libc::termios = std::mem::zeroed();
@@ -272,11 +316,9 @@ fn echo(on: bool) -> Option<libc::termios> {
             return None;
         }
         let saved = t;
-        if on {
-            t.c_lflag |= libc::ECHO;
-        } else {
-            t.c_lflag &= !libc::ECHO;
-        }
+        t.c_lflag &= !(libc::ICANON | libc::ECHO);
+        t.c_cc[libc::VMIN] = 1;
+        t.c_cc[libc::VTIME] = 0;
         libc::tcsetattr(0, libc::TCSANOW, &t);
         Some(saved)
     }

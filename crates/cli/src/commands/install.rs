@@ -574,8 +574,12 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
                     waiting.shown = false;
                     out.term.live(None);
                     out.ok(format!("{} in DFU mode", device.name));
-                    if args.split.is_some() {
-                        // Opt-in: iPadOS starts to resize itself.
+                    // Resizing is opt-in: --split, or yes to the question.
+                    let resize = args.split.is_some() || {
+                        let q = vec![s("  Resize iPadOS first? ", FG), s(format!("Without resizing, {name} goes into the existing split. "), MUTED), s("[y/N] ", MUTED)];
+                        matches!(out.term.ask(q, false).as_deref().map(str::trim), Some("y" | "Y" | "yes"))
+                    };
+                    if resize {
                         send(Event::Continue);
                     } else {
                         // Into the existing split (the window's Skip).
@@ -702,7 +706,7 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
             State::NotPrepared { .. } => {
                 out.term.live(None);
                 out.fail("Your iPad's storage isn't split yet");
-                out.sub(format!("{name} goes into storage split off from iPadOS. Run again with --split to resize iPadOS first."));
+                out.sub(format!("{name} goes into storage split off from iPadOS. Run again and resize iPadOS first (answer y, or --split)."));
                 out.event(json!({"event": "needs", "action": "input", "flag": "--split"}));
                 send(Event::Quit);
                 std::thread::sleep(Duration::from_secs(1));
