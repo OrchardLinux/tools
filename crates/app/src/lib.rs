@@ -486,9 +486,9 @@ impl Installer {
         let glow = match self.guide {
             Some((at, sequence)) => {
                 let t = at.elapsed().as_secs_f32();
-                Some(guide::Look { levels: guide::levels(sequence, t), urgency: guide::urgency(sequence, t), fade, seconds: t })
+                Some(guide::Look { levels: guide::levels(sequence, t), fade })
             }
-            None if fade > 0.001 => Some(guide::Look { levels: [0.; 4], urgency: [0.; 4], fade, seconds: 0. }),
+            None if fade > 0.001 => Some(guide::Look { levels: [0.; 4], fade }),
             None => None,
         };
         let shown = self.shown.as_mut().expect("tracked");

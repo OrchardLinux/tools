@@ -58,13 +58,11 @@ fn phases(sequence: Sequence) -> &'static [Phase] {
 }
 
 /// What the drawing needs of the run at a moment: each button's glow and
-/// urgency, how far the run's look is faded in, and the time (for pulsing).
+/// how far the run's look is faded in.
 #[derive(Debug, Clone, Copy)]
 pub struct Look {
     pub levels: [f32; 4],
-    pub urgency: [f32; 4],
     pub fade: f32,
-    pub seconds: f32,
 }
 
 /// Where the run is.
@@ -97,8 +95,10 @@ pub fn at(sequence: Sequence, elapsed: f32) -> Option<Moment> {
     None
 }
 
-/// How long a glow takes to come on or go out.
+/// How long a glow takes to come on or go out: slow for a held button,
+/// quick for a tap.
 const FADE: f32 = 0.7;
+const FADE_TAP: f32 = 0.15;
 
 /// Each button's glow (Home, Power, Volume Up, Volume Down), 0…1, at
 /// `elapsed`: it fades in where the button's stretch starts and out where it
@@ -107,31 +107,34 @@ pub fn levels(sequence: Sequence, elapsed: f32) -> [f32; 4] {
     let mut out = [0.; 4];
     for (slot, button) in [Home, Power, VolumeUp, VolumeDown].into_iter().enumerate() {
         let mut start = 0.;
-        let mut lit: Option<f32> = None;
+        // The button's lit stretch: where it began, and whether it is held
+        // (any phase of it counts down) or a tap.
+        let mut lit: Option<(f32, bool)> = None;
         let mut level: f32 = 0.;
         for phase in phases(sequence) {
             let on = phase.glow.contains(&button);
             match (on, lit) {
-                (true, None) => lit = Some(start),
-                (false, Some(from)) => {
-                    level = level.max(window(from, start, elapsed));
+                (true, None) => lit = Some((start, phase.countdown)),
+                (true, Some((from, held))) => lit = Some((from, held || phase.countdown)),
+                (false, Some((from, held))) => {
+                    level = level.max(window(from, start, elapsed, if held { FADE } else { FADE_TAP }));
                     lit = None;
                 }
                 _ => {}
             }
             start += phase.seconds;
         }
-        if let Some(from) = lit {
-            level = level.max(window(from, start, elapsed));
+        if let Some((from, held)) = lit {
+            level = level.max(window(from, start, elapsed, if held { FADE } else { FADE_TAP }));
         }
         out[slot] = level;
     }
     out
 }
 
-/// Easing in over FADE after `from`, full until `to` (the release), then
-/// easing out over FADE: the glow stays whole while the button is held.
-fn window(from: f32, to: f32, t: f32) -> f32 {
+/// Easing in over `fade` after `from`, full until `to` (the release), then
+/// easing out over `fade`: the glow stays whole while the button is held.
+fn window(from: f32, to: f32, t: f32, fade: f32) -> f32 {
     let ease = |x: f32| {
         let x = x.clamp(0., 1.);
         x * x * (3. - 2. * x)
@@ -139,7 +142,7 @@ fn window(from: f32, to: f32, t: f32) -> f32 {
     if t < from {
         return 0.;
     }
-    ease((t - from) / FADE).min(ease((to + FADE - t) / FADE))
+    ease((t - from) / fade).min(ease((to + fade - t) / fade))
 }
 
 impl Button {
@@ -152,35 +155,6 @@ impl Button {
             VolumeDown => 3,
         }
     }
-}
-
-/// How long before a held button's release it starts pulsing.
-const URGENT: f32 = 1.5;
-
-/// Each button's urgency (Home, Power, Volume Up, Volume Down), 0…1: a
-/// button held through a countdown pulses in the last URGENT seconds before
-/// it is to be let go (it isn't held in the next phase, or the run ends).
-/// Taps (phases without a countdown) don't.
-pub fn urgency(sequence: Sequence, elapsed: f32) -> [f32; 4] {
-    let phases = phases(sequence);
-    let mut out = [0.; 4];
-    let mut start = 0.;
-    for (i, phase) in phases.iter().enumerate() {
-        let end = start + phase.seconds;
-        if elapsed >= start && elapsed < end && phase.countdown {
-            let left = end - elapsed;
-            if left < URGENT {
-                for b in phase.glow {
-                    let held_on = phases.get(i + 1).is_some_and(|next| next.glow.contains(b));
-                    if !held_on {
-                        out[b.slot()] = 1. - left / URGENT;
-                    }
-                }
-            }
-        }
-        start = end;
-    }
-    out
 }
 
 /// How long the run of `sequence` takes.
@@ -213,29 +187,19 @@ mod tests {
     fn glows_stay_whole_while_held_and_fade_after() {
         let s = Sequence::VolumeSequence;
         let at = |t: f32| levels(s, t);
-        // Volume Up 2–3 s: rising after 2, whole at 3, fading after; Volume
-        // Down rises from 3 meanwhile.
-        assert!(at(2.2)[2] > 0. && at(2.2)[2] < 1.);
+        // Volume Up 2–3 s, a tap: in and out within 0.15 s; Volume Down
+        // takes over at 3.
+        assert!(at(2.05)[2] > 0. && at(2.05)[2] < 1.);
+        assert_eq!(at(2.2)[2], 1.);
         assert_eq!(at(3.)[2], 1.);
-        assert!(at(3.3)[2] > 0. && at(3.3)[2] < 1. && at(3.3)[3] > 0.);
+        assert_eq!(at(3.2)[2], 0.);
+        assert_eq!(at(3.2)[3], 1.);
+        // A held button fades slowly: Power half-way in after 0.35 s.
+        assert!((at(4.35)[1] - 0.5).abs() < 1e-3);
         // Power from 4 to 19 s, whole through the step change at 14.
         assert_eq!(at(14.)[1], 1.);
         assert_eq!(at(18.9)[1], 1.);
         assert_eq!(at(1.)[1], 0.);
-    }
-
-    #[test]
-    fn held_buttons_blink_before_they_are_let_go() {
-        let s = Sequence::VolumeSequence;
-        // Power: let go at 19: urgent from 17.5, not before 14 (held on).
-        assert_eq!(urgency(s, 13.5)[1], 0.);
-        assert_eq!(urgency(s, 17.4)[1], 0.);
-        assert!(urgency(s, 18.)[1] > 0.);
-        // Volume Down held to the end: not at 18, urgent at 28.5.
-        assert_eq!(urgency(s, 18.)[3], 0.);
-        assert!(urgency(s, 28.5)[3] > 0.);
-        // Taps never.
-        assert_eq!(urgency(s, 2.9)[2], 0.);
     }
 
     #[test]
