@@ -262,7 +262,7 @@ fn split_overview(out: &mut Out, layout: &Layout, gb: u32, name: &str) {
     out.heading("Split the storage", Some(format!("{} GB", layout.total_gb)));
     out.sub("Your apps and data stay where they are.");
     out.term.blank();
-    let mut note = format!("iPadOS {} GB, {} GB used", layout.ipados_gb, layout.ipados_used_gb);
+    let mut note = orchard_flow::for_device(&format!("iPadOS {} GB, {} GB used", layout.ipados_gb, layout.ipados_used_gb)).to_owned();
     for p in &layout.outside {
         note.push_str(&format!(" · {} {} GB", p.name, p.gb));
     }
@@ -278,7 +278,7 @@ fn after_row(out: &mut Out, layout: &Layout, gb: u32, name: &str) {
     let ipados = layout.total_gb.saturating_sub(gb);
     let mut after = vec![s("  After  ", SUB)];
     after.extend(layout_bar(layout, ipados, Some(gb), 40));
-    after.push(s(format!("  iPadOS {ipados} GB · {name} {gb} GB"), MUTED));
+    after.push(s(orchard_flow::for_device(&format!("  iPadOS {ipados} GB · {name} {gb} GB")).to_owned(), MUTED));
     out.term.line(after);
 }
 
@@ -504,7 +504,7 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
             if busy && interrupts == 1 {
                 if !ctrl_c_said {
                     ctrl_c_said = true;
-                    out.warn("Wait until it's done: your iPad is working on it. Ctrl-C again quits anyway.");
+                    out.warn(orchard_flow::for_device("Wait until it's done: your iPad is working on it. Ctrl-C again quits anyway."));
                 }
             } else {
                 // Leaves a temporary iPadOS by restarting the iPad, as the window does.
@@ -537,8 +537,8 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
         if flow.boot_stalled && !stalled {
             stalled = true;
             out.event(json!({"event": "needs", "action": "replug"}));
-            out.warn("Reconnect the cable at your iPad");
-            out.sub("Starting it has stalled. Unplugging the cable at your iPad and plugging it back in usually fixes this. It continues by itself.");
+            out.warn(orchard_flow::for_device("Reconnect the cable at your iPad"));
+            out.sub(orchard_flow::for_device("Starting it has stalled. Unplugging the cable at your iPad and plugging it back in usually fixes this. It continues by itself."));
         } else if !flow.boot_stalled {
             stalled = false;
         }
@@ -576,7 +576,7 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
                     out.ok(format!("{} in DFU mode", device.name));
                     // Resizing is opt-in: --split, or yes to the question.
                     let resize = args.split.is_some() || {
-                        let q = vec![s("  Resize iPadOS first? ", FG), s(format!("Without resizing, {name} goes into the existing split. "), MUTED), s("[y/N] ", MUTED)];
+                        let q = vec![s(orchard_flow::for_device("  Resize iPadOS first? "), FG), s(format!("Without resizing, {name} goes into the existing split. "), MUTED), s("[y/N] ", MUTED)];
                         matches!(out.term.ask(q, false).as_deref().map(str::trim), Some("y" | "Y" | "yes"))
                     };
                     if resize {
@@ -590,25 +590,25 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
             }
             State::WaitingForIpados { slow, .. } => {
                 if first {
-                    out.term.live_restart(vec![s("Starting your iPad", FG), s("  about a minute", MUTED)]);
+                    out.term.live_restart(vec![s(orchard_flow::for_device("Starting your iPad"), FG), s("  about a minute", MUTED)]);
                 }
                 if *slow && !slow_said {
                     slow_said = true;
-                    out.warn("Your iPad hasn't answered yet. If it shows the Lock Screen, unlock it.");
+                    out.warn(orchard_flow::for_device("Your iPad hasn't answered yet. If it shows the Lock Screen, unlock it."));
                 }
             }
             State::ChooseSplit { layout, omarchy_gb, .. } => {
                 if !split_done {
                     split_done = true;
                     out.term.live(None);
-                    out.ok("Your iPad is running iPadOS with the installer's app");
+                    out.ok(orchard_flow::for_device("Your iPad is running iPadOS with the installer's app"));
                     let max = layout.max_omarchy_gb();
                     out.event(json!({"event": "split", "total_gb": layout.total_gb, "ipados_gb": layout.ipados_gb, "ipados_used_gb": layout.ipados_used_gb, "suggested_gb": omarchy_gb, "min_gb": MIN_OMARCHY_GB, "max_gb": max, "after_ipados": layout.outside.iter().map(|p| json!({"name": p.name, "filesystem": p.filesystem, "gb": p.gb})).collect::<Vec<_>>()}));
                     let shown = args.split.flatten().map(|g| g.min(max)).unwrap_or(*omarchy_gb);
                     split_overview(&mut out, layout, shown, &name);
                     if max < MIN_OMARCHY_GB {
-                        out.fail(format!("{name} needs at least {MIN_OMARCHY_GB} GB, and iPadOS can spare {max} GB right now"));
-                        out.sub("Delete some apps or files on your iPad, then try again.");
+                        out.fail(orchard_flow::for_device(&format!("{name} needs at least {MIN_OMARCHY_GB} GB, and iPadOS can spare {max} GB right now")).to_owned());
+                        out.sub(orchard_flow::for_device("Delete some apps or files on your iPad, then try again."));
                         send(Event::Quit);
                         std::thread::sleep(Duration::from_secs(1));
                         return finish(&mut out, Exit::Failed, "no-room", "not enough free space");
@@ -638,7 +638,7 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
                             }
                         },
                     };
-                    if !layout.outside.is_empty() && !erase_consent(&mut out, layout, args.yes, "Before splitting", &format!("The partitions after iPadOS are erased, and {name} gets their space.")) {
+                    if !layout.outside.is_empty() && !erase_consent(&mut out, layout, args.yes, "Before splitting", &orchard_flow::for_device(&format!("The partitions after iPadOS are erased, and {name} gets their space.")).to_owned()) {
                         send(Event::Quit);
                         std::thread::sleep(Duration::from_secs(1));
                         return finish(&mut out, Exit::NeedsInput, "needs-input", "--yes");
@@ -660,17 +660,17 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
                     };
                     out.term.blank();
                     out.heading("Splitting the storage", None);
-                    out.sub(if grow { format!("iPadOS is growing to {ipados} GB. This takes a moment.") } else { format!("iPadOS is shrinking to {ipados} GB. This can take around 30 minutes.") });
+                    out.sub(if grow { orchard_flow::for_device(&format!("iPadOS is growing to {ipados} GB. This takes a moment.")).to_owned() } else { orchard_flow::for_device(&format!("iPadOS is shrinking to {ipados} GB. This can take around 30 minutes.")).to_owned() });
                     out.term.blank();
-                    out.warn("Keep your iPad connected and leave it alone.");
+                    out.warn(orchard_flow::for_device("Keep your iPad connected and leave it alone."));
                     out.sub("It may freeze or look idle for a long time. That doesn't mean it's finished or failed.");
                     out.term.blank();
                     out.term.line(vec![s("  ✓ ", GREEN), s("Check storage", MUTED)]);
-                    out.term.live_restart(vec![s(if grow { "Grow iPadOS" } else { "Shrink iPadOS" }, FG), s(format!("  {name} gets {omarchy_gb} GB"), MUTED)]);
+                    out.term.live_restart(vec![s(if grow { orchard_flow::for_device("Grow iPadOS") } else { orchard_flow::for_device("Shrink iPadOS") }, FG), s(format!("  {name} gets {omarchy_gb} GB"), MUTED)]);
                 }
                 if matches!(link, Link::Lost) && !lost_said {
                     lost_said = true;
-                    out.warn("The connection to your iPad dropped. It keeps splitting; reconnecting…");
+                    out.warn(orchard_flow::for_device("The connection to your iPad dropped. It keeps splitting; reconnecting…"));
                 } else if matches!(link, Link::Up) {
                     lost_said = false;
                 }
@@ -679,11 +679,11 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
                 if first {
                     let took = out.term.live_secs();
                     out.term.live(None);
-                    out.term.line(vec![s("  ✓ ", GREEN), s("Resize iPadOS", MUTED), s(format!("  {}:{:02}", took / 60, took % 60), MUTED)]);
+                    out.term.line(vec![s("  ✓ ", GREEN), s(orchard_flow::for_device("Resize iPadOS"), MUTED), s(format!("  {}:{:02}", took / 60, took % 60), MUTED)]);
                     out.term.line(vec![s("  ✓ ", GREEN), s("Check the result", MUTED)]);
                     let ipados = split_layout.as_ref().map(|(l, _)| l.total_gb.saturating_sub(*omarchy_gb)).unwrap_or(0);
                     out.term.blank();
-                    out.ok_note("The storage is split", format!("iPadOS {ipados} GB · {name} {omarchy_gb} GB"));
+                    out.ok_note("The storage is split", orchard_flow::for_device(&format!("iPadOS {ipados} GB · {name} {omarchy_gb} GB")).to_owned());
                     send(Event::Continue);
                 }
             }
@@ -692,12 +692,12 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
                     out.term.live(None);
                     if matches!(why, Again::Retry | Again::RetryPrepare) {
                         out.event(json!({"event": "retry", "reason": "start-failed"}));
-                        out.warn("Starting your iPad didn't work. That happens now and then.");
+                        out.warn(orchard_flow::for_device("Starting your iPad didn't work. That happens now and then."));
                     }
                     let (title, sub) = match why {
-                        Again::Install => (format!("Next, install {name}"), "Put your iPad in DFU mode again, the same way as before."),
-                        Again::Retry | Again::RetryPrepare => ("Put your iPad in DFU mode again".to_owned(), "It tries again by itself."),
-                        _ => ("Put your iPad in DFU mode again".to_owned(), "The same way as before."),
+                        Again::Install => (format!("Next, install {name}"), orchard_flow::for_device("Put your iPad in DFU mode again, the same way as before.")),
+                        Again::Retry | Again::RetryPrepare => (orchard_flow::for_device("Put your iPad in DFU mode again").to_owned(), "It tries again by itself."),
+                        _ => (orchard_flow::for_device("Put your iPad in DFU mode again").to_owned(), "The same way as before."),
                     };
                     dfu_block(&mut out, &title, Some(sub), device.sequence, Some(&device.name), args.wait);
                     waiting = Waiting { since: Instant::now(), shown: true, sequence: Some(device.sequence) };
@@ -705,8 +705,8 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
             }
             State::NotPrepared { .. } => {
                 out.term.live(None);
-                out.fail("Your iPad's storage isn't split yet");
-                out.sub(format!("{name} goes into storage split off from iPadOS. Run again and resize iPadOS first (answer y, or --split)."));
+                out.fail(orchard_flow::for_device("Your iPad's storage isn't split yet"));
+                out.sub(orchard_flow::for_device(&format!("{name} goes into storage split off from iPadOS. Run again and resize iPadOS first (answer y, or --split).")).to_owned());
                 out.event(json!({"event": "needs", "action": "input", "flag": "--split"}));
                 send(Event::Quit);
                 std::thread::sleep(Duration::from_secs(1));
@@ -730,7 +730,7 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
                     ssh_chosen = account.ssh;
                     send(Event::EditAccount(account));
                     if env.is_none() {
-                        out.term.live_restart(vec![s("Your iPad is getting ready", SUB)]);
+                        out.term.live_restart(vec![s(orchard_flow::for_device("Your iPad is getting ready"), SUB)]);
                     }
                 }
                 if env.is_some() && account.valid() && !account_continued {
@@ -742,7 +742,7 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
                 if !erase_done {
                     erase_done = true;
                     out.term.live(None);
-                    if !erase_consent(&mut out, layout, args.yes, "Before installing", "Installing erases these partitions. iPadOS and its data stay as they are.") {
+                    if !erase_consent(&mut out, layout, args.yes, "Before installing", orchard_flow::for_device("Installing erases these partitions. iPadOS and its data stay as they are.")) {
                         send(Event::Quit);
                         std::thread::sleep(Duration::from_secs(1));
                         return finish(&mut out, Exit::NeedsInput, "needs-input", "--yes");
@@ -756,12 +756,12 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
                     installed_at.get_or_insert_with(Instant::now);
                     out.term.live(None);
                     out.term.blank();
-                    out.heading(format!("Installing {name}"), Some("Keep your iPad connected.".into()));
+                    out.heading(format!("Installing {name}"), Some(orchard_flow::for_device("Keep your iPad connected.").into()));
                     out.term.blank();
                 }
                 if matches!(link, Link::Lost) && !lost_said {
                     lost_said = true;
-                    out.warn("The connection to your iPad dropped. Reconnect the cable; it continues where it was.");
+                    out.warn(orchard_flow::for_device("The connection to your iPad dropped. Reconnect the cable; it continues where it was."));
                 } else if matches!(link, Link::Up) {
                     lost_said = false;
                 }
@@ -799,7 +799,7 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
                 out.term.live(None);
                 out.term.blank();
                 out.fail(format!("{name} couldn't be installed"));
-                out.sub("Something went wrong while writing it. iPadOS and your data weren't touched.");
+                out.sub(orchard_flow::for_device("Something went wrong while writing it. iPadOS and your data weren't touched."));
                 out.muted(&why);
                 return finish(&mut out, Exit::Failed, "install-failed", &why);
             }
@@ -822,8 +822,8 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
                 }
                 out.term.blank();
                 out.heading("Starting it again later", None);
-                out.sub(format!("After a restart your iPad starts iPadOS as usual. To start {name},"));
-                out.term.line(vec![s("  run ", SUB), s("orchard2 launch", BLUE), s(" and put your iPad in DFU mode.", SUB)]);
+                out.sub(orchard_flow::for_device(&format!("After a restart your iPad starts iPadOS as usual. To start {name},")).to_owned());
+                out.term.line(vec![s("  run ", SUB), s("orchard2 launch", BLUE), s(orchard_flow::for_device(" and put your iPad in DFU mode."), SUB)]);
                 if ssh_chosen {
                     out.term.blank();
                     out.heading("Signing in from this computer", None);
@@ -839,7 +839,7 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
 /// The account from the flags or the prompts (T.6), checked as the window checks it.
 fn make_account(out: &mut Out, user: &str, password: Option<String>, pin: Option<String>, args: &InstallArgs) -> Option<orchard_flow::Account> {
     out.term.blank();
-    out.heading("Create your account", Some("Your iPad is getting ready in the meantime.".into()));
+    out.heading("Create your account", Some(orchard_flow::for_device("Your iPad is getting ready in the meantime.").into()));
     out.term.blank();
     out.term.line(vec![s(format!("  {:<19}", "Username"), SUB), s(user, FG)]);
     let password = secret_pair(out, "Password", "Repeat password", "--password-file", password, "password", |p| (p.chars().count() >= 8).then_some(()).ok_or("The password needs 8 or more characters"))?;
@@ -927,7 +927,7 @@ pub fn launch(json: bool, args: &LaunchArgs) -> ExitCode {
         }
         if let Some(problem) = &flow.launch_problem {
             out.term.live(None);
-            out.fail("Orchard couldn't start your iPad");
+            out.fail(orchard_flow::for_device("Orchard couldn't start your iPad"));
             out.muted(problem);
             return finish(&mut out, Exit::Failed, "start-failed", problem);
         }
@@ -943,8 +943,8 @@ pub fn launch(json: bool, args: &LaunchArgs) -> ExitCode {
         if flow.boot_stalled && !stalled {
             stalled = true;
             out.event(json!({"event": "needs", "action": "replug"}));
-            out.warn("Reconnect the cable at your iPad");
-            out.sub("Starting it has stalled. Unplugging the cable at your iPad and plugging it back in usually fixes this. It continues by itself.");
+            out.warn(orchard_flow::for_device("Reconnect the cable at your iPad"));
+            out.sub(orchard_flow::for_device("Starting it has stalled. Unplugging the cable at your iPad and plugging it back in usually fixes this. It continues by itself."));
         }
         match &flow.state {
             State::WaitingForDfu { .. } if first => waiting = Waiting::new(),
@@ -1005,7 +1005,7 @@ pub fn launch(json: bool, args: &LaunchArgs) -> ExitCode {
             State::NothingInstalled { .. } => {
                 out.term.live(None);
                 out.term.blank();
-                out.fail("Nothing to start on this iPad");
+                out.fail(orchard_flow::for_device("Nothing to start on this iPad"));
                 out.sub("No installed system was found on it. Install one first.");
                 return finish(&mut out, Exit::Failed, "nothing-installed", "no installed system");
             }
@@ -1016,7 +1016,7 @@ pub fn launch(json: bool, args: &LaunchArgs) -> ExitCode {
                 if flow.entry_started {
                     out.term.live(None);
                     out.event(json!({"event": "done", "started": title}));
-                    out.ok_note(format!("Starting {title}"), "it continues on your iPad");
+                    out.ok_note(format!("Starting {title}"), orchard_flow::for_device("it continues on your iPad"));
                     return finish(&mut out, Exit::Done, "done", "");
                 }
             }

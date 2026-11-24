@@ -207,7 +207,7 @@ fn split_labels(ipados_gb: u32, omarchy_gb: u32) -> Div {
         .flex_row()
         .justify_between()
         .items_end()
-        .child(side("iPadOS", c(MUTED), ipados_gb, false))
+        .child(side(orchard_flow::device_os(), c(MUTED), ipados_gb, false))
         .child(side(sys(), c(BLUE), omarchy_gb, true))
 }
 
@@ -319,8 +319,8 @@ fn choose_split(layout: &Layout, shown_gb: f32, approved: bool, connected: bool,
     let mut col = div().w_full().flex().flex_col().gap(px(22.)).child(header("Split the storage", split_subtitle(), TITLE)).child(slider);
     if little {
         col = col.child(notice(
-            format!("iPadOS can only spare {max} GB"),
-            format!("That's enough for {}, but tight. For more room, delete some apps or files on your iPad and check again.", sys()),
+            orchard_flow::for_device(&format!("iPadOS can only spare {max} GB")).to_owned(),
+            orchard_flow::for_device(&format!("That's enough for {}, but tight. For more room, delete some apps or files on your iPad and check again.", sys())).to_owned(),
             true,
         ));
     }
@@ -335,11 +335,11 @@ fn choose_split(layout: &Layout, shown_gb: f32, approved: bool, connected: bool,
     // The companion's connection dropped: it comes back by itself.
     if !connected {
         // Not back after 20 s: the USB link is stuck; a replug clears it.
-        let (line, color) = if stuck { (STUCK_LINE, AMBER) } else { ("Reconnecting…", MUTED) };
+        let (line, color) = if stuck { (orchard_flow::for_device(STUCK_LINE), AMBER) } else { ("Reconnecting…", MUTED) };
         buttons = buttons.child(div().ml(px(16.)).flex_1().min_w(px(0.)).text_size(px(13.)).line_height(px(19.)).text_color(c(color)).child(line));
     } else if let Some(problem) = problem {
         // Why the last split didn't happen (the iPad's own words).
-        let line = format!("Your iPad didn't split the storage: {problem}");
+        let line = orchard_flow::for_device(&format!("Your iPad didn't split the storage: {problem}")).to_owned();
         buttons = buttons.child(div().ml(px(16.)).flex_1().min_w(px(0.)).text_size(px(13.)).line_height(px(19.)).text_color(c(RED)).child(line));
     }
     if replaces {
@@ -371,13 +371,13 @@ pub fn split_erase_dialog(layout: &Layout, approved: bool, connected: bool, stuc
     let cancel = cancel.on_click(cx.listener(|this, _, _, _| this.send(Event::Cancel)));
     crate::screens::dialog(480.)
         .child(div().text_size(px(18.)).font_weight(FontWeight::SEMIBOLD).text_color(c(TITLE)).child("Before splitting"))
-        .child(crate::screens::paragraph(format!("The partitions after iPadOS are erased, and {} gets their space.", sys())))
+        .child(crate::screens::paragraph(orchard_flow::for_device(&format!("The partitions after iPadOS are erased, and {} gets their space.", sys())).to_owned()))
         .child(erase_alert(layout))
         .child(approve(approved, cx))
         // The companion's connection dropped: its own line above the buttons;
         // Split storage waits for it.
         .when(!connected, |d| {
-            let (line, color) = if stuck { (STUCK_LINE, AMBER) } else { ("Reconnecting…", MUTED) };
+            let (line, color) = if stuck { (orchard_flow::for_device(STUCK_LINE), AMBER) } else { ("Reconnecting…", MUTED) };
             d.child(div().w_full().text_size(px(13.)).line_height(px(19.)).text_color(c(color)).child(line))
         })
         .child(
@@ -397,16 +397,17 @@ pub fn split_erase_dialog(layout: &Layout, approved: bool, connected: bool, stuc
 /// 2.2c: not enough free space.
 fn no_room(layout: &Layout, cx: &mut Context<Installer>) -> Div {
     let free = layout.max_omarchy_gb();
-    let subtitle = format!(
+    let subtitle = orchard_flow::for_device(&format!(
         "{} needs at least {MIN_OMARCHY_GB} GB, and iPadOS only has {free} GB free right now. Delete some apps or files on your iPad, then check again.",
         sys()
-    );
+    ))
+    .to_owned();
     div()
         .w_full()
         .flex()
         .flex_col()
         .gap(px(22.))
-        .child(header("Not enough free space on your iPad", subtitle, TITLE))
+        .child(header(orchard_flow::for_device("Not enough free space on your iPad"), subtitle, TITLE))
         .child(div().w_full().flex().flex_col().gap(px(12.)).child(split_labels(layout.total_gb, 0)).child(split_bar(layout, 0., OmarchyNote::Needs, None, cx)))
         .child(actions().child(primary("check-again", "Check again", 18., 9., Event::Retry, cx)))
 }
@@ -449,7 +450,7 @@ fn split_steps(lost: bool, grow: Option<bool>, seconds: f32) -> Div {
         .border_1()
         .border_color(c(PANEL_LINE))
         .child(row("Check storage", 0, true))
-        .child(row(match grow { Some(true) => "Grow iPadOS", Some(false) => "Shrink iPadOS", None => "Remove the old partitions" }, 1, false))
+        .child(row(match grow { Some(true) => orchard_flow::for_device("Grow iPadOS"), Some(false) => orchard_flow::for_device("Shrink iPadOS"), None => "Remove the old partitions" }, 1, false))
         .child(row("Check the result", 2, false))
 }
 
@@ -472,15 +473,15 @@ fn splitting(link: Link, reopened: bool, ipados: Option<(u32, u32)>, stuck: bool
     if lost {
         return column()
             .gap(px(24.))
-            .child(header("Reconnect your iPad", "The connection to your iPad was lost. Plug it back in to continue.", RED))
+            .child(header(orchard_flow::for_device("Reconnect your iPad"), orchard_flow::for_device("The connection to your iPad was lost. Plug it back in to continue."), RED))
             .child(progress);
     }
     let subtitle = if reopened {
-        "The installer was closed while the storage was being split. Checking on your iPad…".to_owned()
+        orchard_flow::for_device("The installer was closed while the storage was being split. Checking on your iPad…").to_owned()
     } else {
         match (ipados, grow) {
-            (Some((gb, _)), Some(true)) => format!("iPadOS is growing to {gb} GB. This takes a moment."),
-            (Some((gb, _)), Some(false)) => format!("iPadOS is shrinking to {gb} GB. This can take around 30 minutes."),
+            (Some((gb, _)), Some(true)) => orchard_flow::for_device(&format!("iPadOS is growing to {gb} GB. This takes a moment.")).to_owned(),
+            (Some((gb, _)), Some(false)) => orchard_flow::for_device(&format!("iPadOS is shrinking to {gb} GB. This can take around 30 minutes.")).to_owned(),
             (Some(_), None) => format!("Removing the old {} partitions. This takes a moment.", sys()),
             (None, _) => "This can take around 30 minutes.".to_owned(),
         }
@@ -501,7 +502,7 @@ fn splitting(link: Link, reopened: bool, ipados: Option<(u32, u32)>, stuck: bool
         .child(div().font_family(MONO).text_size(px(12.)).text_color(c(MUTED)).child(status));
     // The window lost sight of the split (stuck USB link): a replug clears it.
     let liveness = if stuck {
-        div().text_size(px(13.)).line_height(px(19.)).text_color(c(AMBER)).child("The connection stopped. Unplug the cable from your iPad and plug it back in. This doesn't affect the split.")
+        div().text_size(px(13.)).line_height(px(19.)).text_color(c(AMBER)).child(orchard_flow::for_device("The connection stopped. Unplug the cable from your iPad and plug it back in. This doesn't affect the split."))
     } else {
         liveness
     };
@@ -510,7 +511,7 @@ fn splitting(link: Link, reopened: bool, ipados: Option<(u32, u32)>, stuck: bool
         .child(header("Splitting the storage", subtitle, TITLE))
         .child(progress.child(liveness))
         .child(notice(
-            "Keep your iPad connected and leave it alone",
+            orchard_flow::for_device("Keep your iPad connected and leave it alone"),
             "It may freeze or look idle for a long time. That doesn't mean it's finished or failed. Don't restart or unplug it. Closing this window won't stop it.",
             true,
         ))
@@ -519,8 +520,8 @@ fn splitting(link: Link, reopened: bool, ipados: Option<(u32, u32)>, stuck: bool
 /// 2.6: split done.
 fn split_done(layout: Option<&Layout>, omarchy_gb: u32, cx: &mut Context<Installer>) -> Div {
     let mut col = div().w_full().flex().flex_col().gap(px(22.)).child(header(
-        "Your iPad is ready",
-        format!("iPadOS and {} now each have their own space. Your apps and data are where they were.", sys()),
+        orchard_flow::for_device("Your iPad is ready"),
+        orchard_flow::for_device(&format!("iPadOS and {} now each have their own space. Your apps and data are where they were.", sys())).to_owned(),
         TITLE,
     ));
     if let Some(layout) = layout {
@@ -541,7 +542,7 @@ fn split_done(layout: Option<&Layout>, omarchy_gb: u32, cx: &mut Context<Install
             .flex_col()
             .gap(px(10.))
             .child(heading(format!("Next, install {}", sys())))
-            .child(paragraph("Put your iPad into DFU mode once more, the same way as before.")),
+            .child(paragraph(orchard_flow::for_device("Put your iPad into DFU mode once more, the same way as before."))),
     )
     .child(actions().child(primary("continue", "Continue", 18., 9., Event::Continue, cx)))
 }
@@ -552,17 +553,17 @@ pub fn replug_dialog() -> Div {
     crate::screens::dialog(420.)
         .items_center()
         .child(icon("plug", 28., c(BLUE)))
-        .child(div().w_full().text_center().text_size(px(18.)).font_weight(FontWeight::SEMIBOLD).text_color(c(TITLE)).child("Reconnect the cable at your iPad"))
+        .child(div().w_full().text_center().text_size(px(18.)).font_weight(FontWeight::SEMIBOLD).text_color(c(TITLE)).child(orchard_flow::for_device("Reconnect the cable at your iPad")))
         .child(
             div().w_full().text_center().text_size(px(14.)).line_height(px(21.)).text_color(c(SUBTITLE)).child(
-                "Starting your iPad has stalled. Unplugging the cable at your iPad and plugging it back in usually fixes this. It continues by itself.",
+                orchard_flow::for_device("Starting your iPad has stalled. Unplugging the cable at your iPad and plugging it back in usually fixes this. It continues by itself."),
             ),
         )
 }
 
 /// 2.1a: palera1n is starting the iPad.
 fn starting_ipad() -> Div {
-    column().child(header("Starting your iPad", "This takes about a minute. The window moves on when iPadOS is coming up.", TITLE))
+    column().child(header(orchard_flow::for_device("Starting your iPad"), orchard_flow::for_device("This takes about a minute. The window moves on when iPadOS is coming up."), TITLE))
 }
 
 /// 2.1: waiting for iPadOS with the companion; `slow` once it is well past
@@ -576,13 +577,13 @@ fn waiting_for_ipados(slow: bool, cx: &mut Context<Installer>) -> Div {
         },
     ];
     column()
-        .child(header("Waiting for your iPad", "It should now be starting iPadOS. This window moves on as soon as it's ready.", TITLE))
+        .child(header(orchard_flow::for_device("Waiting for your iPad"), orchard_flow::for_device("It should now be starting iPadOS. This window moves on as soon as it's ready."), TITLE))
         .child(steps_natural(STEPS))
         .children(slow.then(|| {
             actions()
                 .child(secondary("start-over", "Start over", 16., 9., Event::Retry, cx))
                 .child(div().ml(px(16.)).flex_1().min_w(px(0.)).text_size(px(13.)).line_height(px(19.)).text_color(c(AMBER)).child(
-                    "Your iPad hasn't answered yet. If it shows the Lock Screen or Home Screen and nothing happens, start over in DFU mode.",
+                    orchard_flow::for_device("Your iPad hasn't answered yet. If it shows the Lock Screen or Home Screen and nothing happens, start over in DFU mode."),
                 ))
         }))
 }
@@ -590,7 +591,7 @@ fn waiting_for_ipados(slow: bool, cx: &mut Context<Installer>) -> Div {
 /// 3.1: DFU mode again.
 fn dfu_again(sequence: orchard_flow::Sequence, rows: f32, cx: &mut Context<Installer>) -> Div {
     column()
-        .child(header("Put your iPad in DFU mode again", format!("{} installs from DFU mode. Same buttons as before.", sys()), TITLE))
+        .child(header(orchard_flow::for_device("Put your iPad in DFU mode again"), format!("{} installs from DFU mode. Same buttons as before.", sys()), TITLE))
         .child(steps(connected_steps(sequence), rows))
         .child(trouble_link(cx))
 }
@@ -634,9 +635,9 @@ fn create_account(installer: &Installer, account: &Account, ready: bool, cx: &mu
     // for anything that didn't report itself (draft copy).
     let slow = matches!(installer.flow.state, State::CreateAccount { env: None, slow: true, .. });
     let problem = account_problem(account).or(if slow {
-        Some("Your iPad is taking longer than usual. If nothing happens, start over in DFU mode.")
+        Some(orchard_flow::for_device("Your iPad is taking longer than usual. If nothing happens, start over in DFU mode."))
     } else if valid && !ready {
-        Some("Your iPad is still getting ready.")
+        Some(orchard_flow::for_device("Your iPad is still getting ready."))
     } else {
         None
     });
@@ -655,7 +656,7 @@ fn create_account(installer: &Installer, account: &Account, ready: bool, cx: &mu
                 .child(div().text_size(px(14.)).text_color(c(SUBTITLE)).child(if installer.flow.resuming {
                     "The install continues where it stopped once you've entered your account again."
                 } else {
-                    "Your iPad is getting ready in the meantime."
+                    orchard_flow::for_device("Your iPad is getting ready in the meantime.")
                 })),
         )
         .child(form)
@@ -738,7 +739,7 @@ pub fn erase_dialog(layout: &Layout, approved: bool, focus: &gpui::FocusHandle, 
     let cancel = cancel.on_click(cx.listener(|this, _, _, _| this.send(Event::Cancel)));
     crate::screens::dialog(480.)
         .child(div().text_size(px(18.)).font_weight(FontWeight::SEMIBOLD).text_color(c(TITLE)).child("Before installing"))
-        .child(crate::screens::paragraph("Installing erases these partitions. iPadOS and its data stay as they are."))
+        .child(crate::screens::paragraph(orchard_flow::for_device("Installing erases these partitions. iPadOS and its data stay as they are.")))
         .child(erase_alert(layout))
         .child(approve(approved, cx))
         .child(
@@ -763,9 +764,9 @@ fn installing(percent: u8, shown: f32, streamed: bool, since: Instant) -> Div {
     let subtitle = if !streamed && p > 0.05 {
         let left = (elapsed / p * (1. - p) / 60.).ceil().max(1.) as u32;
         let unit = if left == 1 { "minute" } else { "minutes" };
-        format!("About {left} {unit} left. Keep your iPad connected.")
+        orchard_flow::for_device(&format!("About {left} {unit} left. Keep your iPad connected.")).to_owned()
     } else {
-        "Keep your iPad connected.".to_owned()
+        orchard_flow::for_device("Keep your iPad connected.").to_owned()
     };
     let track = div()
         .w_full()
@@ -830,7 +831,7 @@ fn starting(took: Option<std::time::Duration>, ssh_user: Option<&str>, cx: &mut 
                 .child(heading("Starting it again later"))
                 .child({
                     // "Orchard" in the accent: the app to open.
-                    let text_35 = format!("After a restart your iPad starts iPadOS as usual. To start {}, open the Orchard app on this computer and put your iPad in DFU mode.", sys());
+                    let text_35 = orchard_flow::for_device(&format!("After a restart your iPad starts iPadOS as usual. To start {}, open the Orchard app on this computer and put your iPad in DFU mode.", sys())).to_owned();
                     let at = text_35.find("Orchard").unwrap();
                     let blue = gpui::HighlightStyle { color: Some(c(BLUE)), ..Default::default() };
                     div()
@@ -878,8 +879,8 @@ fn launcher_line() -> Option<Div> {
 fn not_prepared(cx: &mut Context<Installer>) -> Div {
     column()
         .child(header(
-            "Your iPad's storage is not prepared yet",
-            format!("Put your iPad in DFU mode again. The installer then starts your iPad to split the storage between iPadOS and {}.", sys()),
+            orchard_flow::for_device("Your iPad's storage is not prepared yet"),
+            orchard_flow::for_device(&format!("Put your iPad in DFU mode again. The installer then starts your iPad to split the storage between iPadOS and {}.", sys())).to_owned(),
             RED,
         ))
         .child(actions().child(primary("continue", "Continue", 18., 9., Event::Continue, cx)))
@@ -890,7 +891,7 @@ fn install_failed(reason: Option<&str>, cx: &mut Context<Installer>) -> Div {
     column()
         .child(header(
             format!("{} couldn't be installed", sys()),
-            "Something went wrong while writing it. iPadOS and your data weren't touched. Put your iPad in DFU mode again to retry.",
+            orchard_flow::for_device("Something went wrong while writing it. iPadOS and your data weren't touched. Put your iPad in DFU mode again to retry."),
             RED,
         ))
         // What went wrong, in the device's or the installer's own words.
@@ -1051,7 +1052,7 @@ pub fn text_column(installer: &mut Installer, cx: &mut Context<Installer>) -> Op
             let _ = percent;
             column()
                 .gap(px(24.))
-                .child(header("Reconnect your iPad", "The connection to your iPad was lost. Plug it back in to continue.", RED))
+                .child(header(orchard_flow::for_device("Reconnect your iPad"), orchard_flow::for_device("The connection to your iPad was lost. Plug it back in to continue."), RED))
                 .into_any_element()
         }
         // 99 % at most while the image is written; once it is written and

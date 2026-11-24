@@ -412,7 +412,52 @@ pub fn system_name() -> &'static str {
     SYSTEM.get().map(String::as_str).unwrap_or("the system")
 }
 
-pub fn step(app: App, mut flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
+/// The kind of device on the cable (0 iPad, 1 iPhone), for the words: set
+/// whenever the flow knows its device. iPad until then.
+static DEVICE_KIND: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+pub fn set_device_model(model: Model) {
+    let kind = if matches!(model, Model::IphoneHome | Model::IphoneNoHome) { 1 } else { 0 };
+    DEVICE_KIND.store(kind, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// "iPad" or "iPhone".
+pub fn device_word() -> &'static str {
+    if DEVICE_KIND.load(std::sync::atomic::Ordering::Relaxed) == 1 { "iPhone" } else { "iPad" }
+}
+
+/// "iPadOS" or "iOS".
+pub fn device_os() -> &'static str {
+    if DEVICE_KIND.load(std::sync::atomic::Ordering::Relaxed) == 1 { "iOS" } else { "iPadOS" }
+}
+
+/// TEXT, written for an iPad, for the device on the cable: "iPadOS" and
+/// "iPad" become "iOS" and "iPhone" for an iPhone. Each distinct result is
+/// kept for the program's life, so it serves where a &'static str is due.
+pub fn for_device(text: &str) -> &'static str {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    static SEEN: Mutex<Option<HashMap<String, &'static str>>> = Mutex::new(None);
+    let out = text.replace("iPadOS", "\u{0}").replace("iPad", device_word()).replace('\u{0}', device_os());
+    let mut seen = SEEN.lock().unwrap();
+    let seen = seen.get_or_insert_with(HashMap::new);
+    if let Some(s) = seen.get(&out) {
+        return s;
+    }
+    let leaked: &'static str = Box::leak(out.clone().into_boxed_str());
+    seen.insert(out, leaked);
+    leaked
+}
+
+pub fn step(app: App, flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
+    let (flow, effects) = step_inner(app, flow, event);
+    if let Some(device) = flow.state.device() {
+        set_device_model(device.model);
+    }
+    (flow, effects)
+}
+
+fn step_inner(app: App, mut flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
     let mut out = Vec::new();
     let fetch = |assets: Vec<Asset>| assets.into_iter().map(Effect::Fetch);
     match event {
@@ -1001,4 +1046,17 @@ fn suggested_size(layout: &Layout) -> u32 {
     let half = layout.total_gb / 2;
     let leaving = layout.total_gb.saturating_sub(layout.ipados_used_gb + SUGGESTED_BUFFER_GB);
     half.min(leaving).max(MIN_OMARCHY_GB).min(max)
+}
+
+#[cfg(test)]
+mod device_words {
+    use super::*;
+
+    #[test]
+    fn texts_follow_the_device() {
+        set_device_model(Model::IphoneNoHome);
+        assert_eq!(for_device("Your iPad restarts into iPadOS."), "Your iPhone restarts into iOS.");
+        set_device_model(Model::IpadHome);
+        assert_eq!(for_device("Your iPad restarts into iPadOS."), "Your iPad restarts into iPadOS.");
+    }
 }

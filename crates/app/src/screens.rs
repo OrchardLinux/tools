@@ -158,8 +158,8 @@ fn table(steps: &'static [Step], rows: Option<f32>) -> Div {
             let only = step.parts.len() == 1;
             instruction = match part {
                 // A step of one plain run may wrap (2.1); runs with button names stay on one line.
-                Part::Text(t) if only => instruction.flex_1().min_w(px(0.)).line_height(px(20.)).child(div().w_full().child(*t)),
-                Part::Text(t) => instruction.child(div().whitespace_nowrap().child(*t)),
+                Part::Text(t) if only => instruction.flex_1().min_w(px(0.)).line_height(px(20.)).child(div().w_full().child(orchard_flow::for_device(t))),
+                Part::Text(t) => instruction.child(div().whitespace_nowrap().child(orchard_flow::for_device(t))),
                 Part::Button(b) => {
                     instruction.child(div().whitespace_nowrap().font_weight(FontWeight::SEMIBOLD).text_color(c(BLUE)).child(*b))
                 }
@@ -261,13 +261,13 @@ fn waiting_for_dfu(tab: Sequence, rows: f32, unresponsive: bool, launcher: Optio
         .child(div().w_full().flex().flex_col().gap(px(16.)).child(tabs(tab, cx)).child(steps(list, rows)))
         // The launcher's last start failed: why (draft copy).
         .children(problem.map(|p| {
-            div().w_full().text_size(px(13.)).line_height(px(19.)).text_color(c(RED)).child(format!("Orchard couldn't start your iPad: {p}"))
+            div().w_full().text_size(px(13.)).line_height(px(19.)).text_color(c(RED)).child(orchard_flow::for_device(&format!("Orchard couldn't start your iPad: {p}")).to_owned())
         }))
         // A device running iPadOS is on USB but doesn't answer, so it can't
         // be shown as found (draft copy).
         .children(unresponsive.then(|| {
             div().w_full().text_size(px(13.)).line_height(px(19.)).text_color(c(AMBER)).child(
-                "An iPad is connected but isn't responding. Unplug the cable at your iPad and plug it back in.",
+                orchard_flow::for_device("An iPad is connected but isn't responding. Unplug the cable at your iPad and plug it back in."),
             )
         }))
         .child(trouble_link(cx))
@@ -629,7 +629,7 @@ fn skip_dialog(focus: &gpui::FocusHandle, cx: &mut Context<Installer>) -> Div {
                 .flex_col()
                 .gap(px(10.))
                 .child(paragraph(format!("{} can only be installed into storage that has been split off for it. That happens once, during the first install.", orchard_flow::system_name())))
-                .child(paragraph("Only skip it if this iPad has been set up before.")),
+                .child(paragraph(orchard_flow::for_device("Only skip it if this iPad has been set up before."))),
         )
         .child(
             div()
@@ -820,11 +820,11 @@ pub fn quit_copy(state: &State) -> (&'static str, String) {
     match state {
         // The temporary iPadOS: quitting restarts the iPad into normal iPadOS.
         State::WaitingForIpados { device, .. } | State::ChooseSplit { device, .. } => {
-            ("Quit the installer?", format!("Your {} restarts into iPadOS. Nothing on it has been changed.", kind(device)))
+            ("Quit the installer?", orchard_flow::for_device(&format!("Your {} restarts into iPadOS. Nothing on it has been changed.", kind(device))).to_owned())
         }
         State::SplitDone { device, .. } => (
             "Quit the installer?",
-            format!("Your {} restarts into iPadOS. Its storage stays split, so you can install {} later.", kind(device), orchard_flow::system_name()),
+            orchard_flow::for_device(&format!("Your {} restarts into iPadOS. Its storage stays split, so you can install {} later.", kind(device), orchard_flow::system_name())).to_owned(),
         ),
         // In DFU mode or the install system.
         State::DfuAgain { device, .. } | State::CreateAccount { device, .. } | State::ConfirmErase { device, .. } | State::NotPrepared { device } | State::InstallFailed { device } => (
@@ -871,7 +871,7 @@ fn download_dialog(installer: &Installer, focus: &gpui::FocusHandle, cx: &mut Co
     let (asset, why) = failed_download(installer).expect("a failed download");
     let what = match asset {
         orchard_flow::assets::Asset::RootImage => format!("{} itself", orchard_flow::system_name()),
-        orchard_flow::assets::Asset::Palera1n => "palera1n, which starts your iPad".to_owned(),
+        orchard_flow::assets::Asset::Palera1n => orchard_flow::for_device("palera1n, which starts your iPad").to_owned(),
         _ => format!("part of {}", orchard_flow::system_name()),
     };
     dialog(480.)
@@ -891,11 +891,11 @@ fn download_dialog(installer: &Installer, focus: &gpui::FocusHandle, cx: &mut Co
 /// ⌘Q / close while the iPad splits or installs: not now (draft copy).
 fn quit_blocked_dialog(state: &State, focus: &gpui::FocusHandle, cx: &mut Context<Installer>) -> Div {
     let (title, body) = match state {
-        State::Splitting { .. } => ("Wait until the split is done".to_owned(), "Your iPad is splitting its storage. Quit once it's done.".to_owned()),
-        State::Starting { title: name, .. } => (format!("Wait until {name} has started"), "Your iPad is still loading it. Quit once it's starting.".to_owned()),
+        State::Splitting { .. } => ("Wait until the split is done".to_owned(), orchard_flow::for_device("Your iPad is splitting its storage. Quit once it's done.").to_owned()),
+        State::Starting { title: name, .. } => (format!("Wait until {name} has started"), orchard_flow::for_device("Your iPad is still loading it. Quit once it's starting.").to_owned()),
         _ => {
             let name = orchard_flow::system_name();
-            (format!("Wait until {name} is installed"), format!("{name} is being installed on your iPad. Quit once it's done."))
+            (format!("Wait until {name} is installed"), orchard_flow::for_device(&format!("{name} is being installed on your iPad. Quit once it's done.")).to_owned())
         }
     };
     dialog(440.)
