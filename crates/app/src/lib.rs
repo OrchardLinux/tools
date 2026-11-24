@@ -494,8 +494,12 @@ impl Installer {
         let shown = self.shown.as_mut().expect("tracked");
         let current = shown.device;
         let mut layer = div().relative().w(px(device::WIDTH)).h(px(device::HEIGHT)).flex_none();
+        // "Guide me" fades the waves out while it runs.
+        let calm = 1. - self.guide_fade.value();
         if let Some(waves) = device::waves(&current, seconds) {
-            layer = layer.child(waves);
+            if calm > 0.001 {
+                layer = layer.child(div().absolute().size_full().opacity(calm).child(waves));
+            }
         }
         // Ease out (cubic): the slide starts moving at once and settles gently.
         let ease = |at: Instant| {

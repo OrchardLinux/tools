@@ -206,12 +206,20 @@ fn table(steps: &'static [Step], rows: Option<f32>, guide: Option<(Option<crate:
         list = list.h(px(table_height(rows))).overflow_hidden();
     }
     let fixed = rows.is_some();
+    // "Guide me" fades the table's own background and frame with the rest;
+    // the moment's row keeps the full background below.
+    let table_fade = 1. - GUIDE_DARKEN * guide.map(|(_, d)| d).unwrap_or(0.);
+    let faded = |rgb: u32| {
+        let mut color = c(rgb);
+        color.a *= table_fade;
+        color
+    };
     let mut list = list
         .flex()
         .flex_col()
-        .bg(c(PANEL))
+        .bg(faded(PANEL))
         .border_1()
-        .border_color(c(PANEL_LINE));
+        .border_color(faded(PANEL_LINE));
     for (i, step) in steps.iter().enumerate() {
         let moment = guide.and_then(|(m, _)| m).filter(|m| m.row == i);
         let dim = guide.map(|(_, d)| d).unwrap_or(0.);
@@ -249,8 +257,9 @@ fn table(steps: &'static [Step], rows: Option<f32>, guide: Option<(Option<crate:
             // a duration to the right of a step with button names.
             .when(parts.len() != 1 || !matches!(parts[0], Part::Text(_)), |r| r.child(div().flex_1()));
         match moment {
-            // The moment's row: its countdown instead of the duration.
+            // The moment's row: the full background, its countdown instead of the duration.
             Some(m) => {
+                row = row.bg(c(PANEL));
                 if let Some(progress) = m.progress {
                     // The seconds left (none while settling), then the circle.
                     if let Some(left) = m.remaining {
