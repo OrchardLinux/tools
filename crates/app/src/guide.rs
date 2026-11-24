@@ -48,8 +48,11 @@ fn phases(sequence: Sequence) -> &'static [Phase] {
         ],
         Sequence::VolumeSequence => &[
             GET_READY,
-            Phase { row: 1, seconds: 1., glow: &[VolumeUp], countdown: false },
-            Phase { row: 1, seconds: 1., glow: &[VolumeDown], countdown: false },
+            // Two taps, each 0.8 s lit and a 0.2 s break, so they read as two.
+            Phase { row: 1, seconds: 0.8, glow: &[VolumeUp], countdown: false },
+            Phase { row: 1, seconds: 0.2, glow: &[], countdown: false },
+            Phase { row: 1, seconds: 0.8, glow: &[VolumeDown], countdown: false },
+            Phase { row: 1, seconds: 0.2, glow: &[], countdown: false },
             Phase { row: 2, seconds: 10., glow: &[Power], countdown: true },
             Phase { row: 3, seconds: 5., glow: &[Power, VolumeDown], countdown: true },
             Phase { row: 4, seconds: 10., glow: &[VolumeDown], countdown: true },
@@ -173,7 +176,7 @@ mod tests {
         let m = at(s, 1.).unwrap();
         assert_eq!((m.row, m.glow, m.progress), (0, &[][..], Some(0.5)));
         assert_eq!(at(s, 2.5).unwrap().glow, &[VolumeUp]);
-        let down = at(s, 3.5).unwrap();
+        let down = at(s, 3.4).unwrap();
         assert_eq!((down.row, down.glow, down.progress), (1, &[VolumeDown][..], None));
         let hold = at(s, 9.).unwrap();
         assert_eq!((hold.row, hold.glow), (2, &[Power][..]));
@@ -187,13 +190,13 @@ mod tests {
     fn glows_stay_whole_while_held_and_fade_after() {
         let s = Sequence::VolumeSequence;
         let at = |t: f32| levels(s, t);
-        // Volume Up 2–3 s, a tap: in and out within 0.15 s; Volume Down
-        // takes over at 3.
+        // Volume Up 2–2.8 s, a tap: in and out within 0.15 s, then a break
+        // with nothing lit before Volume Down at 3.
         assert!(at(2.05)[2] > 0. && at(2.05)[2] < 1.);
-        assert_eq!(at(2.2)[2], 1.);
-        assert_eq!(at(3.)[2], 1.);
-        assert_eq!(at(3.2)[2], 0.);
-        assert_eq!(at(3.2)[3], 1.);
+        assert_eq!(at(2.5)[2], 1.);
+        assert_eq!(at(2.97)[2], 0.);
+        assert_eq!(at(2.97)[3], 0.);
+        assert_eq!(at(3.3)[3], 1.);
         // A held button fades slowly: Power half-way in after 0.35 s.
         assert!((at(4.35)[1] - 0.5).abs() < 1e-3);
         // Power from 4 to 19 s, whole through the step change at 14.
