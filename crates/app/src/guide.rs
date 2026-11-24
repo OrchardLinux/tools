@@ -229,7 +229,7 @@ mod tests {
         assert!((urgency(s, 19.25)[1] - 0.5).abs() < 1e-5);
         // Volume Down held on from 15 to the end: not urgent at 19, urgent at 29.
         assert_eq!(urgency(s, 19.)[3], 0.);
-        assert!(urgency(s, 29.)[3] > 0.4);
+        assert!(urgency(s, 29.5)[3] > 0.6);
         // Taps never.
         assert_eq!(urgency(s, 3.9)[2], 0.);
     }
