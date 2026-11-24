@@ -39,6 +39,14 @@ pub struct Timing {
     pub attempts: u32,
 }
 
+/// TIMING with ORCHARD_PORT_RESET_SECONDS as the wait before the reset.
+pub fn timing() -> Timing {
+    match crate::flags::port_reset() {
+        Some(wait) if !wait.is_zero() => Timing { settle: wait, settle_3: wait, ..TIMING },
+        _ => TIMING,
+    }
+}
+
 pub const TIMING: Timing = Timing {
     settle: Duration::from_millis(2500),
     settle_3: Duration::from_secs(5),
@@ -140,7 +148,7 @@ impl Watcher {
         let done = Arc::new(AtomicBool::new(false));
         let (flag, finished) = (stop.clone(), done.clone());
         let thread = std::thread::spawn(move || {
-            let resets = watch(&log, &control, &flag, TIMING);
+            let resets = watch(&log, &control, &flag, timing());
             finished.store(true, Ordering::Relaxed);
             resets
         });

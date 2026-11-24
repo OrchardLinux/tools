@@ -117,6 +117,7 @@ pub fn start_demo(options: Options, observer: impl Observer) -> Result<Handle> {
 /// Starts the driver on its own thread. Fails before starting when the
 /// board data can't be had (no `--data`, no network and nothing cached).
 pub fn start(options: Options, observer: impl Observer) -> Result<Handle> {
+    crate::flags::log_active();
     let (tx, rx) = mpsc::channel();
     let executor = options.executor(tx.clone())?;
     let catalog = Catalog::open(&executor.data()?)?;

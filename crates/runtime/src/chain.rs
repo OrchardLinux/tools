@@ -76,7 +76,10 @@ fn run_palera1n(executor: &Executor, device: &Device, args: &[std::ffi::OsString
 fn run_palera1n_from(executor: &Executor, device: &Device, from: Mode, args: &[std::ffi::OsString], seconds: u64) -> Result<()> {
     let pin = palera1n_pin(std::env::consts::OS, std::env::consts::ARCH)
         .ok_or_else(|| fail("palera1n publishes no build for this computer"))?;
-    let palera1n = executor.palera1n(pin)?;
+    let palera1n = match crate::flags::palera1n() {
+        Some(path) => path,
+        None => executor.palera1n(pin)?,
+    };
     let Some(found) = the_device(device, from)? else {
         return Err(fail(if from == Mode::Dfu { "the device is no longer in DFU mode" } else { "the device is not in Pongo" }));
     };
@@ -85,7 +88,9 @@ fn run_palera1n_from(executor: &Executor, device: &Device, from: Mode, args: &[s
         .then(|| crate::replug::port_control(&found.location, std::path::Path::new("/sys/bus/usb/devices")))
         .flatten();
     let (log, log_path) = executor.log_file("palera1n")?;
-    let replug = control.map(|c| crate::replug::Watcher::start(log_path.clone(), c));
+    // ORCHARD_PORT_RESET_SECONDS=0: no reset.
+    let reset_off = crate::flags::port_reset().is_some_and(|w| w.is_zero());
+    let replug = control.filter(|_| !reset_off).map(|c| crate::replug::Watcher::start(log_path.clone(), c));
     let progress = Progress::start(log_path.clone(), executor.events(), replug.as_ref().map(|w| w.done.clone()));
     // In a pseudo-terminal (`script`), so palera1n writes each line at once
     // and its progress can be followed while it runs.
@@ -259,7 +264,7 @@ impl Progress {
     /// back after checkm8 (the same reading and wait as the Linux port reset;
     /// with a port reset running, only once it gave up), and "Booting".
     fn start(log: std::path::PathBuf, events: std::sync::mpsc::Sender<orchard_flow::Event>, resetting: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>) -> Progress {
-        use crate::replug::{dropped, returned, TIMING};
+        use crate::replug::{dropped, returned};
         use orchard_flow::Event;
         use std::sync::atomic::Ordering;
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -268,7 +273,7 @@ impl Progress {
             let (mut wait, mut stalled, mut booting) = (None::<(Instant, Duration)>, false, false);
             while !flag.load(Ordering::Relaxed) {
                 if wait.is_none() {
-                    wait = dropped(&log, TIMING).map(|settle| (Instant::now(), settle));
+                    wait = dropped(&log, crate::replug::timing()).map(|settle| (Instant::now(), settle));
                 }
                 let back = returned(&log);
                 let gave_up = resetting.as_ref().is_none_or(|done| done.load(Ordering::Relaxed));
