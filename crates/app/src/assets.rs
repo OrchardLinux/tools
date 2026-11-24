@@ -12,7 +12,7 @@ macro_rules! embed {
 static FILES: &[(&str, &[u8])] = embed!(
     "icons/app-window.svg", "icons/arrow-up-right.svg", "icons/check.svg", "icons/chevron-down.svg", "icons/chevron-right.svg", "icons/copy.svg",
     "icons/circle-alert.svg", "icons/circle.svg", "icons/eye.svg", "icons/info.svg", "icons/laptop.svg", "icons/life-buoy.svg",
-    "icons/plug-zap.svg", "icons/plug.svg", "icons/power-off.svg", "icons/tablet.svg", "icons/triangle-alert.svg",
+    "icons/play.svg", "icons/plug-zap.svg", "icons/plug.svg", "icons/power-off.svg", "icons/square.svg", "icons/tablet.svg", "icons/triangle-alert.svg",
     "device/alert.svg", "device/check.svg", "device/notch-screen-fill.svg", "device/notch-screen-line.svg",
     "device/spoke-1.svg", "device/spoke-2.svg", "device/spoke-3.svg", "device/spoke-4.svg",
     "device/spoke-5.svg", "device/spoke-6.svg", "device/spoke-7.svg", "device/spoke-8.svg",

@@ -132,15 +132,75 @@ fn table_height(rows: f32) -> f32 {
 
 /// The step table, its height animated by `rows` (fixed row heights).
 pub fn steps(steps: &'static [Step], rows: f32) -> Div {
-    table(steps, Some(rows))
+    table(steps, Some(rows), None)
 }
 
 /// The step table at its natural height, for steps that wrap.
 pub fn steps_natural(steps: &'static [Step]) -> Div {
-    table(steps, None)
+    table(steps, None, None)
 }
 
-fn table(steps: &'static [Step], rows: Option<f32>) -> Div {
+/// How much "Guide me" darkens what isn't the moment's (at full fade).
+const GUIDE_DARKEN: f32 = 0.72;
+
+/// The countdown circle of a guided step: a faint disc, filled clockwise
+/// from the top as `progress` (0…1) goes, in `color`.
+fn countdown(progress: f32, color: gpui::Hsla) -> impl IntoElement {
+    let size = 16.;
+    gpui::canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            let center = gpui::point(bounds.origin.x + px(size / 2.), bounds.origin.y + px(size / 2.));
+            let r = size / 2.;
+            let disc = |from: f32, sweep: f32| {
+                let mut path = gpui::PathBuilder::fill();
+                path.move_to(center);
+                let steps = (48. * sweep.abs()).ceil().max(2.) as usize;
+                for i in 0..=steps {
+                    let a = (from + sweep * i as f32 / steps as f32) * std::f32::consts::TAU;
+                    path.line_to(gpui::point(center.x + px(r * a.sin()), center.y - px(r * a.cos())));
+                }
+                path.close();
+                path.build().ok()
+            };
+            if let Some(track) = disc(0., 1.) {
+                window.paint_path(track, c(PANEL_LINE));
+            }
+            if progress > 0.001 {
+                if let Some(done) = disc(0., progress.min(1.)) {
+                    window.paint_path(done, color);
+                }
+            }
+        },
+    )
+    .w(px(size))
+    .h(px(size))
+    .flex_none()
+}
+
+/// The colour of a guided step's countdown: Power's when it is held, else
+/// the last glowing button's.
+fn guide_color(glow: &[crate::guide::Button]) -> gpui::Hsla {
+    use crate::guide::Button as G;
+    let name = if glow.contains(&G::Power) {
+        "Power"
+    } else {
+        match glow.last() {
+            Some(G::VolumeUp) => "Volume Up",
+            _ => "",
+        }
+    };
+    c(button_color(name))
+}
+
+/// The steps with "Guide me" running (G.2–G.7): the moment's row as is, the
+/// cable step reading "Get ready", the countdown in place of the duration,
+/// the other rows darkened by `dim` (the fade, 0…1).
+pub fn steps_guided(steps: &'static [Step], rows: f32, guide: Option<crate::guide::Moment>, dim: f32) -> Div {
+    table(steps, Some(rows), Some((guide, dim)))
+}
+
+fn table(steps: &'static [Step], rows: Option<f32>, guide: Option<(Option<crate::guide::Moment>, f32)>) -> Div {
     let mut list = div().w_full();
     if let Some(rows) = rows {
         list = list.h(px(table_height(rows))).overflow_hidden();
@@ -153,9 +213,14 @@ fn table(steps: &'static [Step], rows: Option<f32>) -> Div {
         .border_1()
         .border_color(c(PANEL_LINE));
     for (i, step) in steps.iter().enumerate() {
+        let moment = guide.and_then(|(m, _)| m).filter(|m| m.row == i);
+        let dim = guide.map(|(_, d)| d).unwrap_or(0.);
         let mut instruction = div().flex().flex_row().items_center().text_size(px(14.)).text_color(c(TEXT));
-        for part in step.parts {
-            let only = step.parts.len() == 1;
+        // "Get ready" stands in for the cable step while its time runs.
+        let get_ready: &'static [Part] = &[T("Get ready")];
+        let parts = if moment.is_some() && i == 0 { get_ready } else { step.parts };
+        for part in parts {
+            let only = parts.len() == 1;
             instruction = match part {
                 // A step of one plain run may wrap (2.1); runs with button names stay on one line.
                 Part::Text(t) if only => instruction.flex_1().min_w(px(0.)).line_height(px(20.)).child(div().w_full().child(orchard_flow::for_device(t))),
@@ -182,9 +247,22 @@ fn table(steps: &'static [Step], rows: Option<f32>) -> Div {
             .child(instruction)
             // A single run of text fills the row itself; the spacer only pushes
             // a duration to the right of a step with button names.
-            .when(step.parts.len() != 1 || !matches!(step.parts[0], Part::Text(_)), |r| r.child(div().flex_1()));
-        if let Some(d) = step.duration {
-            row = row.child(div().font_family(MONO).text_size(px(12.)).text_color(c(MUTED)).child(d));
+            .when(parts.len() != 1 || !matches!(parts[0], Part::Text(_)), |r| r.child(div().flex_1()));
+        match moment {
+            // The moment's row: its countdown instead of the duration.
+            Some(m) => {
+                if let Some(progress) = m.progress {
+                    row = row.child(countdown(progress, guide_color(m.glow)));
+                }
+            }
+            None => {
+                if let Some(d) = step.duration {
+                    row = row.child(div().font_family(MONO).text_size(px(12.)).text_color(c(MUTED)).child(d));
+                }
+                if guide.is_some() {
+                    row = row.opacity(1. - GUIDE_DARKEN * dim);
+                }
+            }
         }
         if fixed {
             row = row.h(px(if i == 0 { 48. } else { 49. }));
@@ -227,20 +305,23 @@ fn tabs(selected: Sequence, cx: &mut Context<Installer>) -> Div {
 }
 
 pub fn trouble_link(cx: &mut Context<Installer>) -> impl IntoElement {
-    let link = pressable(link("trouble"), link_ring, cx, |this, _, cx| {
+    // In a row, so the link is as wide as its text, not the column; 24 px
+    // below what it helps with instead of the column's 44.
+    div().flex().flex_row().mt(px(-20.)).child(trouble(cx))
+}
+
+fn trouble(cx: &mut Context<Installer>) -> gpui::Stateful<Div> {
+    pressable(link("trouble"), link_ring, cx, |this, _, cx| {
         this.trouble = true;
         cx.notify();
     })
-        .flex()
+    .flex()
         .flex_row()
         .items_center()
         .gap(px(6.))
         .py(px(4.))
         .child(icon("life-buoy", 15., c(BLUE)))
-        .child(div().font_family(MONO).text_size(px(12.)).text_color(c(BLUE)).child("Having trouble?"));
-    // In a row, so the link is as wide as its text, not the column; 24 px
-    // below what it helps with instead of the column's 44.
-    div().flex().flex_row().mt(px(-20.)).child(link)
+        .child(div().font_family(MONO).text_size(px(12.)).text_color(c(BLUE)).child("Having trouble?"))
 }
 
 /// 1.1 / 1.11 (and 1.9 on Linux): waiting for DFU, with the steps of the
@@ -249,7 +330,9 @@ pub fn trouble_link(cx: &mut Context<Installer>) -> impl IntoElement {
 const NOTE_GAP: f32 = 16.;
 const NOTE_LINE: f32 = 19.;
 
-fn waiting_for_dfu(tab: Sequence, rows: f32, note: f32, unresponsive: bool, launcher: Option<Option<String>>, cx: &mut Context<Installer>) -> Div {
+fn waiting_for_dfu(tab: Sequence, rows: f32, note: f32, guide: (bool, Option<crate::guide::Moment>, f32), unresponsive: bool, launcher: Option<Option<String>>, cx: &mut Context<Installer>) -> Div {
+    let (running, moment, dim) = guide;
+    let darken = 1. - GUIDE_DARKEN * dim;
     let list = match tab {
         Sequence::HomePower => HOME_POWER,
         Sequence::VolumeSequence => VOLUME_SEQUENCE,
@@ -262,20 +345,20 @@ fn waiting_for_dfu(tab: Sequence, rows: f32, note: f32, unresponsive: bool, laun
     };
     let problem = launcher.flatten();
     column()
-        .child(top)
+        .child(top.opacity(darken))
         .child(
             div()
                 .w_full()
                 .flex()
                 .flex_col()
                 .gap(px(16.))
-                .child(tabs(tab, cx))
+                .child(div().w_full().opacity(darken).child(tabs(tab, cx)))
                 .child(
                     div()
                         .w_full()
                         .flex()
                         .flex_col()
-                        .child(steps(list, rows))
+                        .child(steps_guided(list, rows, moment, dim))
                         // The iPhone 8 has a Home button but the no-Home-button
                         // steps. Its height and opacity animate with the table's
                         // (`note`, 0…1), so the two morph together.
@@ -288,7 +371,7 @@ fn waiting_for_dfu(tab: Sequence, rows: f32, note: f32, unresponsive: bool, laun
                                     .top(px(NOTE_GAP))
                                     .left(px(0.))
                                     .whitespace_nowrap()
-                                    .opacity(note.powi(3))
+                                    .opacity(note.powi(3) * darken)
                                     .text_size(px(13.))
                                     .line_height(px(NOTE_LINE))
                                     .text_color(c(MUTED))
@@ -308,7 +391,37 @@ fn waiting_for_dfu(tab: Sequence, rows: f32, note: f32, unresponsive: bool, laun
                 orchard_flow::for_device("An iPad is connected but isn't responding. Unplug the cable at your iPad and plug it back in."),
             )
         }))
-        .child(trouble_link(cx))
+        // "Having trouble?" and, right-aligned, "Guide me" (or "Stop" while it runs).
+        .child(
+            div()
+                .w_full()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .mt(px(-20.))
+                .child(div().opacity(darken).child(trouble(cx)))
+                .child(guide_button(tab, running, cx)),
+        )
+}
+
+/// G.1: "Guide me" starts the run of `tab`'s steps; "Stop" ends it.
+fn guide_button(tab: Sequence, running: bool, cx: &mut Context<Installer>) -> impl IntoElement {
+    let color = if running { c(MUTED) } else { c(BLUE) };
+    div()
+        .id("guide")
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(6.))
+        .py(px(4.))
+        .cursor_pointer()
+        .child(icon(if running { "square" } else { "play" }, 13., color))
+        .child(div().font_family(MONO).text_size(px(12.)).text_color(color).child(if running { "Stop" } else { "Guide me" }))
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.guide = if this.guide.is_some() { None } else { Some((std::time::Instant::now(), tab)) };
+            cx.notify();
+        }))
 }
 
 /// The steps of a sequence once the device is already connected.
@@ -710,9 +823,16 @@ pub fn text_column(installer: &mut Installer, kind: ScreenKind, cx: &mut Context
             };
             installer.rows.set(count as f32);
             installer.note.set(if tab == Sequence::HomePower { 1. } else { 0. });
+            // "Guide me": over, or for another tab, ends the run.
+            if installer.guide.is_some_and(|(_, s)| s != tab) || (installer.guide.is_some() && installer.guide_moment().is_none()) {
+                installer.guide = None;
+            }
+            let moment = installer.guide_moment();
+            installer.guide_fade.set(if installer.guide.is_some() { 1. } else { 0. });
+            let guide = (installer.guide.is_some(), moment, installer.guide_fade.value());
             let unresponsive = installer.flow.unresponsive;
             let launcher = (installer.app == orchard_flow::App::Launcher).then(|| installer.flow.launch_problem.clone());
-            waiting_for_dfu(tab, installer.rows.value(), installer.note.value(), unresponsive, launcher, cx).into_any_element()
+            waiting_for_dfu(tab, installer.rows.value(), installer.note.value(), guide, unresponsive, launcher, cx).into_any_element()
         }
         (State::Found { device, .. }, _) => found(device, cx).into_any_element(),
         (State::Unsupported { device }, _) => unsupported(device, cx).into_any_element(),

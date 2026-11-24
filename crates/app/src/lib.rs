@@ -4,6 +4,7 @@
 //! the user does back as events.
 mod assets;
 mod details;
+mod guide;
 mod device;
 mod input;
 mod install_screens;
@@ -231,6 +232,10 @@ pub struct Installer {
     pub rows: Tween,
     /// 1.1's note under the steps (0…1), animating with `rows`.
     pub note: Tween,
+    /// "Guide me" (G.1–G.7): when the run started and for which buttons;
+    /// None when it isn't running. `guide_fade` darkens the rest (0…1).
+    pub guide: Option<(Instant, orchard_flow::Sequence)>,
+    pub guide_fade: Tween,
     /// The start's Details panel (2.1p/2.1q): open or not, its height, its
     /// log's scroll, how many log lines were shown, when Copy was pressed.
     pub details_open: bool,
@@ -453,6 +458,7 @@ impl Installer {
             self.trouble = false;
             self.ssh_info = false;
             self.details_info = false;
+            self.guide = None;
             self.focus_before_dialog = None;
             // Back when the screen goes back in the flow.
             let back = (content as u8) < (shown.content as u8);
@@ -464,8 +470,15 @@ impl Installer {
 
     /// The device column: waves, and the device morphing from its previous
     /// look (a carousel slide for a new model, a crossfade otherwise).
+    /// Where "Guide me" is now, if it runs.
+    pub fn guide_moment(&self) -> Option<guide::Moment> {
+        let (at, sequence) = self.guide?;
+        guide::at(sequence, at.elapsed().as_secs_f32())
+    }
+
     fn device_layer(&mut self) -> gpui::Div {
         let seconds = self.seconds();
+        let glow = self.guide_moment().map(|m| m.glow);
         let shown = self.shown.as_mut().expect("tracked");
         let current = shown.device;
         let mut layer = div().relative().w(px(device::WIDTH)).h(px(device::HEIGHT)).flex_none();
@@ -483,7 +496,7 @@ impl Installer {
         const CLIP_Y: f32 = 70.;
         const SPACING: f32 = 200.;
         let place = |view: &DeviceView, dx: f32, opacity: f32| {
-            div().absolute().left(px(CLIP_X + dx)).top(px(CLIP_Y)).opacity(opacity).child(device::drawing(view, seconds))
+            div().absolute().left(px(CLIP_X + dx)).top(px(CLIP_Y)).opacity(opacity).child(device::drawing(view, seconds, glow))
         };
         let mut strip = div()
             .absolute()
@@ -525,6 +538,8 @@ impl Installer {
             || busy(shown.content_at, CONTENT_MILLIS)
             || self.rows.progress() < 1.
             || self.note.progress() < 1.
+            || self.guide.is_some()
+            || self.guide_fade.progress() < 1.
             || self.progress.progress() < 1.
             || self.dialog_fade.progress() < 1.
             || matches!(self.flow.state, orchard_flow::State::Splitting { .. })
@@ -954,6 +969,8 @@ pub fn run(app: Kind) {
                     shown: None,
                     rows: Tween::new(4., 280.),
                     note: Tween::new(1., 280.),
+                    guide: None,
+                    guide_fade: Tween::new(0., 220.),
                     details_open: false,
                     details: Tween::new(0., 220.),
                     details_scroll: gpui::ScrollHandle::new(),
