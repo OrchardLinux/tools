@@ -178,7 +178,7 @@ fn read_secret(path: &PathBuf) -> Result<String, String> {
 /// The DFU steps: words with the buttons in blue, and how long each takes.
 fn steps(sequence: Sequence) -> Vec<(Vec<Span>, &'static str)> {
     let t = |x: &str| s(x, FG);
-    let k = |x: &'static str| s(orchard_flow::button_for_device(x), BLUE);
+    let k = |x: &str| s(x, BLUE);
     let mut out = vec![(vec![t("Connect it to this computer with a USB cable")], "")];
     out.extend(match sequence {
         Sequence::HomePower => vec![
@@ -187,13 +187,13 @@ fn steps(sequence: Sequence) -> Vec<(Vec<Span>, &'static str)> {
         ],
         Sequence::VolumeSequence => vec![
             (vec![t("Press "), k("Volume Up"), t(", then "), k("Volume Down")], ""),
-            (vec![t("Hold "), k("Top"), t(" until the screen goes black")], "~10 s"),
-            (vec![t("Keep holding "), k("Top"), t(", also hold "), k("Volume Down")], "~5 s"),
-            (vec![t("Let go of "), k("Top"), t(", keep holding "), k("Volume Down")], "~10 s"),
+            (vec![t("Hold "), k("Power"), t(" until the screen goes black")], "~10 s"),
+            (vec![t("Keep holding "), k("Power"), t(", also hold "), k("Volume Down")], "~5 s"),
+            (vec![t("Let go of "), k("Power"), t(", keep holding "), k("Volume Down")], "~10 s"),
         ],
         Sequence::VolumeDownSide => vec![
-            (vec![t("Hold "), k("Volume Down"), t(" and "), k("Side"), t(" together")], "~10 s"),
-            (vec![t("Let go of "), k("Side"), t(", keep holding "), k("Volume Down")], "~10 s"),
+            (vec![t("Hold "), k("Volume Down"), t(" and "), k("Power"), t(" together")], "~10 s"),
+            (vec![t("Let go of "), k("Power"), t(", keep holding "), k("Volume Down")], "~10 s"),
         ],
     });
     out.push((vec![t("Let go when this changes")], ""));

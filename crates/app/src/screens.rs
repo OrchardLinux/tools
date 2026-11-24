@@ -110,17 +110,17 @@ const HOME_POWER: &[Step] = &[
 const VOLUME_SEQUENCE: &[Step] = &[
     CONNECT,
     Step { parts: &[T("Press "), B("Volume Up"), T(", then "), B("Volume Down")], duration: None },
-    Step { parts: &[T("Hold "), B("Top"), T(" until the screen goes black")], duration: Some("~10 s") },
-    Step { parts: &[T("Keep holding "), B("Top"), T(", also hold "), B("Volume Down")], duration: Some("~5 s") },
-    Step { parts: &[T("Let go of "), B("Top"), T(", keep holding "), B("Volume Down")], duration: Some("~10 s") },
+    Step { parts: &[T("Hold "), B("Power"), T(" until the screen goes black")], duration: Some("~10 s") },
+    Step { parts: &[T("Keep holding "), B("Power"), T(", also hold "), B("Volume Down")], duration: Some("~5 s") },
+    Step { parts: &[T("Let go of "), B("Power"), T(", keep holding "), B("Volume Down")], duration: Some("~10 s") },
     LET_GO,
 ];
 
-/// iPhone 7 and 7 Plus: the Home button steps with Volume Down and Side.
+/// iPhone 7 and 7 Plus: the Home button steps with Volume Down and Power.
 const VOLUME_DOWN_SIDE: &[Step] = &[
     CONNECT,
-    Step { parts: &[T("Hold "), B("Volume Down"), T(" and "), B("Side"), T(" together")], duration: Some("~10 s") },
-    Step { parts: &[T("Let go of "), B("Side"), T(", keep holding "), B("Volume Down")], duration: Some("~10 s") },
+    Step { parts: &[T("Hold "), B("Volume Down"), T(" and "), B("Power"), T(" together")], duration: Some("~10 s") },
+    Step { parts: &[T("Let go of "), B("Power"), T(", keep holding "), B("Volume Down")], duration: Some("~10 s") },
     LET_GO,
 ];
 
@@ -161,7 +161,7 @@ fn table(steps: &'static [Step], rows: Option<f32>) -> Div {
                 Part::Text(t) if only => instruction.flex_1().min_w(px(0.)).line_height(px(20.)).child(div().w_full().child(orchard_flow::for_device(t))),
                 Part::Text(t) => instruction.child(div().whitespace_nowrap().child(orchard_flow::for_device(t))),
                 Part::Button(b) => {
-                    instruction.child(div().whitespace_nowrap().font_weight(FontWeight::SEMIBOLD).text_color(c(BLUE)).child(orchard_flow::button_for_device(b)))
+                    instruction.child(div().whitespace_nowrap().font_weight(FontWeight::SEMIBOLD).text_color(c(BLUE)).child(*b))
                 }
             };
         }
@@ -446,9 +446,8 @@ fn unsupported(device: &Device, cx: &mut Context<Installer>) -> Div {
     let (name, _) = kind(device);
     let leave = match device.sequence {
         Sequence::HomePower => "To leave this mode, hold Home and Power until the Apple logo appears.",
-        Sequence::VolumeDownSide => "To leave this mode, hold Volume Down and Side until the Apple logo appears.",
-        Sequence::VolumeSequence if orchard_flow::device_word() == "iPhone" => "To leave this mode, press Volume Up, then Volume Down, then hold Side until the Apple logo appears.",
-        Sequence::VolumeSequence => "To leave this mode, press Volume Up, then Volume Down, then hold Top until the Apple logo appears.",
+        Sequence::VolumeDownSide => "To leave this mode, hold Volume Down and Power until the Apple logo appears.",
+        Sequence::VolumeSequence => "To leave this mode, press Volume Up, then Volume Down, then hold Power until the Apple logo appears.",
     };
     let header = div()
         .flex()
@@ -811,12 +810,11 @@ pub(crate) fn dialog_button(id: &'static str, label: &'static str, primary: bool
 
 /// How to force-restart this device, as a sentence ending in "appears".
 fn restart_steps(device: &orchard_flow::Device) -> &'static str {
-    use orchard_flow::{Model, Sequence};
-    match (device.sequence, device.model) {
-        (Sequence::HomePower, _) => "hold the Home and top buttons until the Apple logo appears",
-        (Sequence::VolumeDownSide, _) => "hold the volume down and side buttons until the Apple logo appears",
-        (Sequence::VolumeSequence, Model::IpadNoHome) => "press volume up, then volume down, then hold the top button until the Apple logo appears",
-        (Sequence::VolumeSequence, _) => "press volume up, then volume down, then hold the side button until the Apple logo appears",
+    use orchard_flow::Sequence;
+    match device.sequence {
+        Sequence::HomePower => "hold the Home and power buttons until the Apple logo appears",
+        Sequence::VolumeDownSide => "hold the volume down and power buttons until the Apple logo appears",
+        Sequence::VolumeSequence => "press volume up, then volume down, then hold the power button until the Apple logo appears",
     }
 }
 

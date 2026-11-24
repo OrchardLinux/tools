@@ -466,21 +466,6 @@ pub fn device_os() -> &'static str {
     if DEVICE_KIND.load(std::sync::atomic::Ordering::Relaxed) == 1 { "iOS" } else { "iPadOS" }
 }
 
-/// A button's name for the device on the cable: the steps name the iPad's
-/// "Top"; an iPhone's is its Side button, and before the device is known
-/// both are named.
-pub fn button_for_device(name: &'static str) -> &'static str {
-    button_for(DEVICE_KIND.load(std::sync::atomic::Ordering::Relaxed), name)
-}
-
-fn button_for(kind: u8, name: &'static str) -> &'static str {
-    match (name, kind) {
-        ("Top", 1) => "Side",
-        ("Top", 2) => "Side/Top",
-        _ => name,
-    }
-}
-
 /// TEXT for the device kind: iPad words, or iPhone and iOS for kind 1.
 fn words_for(kind: u8, text: &str) -> String {
     let (word, os) = if kind == 1 { ("iPhone", "iOS") } else { ("iPad", "iPadOS") };
@@ -1149,8 +1134,5 @@ mod device_words {
     fn texts_follow_the_device() {
         assert_eq!(words_for(1, "Your iPad restarts into iPadOS."), "Your iPhone restarts into iOS.");
         assert_eq!(words_for(0, "Your iPad restarts into iPadOS."), "Your iPad restarts into iPadOS.");
-        assert_eq!(button_for(1, "Top"), "Side");
-        assert_eq!(button_for(0, "Top"), "Top");
-        assert_eq!(button_for(2, "Top"), "Side/Top");
     }
 }
