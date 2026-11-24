@@ -268,7 +268,15 @@ fn waiting_for_dfu(tab: Sequence, rows: f32, unresponsive: bool, launcher: Optio
                 .child(tabs(tab, cx))
                 .child(steps(list, rows))
                 // The iPhone 8 has a Home button but the no-Home-button steps.
-                .when(tab == Sequence::HomePower, |d| d.child(div().text_size(px(13.)).text_color(c(MUTED)).child("iPhone 8 or later? Use No Home button."))),
+                // Its space stays on every tab, so switching tabs doesn't
+                // change the column's height (the table's animation stays smooth).
+                .child(
+                    div()
+                        .text_size(px(13.))
+                        .text_color(c(MUTED))
+                        .opacity(if tab == Sequence::HomePower { 1. } else { 0. })
+                        .child("iPhone 8 and later use the No Home button steps."),
+                ),
         )
         // The launcher's last start failed: why (draft copy).
         .children(problem.map(|p| {
