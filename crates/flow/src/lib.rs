@@ -247,6 +247,9 @@ pub enum Event {
     BootStalled,
     /// It came back.
     BootResumed,
+    /// The exploit didn't take and the device is still in DFU mode: palera1n
+    /// runs again, this attempt (2, 3, …).
+    StartAttempt(u32),
     /// palera1n boots iPadOS (its "Booting..."): from here iPadOS starts.
     BootBooting,
     /// The companion's connection dropped while the device still runs
@@ -353,11 +356,15 @@ pub struct Flow {
     pub launch_problem: Option<String>,
     /// The launcher's chosen entry was handed to m1n1 and is starting.
     pub entry_started: bool,
+    /// The exploit's attempt under way (0 or 1: the first).
+    pub start_attempt: u32,
+    /// Why the last start didn't work (palera1n's words), for DFU mode again.
+    pub start_problem: Option<String>,
 }
 
 impl Flow {
     pub fn new() -> Flow {
-        Flow { state: State::start(), assets: Assets::default(), write_waiting: false, start_waiting: None, boot_waiting: None, companion: false, split_problem: None, install_problem: None, resuming: false, boot_stalled: false, booting: false, unresponsive: false, confirming_split: false, launch_problem: None, entry_started: false }
+        Flow { state: State::start(), assets: Assets::default(), write_waiting: false, start_waiting: None, boot_waiting: None, companion: false, split_problem: None, install_problem: None, resuming: false, boot_stalled: false, booting: false, unresponsive: false, confirming_split: false, launch_problem: None, entry_started: false, start_attempt: 0, start_problem: None }
     }
 
     /// The asset the current step waits for, for "Getting your iPad ready…".
@@ -435,11 +442,21 @@ pub fn device_os() -> &'static str {
 /// "Top"; an iPhone's is its Side button, and before the device is known
 /// both are named.
 pub fn button_for_device(name: &'static str) -> &'static str {
-    match (name, DEVICE_KIND.load(std::sync::atomic::Ordering::Relaxed)) {
+    button_for(DEVICE_KIND.load(std::sync::atomic::Ordering::Relaxed), name)
+}
+
+fn button_for(kind: u8, name: &'static str) -> &'static str {
+    match (name, kind) {
         ("Top", 1) => "Side",
         ("Top", 2) => "Side/Top",
         _ => name,
     }
+}
+
+/// TEXT for the device kind: iPad words, or iPhone and iOS for kind 1.
+fn words_for(kind: u8, text: &str) -> String {
+    let (word, os) = if kind == 1 { ("iPhone", "iOS") } else { ("iPad", "iPadOS") };
+    text.replace("iPadOS", "\u{0}").replace("iPad", word).replace('\u{0}', os)
 }
 
 /// TEXT, written for an iPad, for the device on the cable: "iPadOS" and
@@ -449,7 +466,7 @@ pub fn for_device(text: &str) -> &'static str {
     use std::collections::HashMap;
     use std::sync::Mutex;
     static SEEN: Mutex<Option<HashMap<String, &'static str>>> = Mutex::new(None);
-    let out = text.replace("iPadOS", "\u{0}").replace("iPad", device_word()).replace('\u{0}', device_os());
+    let out = words_for(DEVICE_KIND.load(std::sync::atomic::Ordering::Relaxed), text);
     let mut seen = SEEN.lock().unwrap();
     let seen = seen.get_or_insert_with(HashMap::new);
     if let Some(s) = seen.get(&out) {
@@ -503,6 +520,10 @@ fn step_inner(app: App, mut flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
             return step(app, flow, Event::InstallFinished { ok: false });
         }
         Event::AccountNeeded if matches!(flow.state, State::WaitingForDfu { .. }) => flow.resuming = true,
+        // A start that didn't work: its reason shows on DFU mode again.
+        Event::ChainFailed(ref reason) if matches!(flow.state, State::WaitingForIpados { .. } | State::CreateAccount { env: None, .. }) => {
+            flow.start_problem = Some(reason.clone());
+        }
         // The launcher's chain or m1n1 failed: back to waiting, with the reason.
         Event::ChainFailed(reason) if app == App::Launcher && matches!(flow.state, State::Found { .. } | State::Starting { .. }) => {
             flow.launch_problem = Some(reason);
@@ -522,6 +543,11 @@ fn step_inner(app: App, mut flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
             return (flow, out);
         }
         Event::BootResumed => {
+            flow.boot_stalled = false;
+            return (flow, out);
+        }
+        Event::StartAttempt(n) => {
+            flow.start_attempt = n;
             flow.boot_stalled = false;
             return (flow, out);
         }
@@ -604,6 +630,12 @@ fn step_inner(app: App, mut flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
     }
     if !matches!(flow.state, State::Starting { .. }) {
         flow.entry_started = false;
+    }
+    if !matches!(flow.state, State::DfuAgain { .. }) {
+        flow.start_problem = None;
+    }
+    if !(booting_screen || matches!(flow.state, State::Found { .. })) {
+        flow.start_attempt = 0;
     }
     if !matches!(flow.state, State::ChooseSplit { .. }) {
         flow.confirming_split = false;
@@ -1069,14 +1101,23 @@ mod device_words {
     use super::*;
 
     #[test]
+    fn a_start_that_didnt_work_keeps_its_reason_for_dfu_mode_again() {
+        let device = Device { id: DeviceId("e".into()), board: "j71b".into(), name: "iPad".into(), model: Model::IpadHome, sequence: Sequence::HomePower, support: Support::Supported };
+        let flow = Flow { state: State::WaitingForIpados { device, slow: false }, ..Flow::new() };
+        let (flow, _) = step(App::Installer, flow, Event::StartAttempt(3));
+        assert_eq!(flow.start_attempt, 3);
+        let (flow, _) = step(App::Installer, flow, Event::ChainFailed("palera1n: Unable to perform checkm8".into()));
+        assert!(matches!(flow.state, State::DfuAgain { why: Again::RetryPrepare, .. }));
+        assert_eq!(flow.start_problem.as_deref(), Some("palera1n: Unable to perform checkm8"));
+        assert_eq!(flow.start_attempt, 0);
+    }
+
+    #[test]
     fn texts_follow_the_device() {
-        DEVICE_KIND.store(2, std::sync::atomic::Ordering::Relaxed);
-        assert_eq!(button_for_device("Top"), "Side/Top");
-        set_device_model(Model::IphoneNoHome);
-        assert_eq!(for_device("Your iPad restarts into iPadOS."), "Your iPhone restarts into iOS.");
-        assert_eq!(button_for_device("Top"), "Side");
-        set_device_model(Model::IpadHome);
-        assert_eq!(for_device("Your iPad restarts into iPadOS."), "Your iPad restarts into iPadOS.");
-        assert_eq!(button_for_device("Top"), "Top");
+        assert_eq!(words_for(1, "Your iPad restarts into iPadOS."), "Your iPhone restarts into iOS.");
+        assert_eq!(words_for(0, "Your iPad restarts into iPadOS."), "Your iPad restarts into iPadOS.");
+        assert_eq!(button_for(1, "Top"), "Side");
+        assert_eq!(button_for(0, "Top"), "Top");
+        assert_eq!(button_for(2, "Top"), "Side/Top");
     }
 }

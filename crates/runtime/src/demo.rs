@@ -62,6 +62,11 @@ pub fn run(app: App, mut observer: impl Observer, input: Receiver<Event>, _event
                         due.push((at(0.8), Event::BootStalled));
                         due.push((at(3.5), Event::BootResumed));
                     }
+                    // ORCHARD_DEMO_RETRY=1: the exploit takes three attempts.
+                    if std::env::var_os("ORCHARD_DEMO_RETRY").is_some() {
+                        due.push((at(0.6), Event::StartAttempt(2)));
+                        due.push((at(1.2), Event::StartAttempt(3)));
+                    }
                     due.push((at(3.8), Event::BootBooting));
                     due.push((at(1.), Event::Detached { id: ipad().id }));
                     due.push((at(4.), attached(UsbMode::Normal)));

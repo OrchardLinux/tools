@@ -632,7 +632,9 @@ impl Installer {
             .text_size(px(12.))
             .text_color(c(MUTED))
             .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
-            .child(self.title.clone());
+            // Where the window manager draws its own title bar (Linux with
+            // server-side decorations), the title isn't shown a second time.
+            .when(cfg!(target_os = "macos") || !matches!(window.window_decorations(), gpui::Decorations::Server), |d| d.child(self.title.clone()));
         let visual = div()
             .w(px(360.))
             .h_full()

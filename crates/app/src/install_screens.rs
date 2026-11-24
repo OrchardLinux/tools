@@ -561,9 +561,22 @@ pub fn replug_dialog() -> Div {
         )
 }
 
-/// 2.1a: palera1n is starting the iPad.
-fn starting_ipad() -> Div {
-    column().child(header(orchard_flow::for_device("Starting your iPad"), orchard_flow::for_device("This takes about a minute. The window moves on when iPadOS is coming up."), TITLE))
+/// 2.1a: palera1n is starting the iPad; from the second attempt on, which one.
+fn starting_ipad(attempt: u32) -> Div {
+    column()
+        .child(header(orchard_flow::for_device("Starting your iPad"), orchard_flow::for_device("This takes about a minute. The window moves on when iPadOS is coming up."), TITLE))
+        .children(attempt_line(attempt))
+}
+
+/// "Attempt 3. …" while the exploit is tried again (2.1a, 3.2, the launcher).
+pub(crate) fn attempt_line(attempt: u32) -> Option<Div> {
+    (attempt > 1).then(|| {
+        div()
+            .text_size(px(13.))
+            .line_height(px(19.))
+            .text_color(c(MUTED))
+            .child(orchard_flow::for_device(&format!("Attempt {attempt}. The installer keeps trying while your iPad stays in DFU mode.")))
+    })
 }
 
 /// 2.1: waiting for iPadOS with the companion; `slow` once it is well past
@@ -589,7 +602,7 @@ fn waiting_for_ipados(slow: bool, cx: &mut Context<Installer>) -> Div {
 }
 
 /// 3.1: DFU mode again, saying why (3.1r after a start that didn't work).
-fn dfu_again(why: orchard_flow::Again, sequence: orchard_flow::Sequence, rows: f32, cx: &mut Context<Installer>) -> Div {
+fn dfu_again(why: orchard_flow::Again, problem: Option<&str>, sequence: orchard_flow::Sequence, rows: f32, cx: &mut Context<Installer>) -> Div {
     use orchard_flow::Again;
     let (title, subtitle) = match why {
         Again::Install => ("Put your iPad in DFU mode again".to_owned(), format!("{} installs from DFU mode. Same buttons as before.", sys())),
@@ -606,8 +619,17 @@ fn dfu_again(why: orchard_flow::Again, sequence: orchard_flow::Sequence, rows: f
             "Your iPad restarted while the storage was being split. In DFU mode the installer can check it. Same buttons as before.".to_owned(),
         ),
     };
+    // Why the start didn't work, in palera1n's words (every real error shows).
+    let reason = problem.filter(|_| matches!(why, Again::Retry | Again::RetryPrepare)).map(|p| {
+        let mut text = orchard_flow::for_device(p).to_owned();
+        if let Some(first) = text.get(..1) {
+            text = first.to_uppercase() + &text[1..];
+        }
+        div().text_size(px(13.)).line_height(px(19.)).text_color(c(MUTED)).child(text)
+    });
     column()
         .child(header(orchard_flow::for_device(&title), orchard_flow::for_device(&subtitle).to_owned(), TITLE))
+        .children(reason)
         .child(steps(connected_steps(sequence), rows))
         .child(trouble_link(cx))
 }
@@ -652,6 +674,8 @@ fn create_account(installer: &Installer, account: &Account, ready: bool, cx: &mu
     let slow = matches!(installer.flow.state, State::CreateAccount { env: None, slow: true, .. });
     let problem = account_problem(account).or(if slow {
         Some(orchard_flow::for_device("Your iPad is taking longer than usual. If nothing happens, start over in DFU mode."))
+    } else if !ready && installer.flow.start_attempt > 1 {
+        Some(orchard_flow::for_device(&format!("Starting your iPad: attempt {}. The installer keeps trying while it stays in DFU mode.", installer.flow.start_attempt)))
     } else if valid && !ready {
         Some(orchard_flow::for_device("Your iPad is still getting ready."))
     } else {
@@ -1030,7 +1054,7 @@ pub fn text_column(installer: &mut Installer, cx: &mut Context<Installer>) -> Op
     Some(match &state {
         State::UsbAccessNeeded => usb_access(cx).into_any_element(),
         // 2.1a until palera1n boots iPadOS, then 2.1.
-        State::WaitingForIpados { .. } if !installer.flow.booting => starting_ipad().into_any_element(),
+        State::WaitingForIpados { .. } if !installer.flow.booting => starting_ipad(installer.flow.start_attempt).into_any_element(),
         State::WaitingForIpados { slow, .. } => waiting_for_ipados(*slow, cx).into_any_element(),
         State::ChooseSplit { layout, omarchy_gb, approved, .. } => {
             installer.layout = Some(layout.clone());
@@ -1058,7 +1082,8 @@ pub fn text_column(installer: &mut Installer, cx: &mut Context<Installer>) -> Op
         State::DfuAgain { device, why, .. } => {
             let steps = connected_steps(device.sequence);
             installer.rows.set(steps.len() as f32);
-            dfu_again(*why, device.sequence, installer.rows.value(), cx).into_any_element()
+            let problem = installer.flow.start_problem.clone();
+            dfu_again(*why, problem.as_deref(), device.sequence, installer.rows.value(), cx).into_any_element()
         }
         State::CreateAccount { account, env, .. } => create_account(installer, account, env.is_some(), cx).into_any_element(),
         // The erase dialog (3.6) sits over the form: what was typed stays.

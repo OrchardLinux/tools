@@ -17,6 +17,11 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 const PALERA1N_SECONDS: u64 = 120;
+/// How long the exploit is tried again while the device stays in DFU mode.
+/// On some computers it takes many attempts (seen up to 20 minutes).
+const START_WINDOW: Duration = Duration::from_secs(20 * 60);
+/// After a failed attempt: how long to look where the device went.
+const SETTLE_SECONDS: u64 = 15;
 const PONGO_SECONDS: u64 = 30;
 /// A full boot uploads the patchfinder, ramdisk and overlay before iPadOS starts.
 const IPADOS_SECONDS: u64 = 240;
@@ -81,7 +86,7 @@ fn run_palera1n_from(executor: &Executor, device: &Device, from: Mode, args: &[s
         .flatten();
     let (log, log_path) = executor.log_file("palera1n")?;
     let replug = control.map(|c| crate::replug::Watcher::start(log_path.clone(), c));
-    let progress = Progress::start(log_path, executor.events(), replug.as_ref().map(|w| w.done.clone()));
+    let progress = Progress::start(log_path.clone(), executor.events(), replug.as_ref().map(|w| w.done.clone()));
     // In a pseudo-terminal (`script`), so palera1n writes each line at once
     // and its progress can be followed while it runs.
     let mut command = if cfg!(target_os = "macos") {
@@ -119,6 +124,7 @@ fn run_palera1n_from(executor: &Executor, device: &Device, from: Mode, args: &[s
         }
     };
     let deadline = Instant::now() + Duration::from_secs(seconds);
+    let mut looked = Instant::now();
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Ok(status),
@@ -126,6 +132,16 @@ fn run_palera1n_from(executor: &Executor, device: &Device, from: Mode, args: &[s
                 let _ = child.kill();
                 let _ = child.wait();
                 break Err(fail("palera1n did not finish"));
+            }
+            // From DFU mode, iOS on USB means the device restarted normally:
+            // this start can't work any more, whatever palera1n still waits for.
+            Ok(None) if from == Mode::Dfu && looked.elapsed() >= Duration::from_secs(1) => {
+                looked = Instant::now();
+                if matches!(the_device(device, Mode::Normal), Ok(Some(_))) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break Err(restarted(&log_path));
+                }
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(200)),
             Err(e) => break Err(e.into()),
@@ -135,9 +151,95 @@ fn run_palera1n_from(executor: &Executor, device: &Device, from: Mode, args: &[s
     progress.finish();
     let status = status?;
     if !status.success() {
-        return Err(fail(format!("palera1n failed ({status})")));
+        return Err(fail(last_error(&log_path).unwrap_or_else(|| format!("palera1n failed ({status})"))));
     }
     Ok(())
+}
+
+/// palera1n's last error line, without colors and timestamp: "palera1n:
+/// Unable to perform checkm8 …".
+fn last_error(log: &std::path::Path) -> Option<String> {
+    let text = String::from_utf8_lossy(&std::fs::read(log).ok()?).into_owned();
+    let line = text.lines().rev().find(|l| l.contains("<Error>"))?;
+    let plain = strip_ansi(line);
+    let message = plain.split("<Error>").nth(1)?.trim_start_matches(':').trim().to_owned();
+    (!message.is_empty()).then(|| format!("palera1n: {message}"))
+}
+
+fn strip_ansi(text: &str) -> String {
+    let mut out = String::new();
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            for c in chars.by_ref() {
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+const RESTARTED: &str = "it restarted normally instead";
+
+/// The device left DFU mode and started iOS normally.
+fn restarted(log: &std::path::Path) -> Error {
+    let why = last_error(log).map(|e| format!(" ({e})")).unwrap_or_default();
+    fail(format!("{RESTARTED}{why}"))
+}
+
+/// palera1n's exploit into Pongo, then Pongo on USB. A failed attempt with
+/// the device still (or again) in DFU mode is tried again, up to
+/// START_WINDOW, and the flow hears of each new attempt. iOS on USB ends it:
+/// the device restarted, and only DFU mode by hand starts over.
+fn into_pongo(executor: &Executor, device: &Device, pongo_image: &std::path::Path) -> Result<orchard_usb::Device> {
+    let until = Instant::now() + START_WINDOW;
+    let mut attempt = 1u32;
+    loop {
+        let args = [std::ffi::OsString::from("-p"), "-k".into(), pongo_image.as_os_str().to_owned()];
+        let failed = match run_palera1n(executor, device, &args, PALERA1N_SECONDS) {
+            Ok(()) => {
+                let deadline = Instant::now() + Duration::from_secs(PONGO_SECONDS);
+                loop {
+                    if let Some(usb) = the_device(device, Mode::Pongo)? {
+                        return Ok(usb);
+                    }
+                    if the_device(device, Mode::Normal)?.is_some() {
+                        return Err(fail(format!("{RESTARTED} of starting Pongo")));
+                    }
+                    if Instant::now() > deadline {
+                        break fail("Pongo did not appear on USB");
+                    }
+                    std::thread::sleep(Duration::from_millis(250));
+                }
+            }
+            Err(e) => e,
+        };
+        if failed.to_string().contains(RESTARTED) || Instant::now() > until {
+            return Err(failed);
+        }
+        // Where did it go? Still or again in DFU mode: once more.
+        let look = Instant::now() + Duration::from_secs(SETTLE_SECONDS);
+        let again = loop {
+            if the_device(device, Mode::Dfu)?.is_some() {
+                break true;
+            }
+            if the_device(device, Mode::Normal)?.is_some() || Instant::now() > look {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        };
+        if !again {
+            let normal = the_device(device, Mode::Normal)?.is_some();
+            return Err(if normal { fail(format!("{RESTARTED} ({failed})")) } else { failed });
+        }
+        attempt += 1;
+        eprintln!("chain: exploit attempt {attempt} ({failed})");
+        let _ = executor.events().send(orchard_flow::Event::StartAttempt(attempt));
+    }
 }
 
 fn shell_quote(s: &str) -> String {
@@ -206,15 +308,7 @@ pub fn boot_ipados(executor: &Executor, device: &Device) -> Result<()> {
     let overlay = executor.overlay()?;
     // Orchard's Pongo (or `--pongo`'s), as every other boot.
     let ours = executor.pongo_image()?;
-    let first = vec![std::ffi::OsString::from("-p"), "-k".into(), ours.clone().into_os_string()];
-    run_palera1n(executor, device, &first, PALERA1N_SECONDS)?;
-    let deadline = Instant::now() + Duration::from_secs(PONGO_SECONDS);
-    while the_device(device, Mode::Pongo)?.is_none() {
-        if Instant::now() > deadline {
-            return Err(fail("Pongo did not appear on USB"));
-        }
-        std::thread::sleep(Duration::from_millis(250));
-    }
+    into_pongo(executor, device, &ours)?;
     let second = vec![std::ffi::OsString::from("-l"), "-o".into(), overlay.into_os_string(), "-k".into(), ours.into_os_string()];
     run_palera1n_from(executor, device, Mode::Pongo, &second, IPADOS_SECONDS)
 }
@@ -226,18 +320,7 @@ pub fn start_m1n1(executor: &Executor, device: &Device) -> Result<orchard_usb::D
     let tools = executor.orchard_tools()?;
     let pongo_image = executor.pongo_image()?;
     let m1n1 = std::fs::read(executor.download(&tools.m1n1)?)?;
-    let args = [std::ffi::OsString::from("-p"), "-k".into(), pongo_image.into_os_string()];
-    run_palera1n(executor, device, &args, PALERA1N_SECONDS)?;
-    let deadline = Instant::now() + Duration::from_secs(PONGO_SECONDS);
-    let usb = loop {
-        if let Some(usb) = the_device(device, Mode::Pongo)? {
-            break usb;
-        }
-        if Instant::now() > deadline {
-            return Err(fail("Pongo did not appear on USB"));
-        }
-        std::thread::sleep(Duration::from_millis(250));
-    };
+    let usb = into_pongo(executor, device, &pongo_image)?;
     let mut pongo = Pongo::open(&usb).map_err(|e| fail(e.to_string()))?;
     pongo.send(&m1n1, Duration::from_secs(60)).map_err(|e| fail(e.to_string()))?;
     let _ = pongo.command("bootm", Duration::from_secs(10));
@@ -258,23 +341,32 @@ pub fn start_m1n1(executor: &Executor, device: &Device) -> Result<orchard_usb::D
 pub fn boot_install_env(executor: &Executor, device: &Device) -> Result<()> {
     let payload = payload(executor, device)?;
     let pongo_image = executor.pongo_image()?;
-    let args = [std::ffi::OsString::from("-p"), "-k".into(), pongo_image.into_os_string()];
-    run_palera1n(executor, device, &args, PALERA1N_SECONDS)?;
-
-    let deadline = Instant::now() + Duration::from_secs(PONGO_SECONDS);
-    let usb = loop {
-        if let Some(usb) = the_device(device, Mode::Pongo)? {
-            break usb;
-        }
-        if Instant::now() > deadline {
-            return Err(fail("Pongo did not appear on USB"));
-        }
-        std::thread::sleep(Duration::from_millis(250));
-    };
+    let usb = into_pongo(executor, device, &pongo_image)?;
     let mut pongo = Pongo::open(&usb).map_err(|e| fail(e.to_string()))?;
     pongo.send(&payload, Duration::from_secs(60)).map_err(|e| fail(e.to_string()))?;
     // bootm starts the payload; Pongo may be gone before it answers, and the
     // install system appearing is what confirms it.
     pongo.command("bootm", Duration::from_secs(10)).map_err(|e| fail(e.to_string()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod palera1n_errors {
+    use super::*;
+
+    #[test]
+    fn the_last_error_line_without_colors() {
+        let dir = std::env::temp_dir().join(format!("orchard-chain-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("palera1n.log");
+        // palera1n 3.0 beta, colored.
+        std::fs::write(&log, " \x1b[38;5;47m[2026/11/25 00:12:08]\x1b[0m  \x1b[38;5;196m\x1b[1m<Error>\x1b[22m\x1b[0m STAGE_YOLODFU failed (rv=0, reason=)\n").unwrap();
+        assert_eq!(last_error(&log).as_deref(), Some("palera1n: STAGE_YOLODFU failed (rv=0, reason=)"));
+        // palera1n 2.4: the last of several.
+        std::fs::write(&log, " - [11/25/26 05:07:45] <Error>: Failed issuing asynchronous upload! 13\n - [11/25/26 05:07:45] <Error>: Unable to perform checkm8: ffffffff (error code: -status_exploit)\n - [11/25/26 05:07:45] <Verbose>: DFU mode device disconnected\n").unwrap();
+        assert_eq!(last_error(&log).as_deref(), Some("palera1n: Unable to perform checkm8: ffffffff (error code: -status_exploit)"));
+        std::fs::write(&log, "no errors here\n").unwrap();
+        assert_eq!(last_error(&log), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

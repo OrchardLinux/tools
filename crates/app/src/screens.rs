@@ -706,6 +706,7 @@ fn launcher_column(installer: &mut Installer, cx: &mut Context<Installer>) -> Op
         // copy, as the installer's 2.1a): the replug dialog can come up here.
         State::Found { device, .. } => column()
             .child(title(format!("Starting your {}", kind(device).0)))
+            .children(crate::install_screens::attempt_line(installer.flow.start_attempt))
             .into_any_element(),
         State::ChooseSystem { device, entries, selected } => choose_system(device, entries, *selected, cx).into_any_element(),
         // Until m1n1 took the entry, the window stays connected (quitting

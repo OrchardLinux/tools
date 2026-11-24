@@ -490,6 +490,7 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
     let mut slow_said = false;
     let mut lost_said = false;
     let mut ctrl_c_said = false;
+    let mut attempt_said = 1u32;
     loop {
         out.term.tick();
         waiting_keys(&mut out, &mut waiting, args.wait);
@@ -591,6 +592,11 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
             State::WaitingForIpados { slow, .. } => {
                 if first {
                     out.term.live_restart(vec![s(orchard_flow::for_device("Starting your iPad"), FG), s("  about a minute", MUTED)]);
+                }
+                if flow.start_attempt > attempt_said {
+                    attempt_said = flow.start_attempt;
+                    out.event(json!({"event": "retry", "reason": "exploit", "attempt": flow.start_attempt}));
+                    out.term.live(Some(vec![s(orchard_flow::for_device("Starting your iPad"), FG), s(format!("  attempt {}", flow.start_attempt), MUTED)]));
                 }
                 if *slow && !slow_said {
                     slow_said = true;
@@ -708,6 +714,10 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
                             orchard_flow::for_device("Your iPad restarted while the storage was being split. In DFU mode the installer can check it.").to_owned(),
                         ),
                     };
+                    if let Some(p) = flow.start_problem.as_deref().filter(|_| matches!(why, Again::Retry | Again::RetryPrepare)) {
+                        out.muted(orchard_flow::for_device(p));
+                    }
+                    attempt_said = 1;
                     dfu_block(&mut out, &title, Some(&sub), device.sequence, Some(&device.name), args.wait);
                     waiting = Waiting { since: Instant::now(), shown: true, sequence: Some(device.sequence) };
                 }
