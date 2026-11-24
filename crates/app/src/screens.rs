@@ -161,7 +161,7 @@ fn table(steps: &'static [Step], rows: Option<f32>) -> Div {
                 Part::Text(t) if only => instruction.flex_1().min_w(px(0.)).line_height(px(20.)).child(div().w_full().child(orchard_flow::for_device(t))),
                 Part::Text(t) => instruction.child(div().whitespace_nowrap().child(orchard_flow::for_device(t))),
                 Part::Button(b) => {
-                    instruction.child(div().whitespace_nowrap().font_weight(FontWeight::SEMIBOLD).text_color(c(BLUE)).child(*b))
+                    instruction.child(div().whitespace_nowrap().font_weight(FontWeight::SEMIBOLD).text_color(c(BLUE)).child(orchard_flow::button_for_device(b)))
                 }
             };
         }
@@ -447,6 +447,7 @@ fn unsupported(device: &Device, cx: &mut Context<Installer>) -> Div {
     let leave = match device.sequence {
         Sequence::HomePower => "To leave this mode, hold Home and Power until the Apple logo appears.",
         Sequence::VolumeDownSide => "To leave this mode, hold Volume Down and Side until the Apple logo appears.",
+        Sequence::VolumeSequence if orchard_flow::device_word() == "iPhone" => "To leave this mode, press Volume Up, then Volume Down, then hold Side until the Apple logo appears.",
         Sequence::VolumeSequence => "To leave this mode, press Volume Up, then Volume Down, then hold Top until the Apple logo appears.",
     };
     let header = div()

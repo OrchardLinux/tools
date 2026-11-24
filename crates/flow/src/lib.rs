@@ -431,6 +431,12 @@ pub fn device_os() -> &'static str {
     if DEVICE_KIND.load(std::sync::atomic::Ordering::Relaxed) == 1 { "iOS" } else { "iPadOS" }
 }
 
+/// A button's name for the device on the cable: an iPhone's "Top" (the
+/// button the iPad steps name) is its Side button.
+pub fn button_for_device(name: &'static str) -> &'static str {
+    if name == "Top" && device_word() == "iPhone" { "Side" } else { name }
+}
+
 /// TEXT, written for an iPad, for the device on the cable: "iPadOS" and
 /// "iPad" become "iOS" and "iPhone" for an iPhone. Each distinct result is
 /// kept for the program's life, so it serves where a &'static str is due.
@@ -1056,7 +1062,9 @@ mod device_words {
     fn texts_follow_the_device() {
         set_device_model(Model::IphoneNoHome);
         assert_eq!(for_device("Your iPad restarts into iPadOS."), "Your iPhone restarts into iOS.");
+        assert_eq!(button_for_device("Top"), "Side");
         set_device_model(Model::IpadHome);
         assert_eq!(for_device("Your iPad restarts into iPadOS."), "Your iPad restarts into iPadOS.");
+        assert_eq!(button_for_device("Top"), "Top");
     }
 }

@@ -178,7 +178,7 @@ fn read_secret(path: &PathBuf) -> Result<String, String> {
 /// The DFU steps: words with the buttons in blue, and how long each takes.
 fn steps(sequence: Sequence) -> Vec<(Vec<Span>, &'static str)> {
     let t = |x: &str| s(x, FG);
-    let k = |x: &str| s(x, BLUE);
+    let k = |x: &'static str| s(orchard_flow::button_for_device(x), BLUE);
     let mut out = vec![(vec![t("Connect it to this computer with a USB cable")], "")];
     out.extend(match sequence {
         Sequence::HomePower => vec![
