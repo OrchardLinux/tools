@@ -588,10 +588,26 @@ fn waiting_for_ipados(slow: bool, cx: &mut Context<Installer>) -> Div {
         }))
 }
 
-/// 3.1: DFU mode again.
-fn dfu_again(sequence: orchard_flow::Sequence, rows: f32, cx: &mut Context<Installer>) -> Div {
+/// 3.1: DFU mode again, saying why (3.1r after a start that didn't work).
+fn dfu_again(why: orchard_flow::Again, sequence: orchard_flow::Sequence, rows: f32, cx: &mut Context<Installer>) -> Div {
+    use orchard_flow::Again;
+    let (title, subtitle) = match why {
+        Again::Install => ("Put your iPad in DFU mode again".to_owned(), format!("{} installs from DFU mode. Same buttons as before.", sys())),
+        Again::Retry | Again::RetryPrepare => (
+            "Starting your iPad didn't work".to_owned(),
+            "Put it in DFU mode again, the same way as before. The installer then tries again.".to_owned(),
+        ),
+        Again::Split => (
+            "Put your iPad in DFU mode again".to_owned(),
+            format!("The installer then starts your iPad to split the storage between iPadOS and {}. Same buttons as before.", sys()),
+        ),
+        Again::CheckSplit => (
+            "Put your iPad in DFU mode again".to_owned(),
+            "Your iPad restarted while the storage was being split. In DFU mode the installer can check it. Same buttons as before.".to_owned(),
+        ),
+    };
     column()
-        .child(header(orchard_flow::for_device("Put your iPad in DFU mode again"), format!("{} installs from DFU mode. Same buttons as before.", sys()), TITLE))
+        .child(header(orchard_flow::for_device(&title), orchard_flow::for_device(&subtitle).to_owned(), TITLE))
         .child(steps(connected_steps(sequence), rows))
         .child(trouble_link(cx))
 }
@@ -1039,10 +1055,10 @@ pub fn text_column(installer: &mut Installer, cx: &mut Context<Installer>) -> Op
             let layout = installer.layout.clone();
             split_done(layout.as_ref(), *omarchy_gb, cx).into_any_element()
         }
-        State::DfuAgain { device, .. } => {
+        State::DfuAgain { device, why, .. } => {
             let steps = connected_steps(device.sequence);
             installer.rows.set(steps.len() as f32);
-            dfu_again(device.sequence, installer.rows.value(), cx).into_any_element()
+            dfu_again(*why, device.sequence, installer.rows.value(), cx).into_any_element()
         }
         State::CreateAccount { account, env, .. } => create_account(installer, account, env.is_some(), cx).into_any_element(),
         // The erase dialog (3.6) sits over the form: what was typed stays.

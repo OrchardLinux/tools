@@ -692,14 +692,23 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
                     out.term.live(None);
                     if matches!(why, Again::Retry | Again::RetryPrepare) {
                         out.event(json!({"event": "retry", "reason": "start-failed"}));
-                        out.warn(orchard_flow::for_device("Starting your iPad didn't work. That happens now and then."));
                     }
-                    let (title, sub) = match why {
-                        Again::Install => (format!("Next, install {name}"), orchard_flow::for_device("Put your iPad in DFU mode again, the same way as before.")),
-                        Again::Retry | Again::RetryPrepare => (orchard_flow::for_device("Put your iPad in DFU mode again").to_owned(), "It tries again by itself."),
-                        _ => (orchard_flow::for_device("Put your iPad in DFU mode again").to_owned(), "The same way as before."),
+                    let (title, sub): (String, String) = match why {
+                        Again::Install => (format!("Next, install {name}"), orchard_flow::for_device("Put your iPad in DFU mode again, the same way as before.").to_owned()),
+                        Again::Retry | Again::RetryPrepare => (
+                            orchard_flow::for_device("Starting your iPad didn't work").to_owned(),
+                            "Put it in DFU mode again, the same way as before. The installer then tries again.".to_owned(),
+                        ),
+                        Again::Split => (
+                            orchard_flow::for_device("Put your iPad in DFU mode again").to_owned(),
+                            orchard_flow::for_device(&format!("The installer then starts your iPad to split the storage between iPadOS and {name}.")).to_owned(),
+                        ),
+                        Again::CheckSplit => (
+                            orchard_flow::for_device("Put your iPad in DFU mode again").to_owned(),
+                            orchard_flow::for_device("Your iPad restarted while the storage was being split. In DFU mode the installer can check it.").to_owned(),
+                        ),
                     };
-                    dfu_block(&mut out, &title, Some(sub), device.sequence, Some(&device.name), args.wait);
+                    dfu_block(&mut out, &title, Some(&sub), device.sequence, Some(&device.name), args.wait);
                     waiting = Waiting { since: Instant::now(), shown: true, sequence: Some(device.sequence) };
                 }
             }

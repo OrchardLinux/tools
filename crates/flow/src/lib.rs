@@ -412,9 +412,9 @@ pub fn system_name() -> &'static str {
     SYSTEM.get().map(String::as_str).unwrap_or("the system")
 }
 
-/// The kind of device on the cable (0 iPad, 1 iPhone), for the words: set
-/// whenever the flow knows its device. iPad until then.
-static DEVICE_KIND: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+/// The kind of device on the cable (0 iPad, 1 iPhone, 2 not known yet), for
+/// the words: set whenever the flow knows its device.
+static DEVICE_KIND: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
 
 pub fn set_device_model(model: Model) {
     let kind = if matches!(model, Model::IphoneHome | Model::IphoneNoHome) { 1 } else { 0 };
@@ -431,10 +431,15 @@ pub fn device_os() -> &'static str {
     if DEVICE_KIND.load(std::sync::atomic::Ordering::Relaxed) == 1 { "iOS" } else { "iPadOS" }
 }
 
-/// A button's name for the device on the cable: an iPhone's "Top" (the
-/// button the iPad steps name) is its Side button.
+/// A button's name for the device on the cable: the steps name the iPad's
+/// "Top"; an iPhone's is its Side button, and before the device is known
+/// both are named.
 pub fn button_for_device(name: &'static str) -> &'static str {
-    if name == "Top" && device_word() == "iPhone" { "Side" } else { name }
+    match (name, DEVICE_KIND.load(std::sync::atomic::Ordering::Relaxed)) {
+        ("Top", 1) => "Side",
+        ("Top", 2) => "Side/Top",
+        _ => name,
+    }
 }
 
 /// TEXT, written for an iPad, for the device on the cable: "iPadOS" and
@@ -457,7 +462,12 @@ pub fn for_device(text: &str) -> &'static str {
 
 pub fn step(app: App, flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
     let (flow, effects) = step_inner(app, flow, event);
-    if let Some(device) = flow.state.device() {
+    // The device on the cable; on the waiting screen the one seen there, if any.
+    let seen = match &flow.state {
+        State::WaitingForDfu { seen, .. } if seen.len() == 1 => Some(&seen[0].device),
+        _ => None,
+    };
+    if let Some(device) = flow.state.device().or(seen) {
         set_device_model(device.model);
     }
     (flow, effects)
@@ -1060,6 +1070,8 @@ mod device_words {
 
     #[test]
     fn texts_follow_the_device() {
+        DEVICE_KIND.store(2, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(button_for_device("Top"), "Side/Top");
         set_device_model(Model::IphoneNoHome);
         assert_eq!(for_device("Your iPad restarts into iPadOS."), "Your iPhone restarts into iOS.");
         assert_eq!(button_for_device("Top"), "Side");
