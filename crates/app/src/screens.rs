@@ -281,7 +281,7 @@ fn table(steps: &'static [Step], rows: Option<f32>, guide: Option<(Option<crate:
             row = row.h(px(if i == 0 { 48. } else { 49. }));
         }
         if i > 0 {
-            row = row.border_t_1().border_color(c(PANEL_LINE));
+            row = row.border_t_1().border_color(faded(PANEL_LINE));
         }
         list = list.child(row);
     }
