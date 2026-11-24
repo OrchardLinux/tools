@@ -203,6 +203,8 @@ fn restarted(log: &std::path::Path) -> Error {
 fn into_pongo(executor: &Executor, device: &Device, pongo_image: &std::path::Path) -> Result<orchard_usb::Device> {
     let until = Instant::now() + START_WINDOW;
     let mut attempt = 1u32;
+    // ORCHARD_KEEP_AWAKE: no deep CPU sleep for as long as the exploit runs.
+    let _awake = crate::flags::stay_awake();
     loop {
         let args = [std::ffi::OsString::from("-p"), "-k".into(), pongo_image.as_os_str().to_owned()];
         let failed = match run_palera1n(executor, device, &args, PALERA1N_SECONDS) {
