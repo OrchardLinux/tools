@@ -348,6 +348,7 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
         return finish(&mut out, Exit::Usage, "usage", "pin not 6 digits");
     }
     catch_interrupts();
+    out.say("·", "Reading the release…");
     let (handle, rx) = match start(App::Installer, Some(index), args.demo, &mut out) {
         Ok(h) => h,
         Err(code) => return code,
@@ -455,8 +456,30 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
                 if continued_from.as_deref() != Some("found") {
                     continued_from = Some("found".into());
                     out.say("✓", &format!("{} in DFU mode", device.name));
-                    if args.keep_split {
-                        // Straight to the install system (the window's "Skip").
+                    // The Found screen's choice: split first, or install into
+                    // the existing split (its "Skip"). Flags decide; else ask.
+                    let keep = if args.keep_split {
+                        true
+                    } else if args.split.is_some() {
+                        false
+                    } else {
+                        out.detail(&format!("The installer starts your {} to split the storage between iPadOS and {name}.", device.name));
+                        out.detail("Split already? It can install into the existing split instead.");
+                        match ask(&out, "Split the storage, or keep the existing split? [S/k] ").map(|t| t.to_lowercase()) {
+                            Some(t) if t.is_empty() || t == "s" || t == "split" => false,
+                            Some(t) if t == "k" || t == "keep" => true,
+                            Some(_) => {
+                                out.say("✕", "Answer s (split) or k (keep the existing split)");
+                                return finish(&mut out, Exit::Usage, "usage", "split or keep");
+                            }
+                            None => {
+                                out.event(json!({"event": "needs", "action": "input", "flag": "--split GB or --keep-split"}));
+                                out.say("✕", "Split the storage (--split GB) or keep the existing split (--keep-split)?");
+                                return finish(&mut out, Exit::NeedsInput, "needs-input", "--split or --keep-split");
+                            }
+                        }
+                    };
+                    if keep {
                         send(Event::Skip);
                         send(Event::ConfirmSkip);
                     } else {
@@ -536,10 +559,14 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
                     send(Event::Continue);
                 }
             }
-            State::DfuAgain { device, .. } => {
+            State::DfuAgain { device, why, .. } => {
                 if first {
                     waiting_since = Instant::now();
                     said.device_steps = false;
+                    if matches!(why, orchard_flow::Again::Retry | orchard_flow::Again::RetryPrepare) {
+                        out.event(json!({"event": "retry", "reason": "start-failed"}));
+                        out.say("!", "Starting your iPad didn't work (it happens now and then). Do the DFU steps once more; it tries again by itself.");
+                    }
                 }
                 needs_dfu(&mut out, &mut said, device.sequence, Some(&device.name), args.wait, true);
             }
