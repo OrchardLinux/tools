@@ -238,8 +238,9 @@ pub fn trouble_link(cx: &mut Context<Installer>) -> impl IntoElement {
         .py(px(4.))
         .child(icon("life-buoy", 15., c(BLUE)))
         .child(div().font_family(MONO).text_size(px(12.)).text_color(c(BLUE)).child("Having trouble?"));
-    // In a row, so the link is as wide as its text, not the column.
-    div().flex().flex_row().child(link)
+    // In a row, so the link is as wide as its text, not the column; 24 px
+    // below what it helps with instead of the column's 44.
+    div().flex().flex_row().mt(px(-20.)).child(link)
 }
 
 /// 1.1 / 1.11 (and 1.9 on Linux): waiting for DFU, with the steps of the
