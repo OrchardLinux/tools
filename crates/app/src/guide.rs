@@ -3,7 +3,7 @@
 //! row is active, which buttons glow and how far the step's countdown is.
 //! A pure function of the elapsed time, so the screen only reads it.
 //!
-//! The run: "Get ready" for 3 s in place of the cable step, then the button
+//! The run: "Get ready" for 2 s in place of the cable step, then the button
 //! steps; a step with a duration counts it down, a step of two presses in a
 //! row ("Volume Up, then Volume Down") lights one button a second each. It
 //! ends when the last step's countdown is full; "Let go when this window
@@ -31,7 +31,7 @@ struct Phase {
     countdown: bool,
 }
 
-const GET_READY: Phase = Phase { row: 0, seconds: 3., glow: &[], countdown: true };
+const GET_READY: Phase = Phase { row: 0, seconds: 2., glow: &[], countdown: true };
 
 /// The run of each button layout; rows as in screens.rs's step lists.
 fn phases(sequence: Sequence) -> &'static [Phase] {
@@ -129,14 +129,17 @@ pub fn levels(sequence: Sequence, elapsed: f32) -> [f32; 4] {
     out
 }
 
-/// 1 inside [from, to], easing in over FADE after `from` and out over FADE
-/// before `to`.
+/// Easing in over FADE after `from`, full until `to` (the release), then
+/// easing out over FADE: the glow stays whole while the button is held.
 fn window(from: f32, to: f32, t: f32) -> f32 {
     let ease = |x: f32| {
         let x = x.clamp(0., 1.);
         x * x * (3. - 2. * x)
     };
-    ease((t - from) / FADE).min(ease((to - t) / FADE))
+    if t < from {
+        return 0.;
+    }
+    ease((t - from) / FADE).min(ease((to + FADE - t) / FADE))
 }
 
 impl Button {
@@ -192,54 +195,55 @@ mod tests {
     #[test]
     fn the_no_home_button_run() {
         let s = Sequence::VolumeSequence;
-        assert_eq!(length(s), 30.);
-        let m = at(s, 1.5).unwrap();
+        assert_eq!(length(s), 29.);
+        let m = at(s, 1.).unwrap();
         assert_eq!((m.row, m.glow, m.progress), (0, &[][..], Some(0.5)));
-        assert_eq!(at(s, 3.5).unwrap().glow, &[VolumeUp]);
-        let down = at(s, 4.5).unwrap();
+        assert_eq!(at(s, 2.5).unwrap().glow, &[VolumeUp]);
+        let down = at(s, 3.5).unwrap();
         assert_eq!((down.row, down.glow, down.progress), (1, &[VolumeDown][..], None));
-        let hold = at(s, 10.).unwrap();
+        let hold = at(s, 9.).unwrap();
         assert_eq!((hold.row, hold.glow), (2, &[Power][..]));
         assert!((hold.progress.unwrap() - 0.5).abs() < 1e-6);
-        assert_eq!(at(s, 17.).unwrap().glow, &[Power, VolumeDown]);
-        assert_eq!(at(s, 29.9).unwrap().row, 4);
-        assert_eq!(at(s, 30.), None);
+        assert_eq!(at(s, 16.).unwrap().glow, &[Power, VolumeDown]);
+        assert_eq!(at(s, 28.9).unwrap().row, 4);
+        assert_eq!(at(s, 29.), None);
     }
 
     #[test]
-    fn glows_fade_and_stay_lit_across_steps() {
+    fn glows_stay_whole_while_held_and_fade_after() {
         let s = Sequence::VolumeSequence;
         let at = |t: f32| levels(s, t);
-        // Volume Up 3–4 s: rising, then falling; at the hand-over to Volume
-        // Down both are out, and Volume Down rises.
-        assert!(at(3.2)[2] > 0. && at(3.2)[2] < at(3.5)[2]);
-        assert!(at(4.)[2] < 0.01 && at(4.)[3] < 0.01);
-        assert!(at(4.5)[3] > 0.5);
-        // Power from 5 to 20 s, through the step change at 15 s without a dip.
-        assert_eq!(at(15.)[1], 1.);
+        // Volume Up 2–3 s: rising after 2, whole at 3, fading after; Volume
+        // Down rises from 3 meanwhile.
+        assert!(at(2.2)[2] > 0. && at(2.2)[2] < 1.);
+        assert_eq!(at(3.)[2], 1.);
+        assert!(at(3.3)[2] > 0. && at(3.3)[2] < 1. && at(3.3)[3] > 0.);
+        // Power from 4 to 19 s, whole through the step change at 14.
+        assert_eq!(at(14.)[1], 1.);
+        assert_eq!(at(18.9)[1], 1.);
         assert_eq!(at(1.)[1], 0.);
     }
 
     #[test]
-    fn held_buttons_pulse_before_they_are_let_go() {
+    fn held_buttons_blink_before_they_are_let_go() {
         let s = Sequence::VolumeSequence;
-        // Power: held 5–20 s, let go at 20: urgent from 18, not at 14 (held on at 15).
-        assert_eq!(urgency(s, 14.)[1], 0.);
-        assert_eq!(urgency(s, 18.5)[1], 0.);
-        assert!((urgency(s, 19.25)[1] - 0.5).abs() < 1e-5);
-        // Volume Down held on from 15 to the end: not urgent at 19, urgent at 29.
-        assert_eq!(urgency(s, 19.)[3], 0.);
-        assert!(urgency(s, 29.5)[3] > 0.6);
+        // Power: let go at 19: urgent from 17.5, not before 14 (held on).
+        assert_eq!(urgency(s, 13.5)[1], 0.);
+        assert_eq!(urgency(s, 17.4)[1], 0.);
+        assert!(urgency(s, 18.)[1] > 0.);
+        // Volume Down held to the end: not at 18, urgent at 28.5.
+        assert_eq!(urgency(s, 18.)[3], 0.);
+        assert!(urgency(s, 28.5)[3] > 0.);
         // Taps never.
-        assert_eq!(urgency(s, 3.9)[2], 0.);
+        assert_eq!(urgency(s, 2.9)[2], 0.);
     }
 
     #[test]
     fn the_home_button_and_iphone_7_runs() {
-        assert_eq!(length(Sequence::HomePower), 23.);
+        assert_eq!(length(Sequence::HomePower), 22.);
         assert_eq!(at(Sequence::HomePower, 5.).unwrap().glow, &[Home, Power]);
         assert_eq!(at(Sequence::HomePower, 14.).unwrap().glow, &[Home]);
         assert_eq!(at(Sequence::VolumeDownSide, 5.).unwrap().glow, &[VolumeDown, Power]);
-        assert_eq!(at(Sequence::VolumeDownSide, 23.), None);
+        assert_eq!(at(Sequence::VolumeDownSide, 22.), None);
     }
 }

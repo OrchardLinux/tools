@@ -206,18 +206,10 @@ pub fn device(view: &DeviceView, seconds: f32, guide: Option<crate::guide::Look>
     let level = |b: Button| if pressed.contains(&b) { guide.map(|g| g.levels[as_guide(b).slot()]).unwrap_or(0.) } else { 0. };
     // How far the run's look is faded in (0…1): muted buttons come back with it.
     let fade = guide.map(|g| g.fade).unwrap_or(0.);
-    // Before a held button is let go it pulses: faster and stronger as the
-    // moment nears (urgency 0…1).
-    let pulse = |b: Button| {
-        let Some(g) = guide else { return 1. };
-        let u = if pressed.contains(&b) { g.urgency[as_guide(b).slot()] } else { 0. };
-        if u <= 0. {
-            return 1.;
-        }
-        let hz = 3. + 4. * u;
-        let wave = 0.5 + 0.5 * (g.seconds * hz * std::f32::consts::TAU).sin();
-        // From the first moment clearly visible, down to near the muted level.
-        1. - (0.45 + 0.45 * u) * (1. - wave)
+    // Before a held button is let go it blinks: 100 ms on, 100 ms off.
+    let blink_off = |b: Button| {
+        let Some(g) = guide else { return false };
+        pressed.contains(&b) && g.urgency[as_guide(b).slot()] > 0. && ((g.seconds * 10.) as i64) % 2 == 1
     };
     let button = |b: Button| {
         if !pressed.contains(&b) {
@@ -229,18 +221,19 @@ pub fn device(view: &DeviceView, seconds: f32, guide: Option<crate::guide::Look>
             Button::Home | Button::VolumeDown => c(BUTTON_OTHER),
         };
         if guide.is_some() {
-            color.a = (1. - (1. - (0.35 + 0.65 * level(b))) * fade) * pulse(b);
+            let lit = if blink_off(b) { 0. } else { level(b) };
+            color.a = 1. - (1. - (0.35 + 0.65 * lit)) * fade;
         }
         color
     };
     // The glow: a soft halo in the button's colour.
     let shine = |d: Div, b: Button| {
-        let lit = level(b);
+        let lit = if blink_off(b) { 0. } else { level(b) };
         if lit < 0.01 {
             return d;
         }
         let mut halo = button(b);
-        halo.a = 0.8 * lit * fade * pulse(b);
+        halo.a = 0.8 * lit * fade;
         d.shadow(vec![gpui::BoxShadow { color: halo, offset: gpui::point(px(0.), px(0.)), blur_radius: px(10.), spread_radius: px(1.) }])
     };
     let mut frame = div().relative().w(px(WIDTH)).h(px(HEIGHT)).flex_none();
