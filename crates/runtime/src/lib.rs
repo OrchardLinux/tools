@@ -16,6 +16,7 @@ pub mod stamp;
 pub mod orchard_tools;
 pub mod ssh_keys;
 pub mod timezone;
+pub mod session_log;
 pub mod setup_launcher;
 pub mod lockdown;
 pub mod overlay;

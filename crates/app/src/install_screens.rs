@@ -695,11 +695,25 @@ fn create_account(installer: &Installer, account: &Account, ready: bool, cx: &mu
                 .flex_col()
                 .gap(px(12.))
                 .child(title("Create your account"))
-                .child(div().text_size(px(14.)).text_color(c(SUBTITLE)).child(if installer.flow.resuming {
-                    "The install continues where it stopped once you've entered your account again."
-                } else {
-                    orchard_flow::for_device("Your iPad is getting ready in the meantime.")
-                })),
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(div().text_size(px(14.)).text_color(c(SUBTITLE)).child(if installer.flow.resuming {
+                            "The install continues where it stopped once you've entered your account again."
+                        } else {
+                            orchard_flow::for_device("Your iPad is getting ready in the meantime.")
+                        }))
+                        // 3.2d: the start's Details, in a dialog (3.2e).
+                        .when(!ready && !installer.flow.resuming, |d| {
+                            d.child(div().id("details-info").cursor_pointer().child(icon("info", 15., c(MUTED))).on_click(cx.listener(|this, _, _, cx| {
+                                this.details_info = true;
+                                cx.notify();
+                            })))
+                        }),
+                ),
         )
         .child(form)
         .child(ssh_row(account, cx))

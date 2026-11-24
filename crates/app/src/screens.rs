@@ -516,6 +516,7 @@ pub fn overlay(installer: &Installer, cx: &mut Context<Installer>) -> Option<Any
     let dialog = match kind {
         crate::DialogKind::Trouble => crate::install_screens::trouble_dialog(&focus, cx),
         crate::DialogKind::SshInfo => crate::install_screens::ssh_dialog(installer, &focus, cx),
+        crate::DialogKind::Details => crate::details::dialog(installer, &focus, cx),
         crate::DialogKind::Skip => skip_dialog(&focus, cx),
         crate::DialogKind::Replug => crate::install_screens::replug_dialog(),
         crate::DialogKind::SplitErase => {
@@ -605,6 +606,8 @@ pub fn open_dialog(installer: &Installer) -> Option<crate::DialogKind> {
         Some(crate::DialogKind::Trouble)
     } else if installer.ssh_info {
         Some(crate::DialogKind::SshInfo)
+    } else if installer.details_info {
+        Some(crate::DialogKind::Details)
     } else if matches!(installer.flow.state, State::Found { confirm_skip: true, .. }) {
         Some(crate::DialogKind::Skip)
     } else if matches!(installer.flow.state, State::ConfirmErase { .. }) {

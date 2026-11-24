@@ -175,6 +175,8 @@ pub enum DialogKind {
     QuitBlocked,
     /// What "Allow SSH from this computer" does (3.2i).
     SshInfo,
+    /// The start's Details while the install system starts (3.2e).
+    Details,
     /// A download failed for good (retries didn't help): why, and try again.
     Download,
 }
@@ -232,7 +234,9 @@ pub struct Installer {
     pub details_open: bool,
     pub details: Tween,
     pub details_scroll: gpui::ScrollHandle,
-    pub details_seen: usize,
+    pub details_seen: std::cell::Cell<usize>,
+    /// 3.2e: the Details dialog, opened by the (i) beside 3.2's subtitle.
+    pub details_info: bool,
     pub copied_at: Option<Instant>,
     /// The account form's fields (3.2): password, repeat, PIN, repeat.
     pub inputs: Option<[gpui::Entity<input::TextInput>; 4]>,
@@ -446,6 +450,7 @@ impl Installer {
             // A new screen closes the trouble dialog; focus starts afresh.
             self.trouble = false;
             self.ssh_info = false;
+            self.details_info = false;
             self.focus_before_dialog = None;
             // Back when the screen goes back in the flow.
             let back = (content as u8) < (shown.content as u8);
@@ -728,6 +733,9 @@ impl Installer {
                 } else if this.ssh_info {
                     this.ssh_info = false;
                     cx.notify();
+                } else if this.details_info {
+                    this.details_info = false;
+                    cx.notify();
                 } else if matches!(this.flow.state, orchard_flow::State::Found { confirm_skip: true, .. }) {
                     this.send(Event::CancelSkip);
                 } else if matches!(this.flow.state, orchard_flow::State::ConfirmErase { .. }) || this.flow.confirming_split {
@@ -828,6 +836,11 @@ pub fn run(app: Kind) {
     let latest = Latest::default();
     // --demo: a scripted device to click through every screen; no hardware.
     let demo = std::env::args().any(|a| a == "--demo");
+    // Our own messages also in logs/installer-<time>.log (launcher-… for
+    // Orchard): there's no terminal when started from the app menu.
+    if !demo {
+        orchard_runtime::session_log::start(if app == Kind::Launcher { "launcher" } else { "installer" });
+    }
     let started = if demo {
         driver::start_demo(options(app), Bridge { latest: latest.clone(), last: String::new() })
     } else {
@@ -940,7 +953,8 @@ pub fn run(app: Kind) {
                     details_open: false,
                     details: Tween::new(0., 220.),
                     details_scroll: gpui::ScrollHandle::new(),
-                    details_seen: 0,
+                    details_seen: std::cell::Cell::new(0),
+                    details_info: false,
                     copied_at: None,
                     inputs: None,
                     username: username.clone(),

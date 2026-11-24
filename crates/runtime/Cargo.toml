@@ -7,6 +7,7 @@ publish.workspace = true
 description = "Runs the installer's flow: turns USB and work into flow events and carries out its effects."
 
 [dependencies]
+libc = "0.2"
 orchard-flow = { path = "../flow" }
 orchard-usb.workspace = true
 orchard-boards.workspace = true

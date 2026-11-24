@@ -73,6 +73,8 @@ pub struct Term {
     color: bool,
     live: Option<(Vec<Span>, Instant)>,
     log: Option<File>,
+    /// Where the log goes (--log, else the cache's logs/cli-<time>.log).
+    pub log_path: Option<std::path::PathBuf>,
     raw: Option<libc::termios>,
 }
 
@@ -84,7 +86,14 @@ impl Term {
         let color = tty && std::env::var_os("NO_COLOR").is_none();
         // SAFETY: duplicates fd 2 for our own use, then points fd 2 at the log.
         let out = unsafe { File::from_raw_fd(libc::dup(2)) };
-        let log_file = log.and_then(|p| File::create(p).ok());
+        // Without --log, as the app: the cache's logs/cli-<time>.log.
+        let log_path = log.map(|p| p.to_owned()).or_else(|| {
+            let dir = orchard_cache::store::default_dir().ok()?.join("logs");
+            std::fs::create_dir_all(&dir).ok()?;
+            let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            Some(dir.join(format!("cli-{stamp}.log")))
+        });
+        let log_file = log_path.as_deref().and_then(|p| File::create(p).ok());
         let target = match &log_file {
             Some(f) => f.try_clone().ok(),
             None => File::options().write(true).open("/dev/null").ok(),
@@ -108,7 +117,7 @@ impl Term {
                 }
             }
         }
-        Term { out, tty, color, live: None, log: log_file, raw: None }
+        Term { out, tty, color, live: None, log: log_file, log_path, raw: None }
     }
 
     fn paint(&self, spans: &[Span]) -> String {

@@ -350,7 +350,11 @@ fn finish(out: &mut Out, exit: Exit, code: &str, message: &str) -> ExitCode {
     out.term.live(None);
     out.term.keys(false);
     if !matches!(exit, Exit::Done) {
-        out.event(json!({"event": "error", "code": code, "message": message, "exit": exit as u8}));
+        let log = out.term.log_path.as_ref().map(|p| p.display().to_string());
+        out.event(json!({"event": "error", "code": code, "message": message, "exit": exit as u8, "log": log}));
+        if let Some(log) = log {
+            out.muted(format!("Log: {log}"));
+        }
     }
     ExitCode::from(exit as u8)
 }
@@ -491,6 +495,7 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
     let mut lost_said = false;
     let mut ctrl_c_said = false;
     let mut attempt_said = 1u32;
+    let mut stage_said: Option<&'static str> = None;
     loop {
         out.term.tick();
         waiting_keys(&mut out, &mut waiting, args.wait);
@@ -596,7 +601,22 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
                 if flow.start_attempt > attempt_said {
                     attempt_said = flow.start_attempt;
                     out.event(json!({"event": "retry", "reason": "exploit", "attempt": flow.start_attempt}));
-                    out.term.live(Some(vec![s(orchard_flow::for_device("Starting your iPad"), FG), s(format!("  attempt {}", flow.start_attempt), MUTED)]));
+                }
+                // The stage from palera1n's log, beside the attempt.
+                let stage = orchard_flow::start_stage(&flow.start_log);
+                if stage != stage_said || first {
+                    if stage != stage_said {
+                        if let Some(st) = stage {
+                            out.event(json!({"event": "stage", "stage": st, "attempt": flow.start_attempt.max(1)}));
+                        }
+                    }
+                    stage_said = stage;
+                    let mut l = vec![s(orchard_flow::for_device("Starting your iPad"), FG)];
+                    if flow.start_attempt > 1 {
+                        l.push(s(format!("  attempt {}", flow.start_attempt), MUTED));
+                    }
+                    l.push(s(stage.map(|st| format!("  {}", orchard_flow::for_device(st))).unwrap_or_else(|| "  about a minute".into()), MUTED));
+                    out.term.live(Some(l));
                 }
                 if *slow && !slow_said {
                     slow_said = true;
@@ -718,6 +738,7 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
                         out.muted(orchard_flow::for_device(p));
                     }
                     attempt_said = 1;
+                    stage_said = None;
                     dfu_block(&mut out, &title, Some(&sub), device.sequence, Some(&device.name), args.wait);
                     waiting = Waiting { since: Instant::now(), shown: true, sequence: Some(device.sequence) };
                 }
