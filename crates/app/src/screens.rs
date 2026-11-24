@@ -283,7 +283,9 @@ fn waiting_for_dfu(tab: Sequence, rows: f32, note: f32, unresponsive: bool, laun
                             div()
                                 .h(px((NOTE_GAP + NOTE_LINE) * note))
                                 .overflow_hidden()
-                                .opacity(note)
+                                // Fades in after its space opened, out before it
+                                // closes: the fade reads as its own step.
+                                .opacity(note.powi(3))
                                 .child(div().pt(px(NOTE_GAP)).text_size(px(13.)).line_height(px(NOTE_LINE)).text_color(c(MUTED)).child("iPhone 8 and later use the No Home button steps.")),
                         ),
                 ),
