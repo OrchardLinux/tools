@@ -185,6 +185,38 @@ fn strip_ansi(text: &str) -> String {
 
 const RESTARTED: &str = "it restarted normally instead";
 
+/// palera1n's log as readable lines: the time of day and the message, no
+/// colors, no banner; a line repeated in a row once with "(×N)". The last
+/// `keep` lines.
+fn readable(text: &str, keep: usize) -> Vec<String> {
+    let mut out: Vec<(String, usize)> = Vec::new();
+    for raw in text.lines() {
+        let line = strip_ansi(raw);
+        let line = line.trim();
+        let (time, rest) = match (line.find('['), line.find(']')) {
+            (Some(a), Some(b)) if a < b => (line[a + 1..b].split_whitespace().last().unwrap_or("").to_owned(), line[b + 1..].trim()),
+            _ => continue,
+        };
+        let (level, message) = match rest.strip_prefix('<').and_then(|r| r.split_once('>')) {
+            Some((level, m)) => (level, m.trim_start_matches(':').trim()),
+            None => ("", rest),
+        };
+        if message.is_empty() {
+            continue;
+        }
+        let message = if level.eq_ignore_ascii_case("error") { format!("Error: {message}") } else { message.to_owned() };
+        match out.last_mut() {
+            Some((last, n)) if last.split_once("  ").map(|(_, m)| m) == Some(message.as_str()) => *n += 1,
+            _ => out.push((format!("{time}  {message}"), 1)),
+        }
+    }
+    let notes = crate::replug::notes();
+    let mut lines: Vec<String> = out.into_iter().map(|(l, n)| if n > 1 { format!("{l} (×{n})") } else { l }).collect();
+    lines.extend(notes.into_iter().map(|n| format!("          {n}")));
+    let skip = lines.len().saturating_sub(keep);
+    lines.split_off(skip)
+}
+
 /// The device left DFU mode and started iOS normally.
 fn restarted(log: &std::path::Path) -> Error {
     let why = last_error(log).map(|e| format!(" ({e})")).unwrap_or_default();
@@ -266,9 +298,19 @@ impl Progress {
         use std::sync::atomic::Ordering;
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let flag = stop.clone();
+        crate::replug::clear_notes();
         let thread = std::thread::spawn(move || {
             let (mut wait, mut stalled, mut booting) = (None::<(Instant, Duration)>, false, false);
+            let mut shown: Vec<String> = Vec::new();
             while !flag.load(Ordering::Relaxed) {
+                // The Details panel's lines, when they changed.
+                if let Ok(text) = std::fs::read(&log) {
+                    let lines = readable(&String::from_utf8_lossy(&text), 60);
+                    if lines != shown {
+                        shown = lines.clone();
+                        let _ = events.send(Event::StartLog(lines));
+                    }
+                }
                 if wait.is_none() {
                     wait = dropped(&log, crate::replug::timing()).map(|settle| (Instant::now(), settle));
                 }
@@ -370,5 +412,17 @@ mod palera1n_errors {
         std::fs::write(&log, "no errors here\n").unwrap();
         assert_eq!(last_error(&log), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn readable_lines_from_both_palera1n_versions() {
+        let beta = " \x1b[38;5;47m[2026/11/25 03:56:42]\x1b[0m  \x1b[38;5;51m\x1b[1m<Log>\x1b[22m\x1b[0m Found DFU mode device\n:: Made by: asdfugil\n [2026/11/25 03:56:43]  <Log> Checkmate?\n";
+        assert_eq!(readable(beta, 10), vec!["03:56:42  Found DFU mode device", "03:56:43  Checkmate?"]);
+        let v24 = " - [11/25/26 05:07:01] <Info>: Setting up the exploit\n - [11/25/26 05:07:02] <Verbose>: UaF race: heuristic strategy failed, setup packet was not accepted\n - [11/25/26 05:07:03] <Verbose>: UaF race: heuristic strategy failed, setup packet was not accepted\n - [11/25/26 05:07:45] <Error>: Unable to perform checkm8: ffffffff\n";
+        assert_eq!(
+            readable(v24, 10),
+            vec!["05:07:01  Setting up the exploit", "05:07:02  UaF race: heuristic strategy failed, setup packet was not accepted (×2)", "05:07:45  Error: Unable to perform checkm8: ffffffff"]
+        );
+        assert_eq!(readable(v24, 1), vec!["05:07:45  Error: Unable to perform checkm8: ffffffff"]);
     }
 }

@@ -66,6 +66,10 @@ pub fn run(app: App, mut observer: impl Observer, input: Receiver<Event>, _event
                     if std::env::var_os("ORCHARD_DEMO_RETRY").is_some() {
                         due.push((at(0.6), Event::StartAttempt(2)));
                         due.push((at(1.2), Event::StartAttempt(3)));
+                        let log: Vec<String> = ["05:17:10  Setting up the exploit", "05:17:12  UaF race: heuristic strategy failed, setup packet was not accepted (×148)", "05:17:26  Entered initial checkm8 state after 149 steps", "05:17:26  Checkmate!", "05:17:26  Device should now reconnect in download mode", "05:17:33  Entered download mode", "05:17:33  Booting PongoOS..."].iter().map(|l| l.to_string()).collect();
+                        for (i, k) in [1usize, 2, 3, 4, 5, 6, 7].into_iter().enumerate() {
+                            due.push((at(1.3 + i as f32 * 0.3), Event::StartLog(log[..k].to_vec())));
+                        }
                     }
                     due.push((at(3.8), Event::BootBooting));
                     due.push((at(1.), Event::Detached { id: ipad().id }));

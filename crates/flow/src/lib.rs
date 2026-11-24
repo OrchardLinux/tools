@@ -250,6 +250,9 @@ pub enum Event {
     /// The exploit didn't take and the device is still in DFU mode: palera1n
     /// runs again, this attempt (2, 3, …).
     StartAttempt(u32),
+    /// palera1n's log of the start under way, as readable lines (time and
+    /// message), for the Details panel.
+    StartLog(Vec<String>),
     /// palera1n boots iPadOS (its "Booting..."): from here iPadOS starts.
     BootBooting,
     /// The companion's connection dropped while the device still runs
@@ -360,11 +363,13 @@ pub struct Flow {
     pub start_attempt: u32,
     /// Why the last start didn't work (palera1n's words), for DFU mode again.
     pub start_problem: Option<String>,
+    /// palera1n's log of the start under way (Details).
+    pub start_log: Vec<String>,
 }
 
 impl Flow {
     pub fn new() -> Flow {
-        Flow { state: State::start(), assets: Assets::default(), write_waiting: false, start_waiting: None, boot_waiting: None, companion: false, split_problem: None, install_problem: None, resuming: false, boot_stalled: false, booting: false, unresponsive: false, confirming_split: false, launch_problem: None, entry_started: false, start_attempt: 0, start_problem: None }
+        Flow { state: State::start(), assets: Assets::default(), write_waiting: false, start_waiting: None, boot_waiting: None, companion: false, split_problem: None, install_problem: None, resuming: false, boot_stalled: false, booting: false, unresponsive: false, confirming_split: false, launch_problem: None, entry_started: false, start_attempt: 0, start_problem: None, start_log: Vec::new() }
     }
 
     /// The asset the current step waits for, for "Getting your iPad ready…".
@@ -417,6 +422,29 @@ pub fn set_system_name(name: &str) {
 /// The system's name, or a neutral stand-in before the release is known.
 pub fn system_name() -> &'static str {
     SYSTEM.get().map(String::as_str).unwrap_or("the system")
+}
+
+/// Where a start is, read from its log lines (the newest that says): the
+/// Details panel's "Stage". Written for an iPad (see [`for_device`]).
+pub fn start_stage(lines: &[String]) -> Option<&'static str> {
+    lines.iter().rev().find_map(|l| {
+        let l = l.as_str();
+        Some(if l.contains("USB port reset") {
+            "Resetting the USB port"
+        } else if l.contains("Booting PongoOS") || l.contains("Entered download mode") || l.contains("Download mode device found") || l.contains("Found download mode device") {
+            "Starting Pongo"
+        } else if l.contains("Booting") {
+            "Starting iPadOS"
+        } else if l.contains("Checkmate") {
+            "Checkmate · waiting for the iPad on USB"
+        } else if l.contains("Setting up the exploit") || l.contains("setup stage") || l.contains("UaF race") || l.contains("checkm8") {
+            "Setting up the exploit"
+        } else if l.contains("DFU mode device") || l.contains("Waiting for DFU") {
+            "Connecting to the iPad"
+        } else {
+            return None;
+        })
+    })
 }
 
 /// The kind of device on the cable (0 iPad, 1 iPhone, 2 not known yet), for
@@ -551,6 +579,10 @@ fn step_inner(app: App, mut flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
             flow.boot_stalled = false;
             return (flow, out);
         }
+        Event::StartLog(lines) => {
+            flow.start_log = lines;
+            return (flow, out);
+        }
         Event::BootBooting => {
             flow.booting = true;
             return (flow, out);
@@ -636,6 +668,7 @@ fn step_inner(app: App, mut flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
     }
     if !(booting_screen || matches!(flow.state, State::Found { .. })) {
         flow.start_attempt = 0;
+        flow.start_log.clear();
     }
     if !matches!(flow.state, State::ChooseSplit { .. }) {
         flow.confirming_split = false;

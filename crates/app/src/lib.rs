@@ -3,6 +3,7 @@
 //! does the work on its own thread; this draws the flow's view and sends what
 //! the user does back as events.
 mod assets;
+mod details;
 mod device;
 mod input;
 mod install_screens;
@@ -226,6 +227,13 @@ pub struct Installer {
     shown: Option<Shown>,
     /// The waiting screen's step table, in rows, so its height animates.
     pub rows: Tween,
+    /// The start's Details panel (2.1p/2.1q): open or not, its height, its
+    /// log's scroll, how many log lines were shown, when Copy was pressed.
+    pub details_open: bool,
+    pub details: Tween,
+    pub details_scroll: gpui::ScrollHandle,
+    pub details_seen: usize,
+    pub copied_at: Option<Instant>,
     /// The account form's fields (3.2): password, repeat, PIN, repeat.
     pub inputs: Option<[gpui::Entity<input::TextInput>; 4]>,
     /// The account user the release creates.
@@ -929,6 +937,11 @@ pub fn run(app: Kind) {
                     title: title.clone(),
                     shown: None,
                     rows: Tween::new(4., 280.),
+                    details_open: false,
+                    details: Tween::new(0., 220.),
+                    details_scroll: gpui::ScrollHandle::new(),
+                    details_seen: 0,
+                    copied_at: None,
                     inputs: None,
                     username: username.clone(),
                     layout: None,

@@ -101,10 +101,33 @@ fn await_until(stop: &AtomicBool, limit: Duration, condition: impl Fn() -> bool)
     }
 }
 
+/// What the port reset did during the current palera1n run, for the
+/// Details panel (cleared when a watch starts).
+static NOTES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+pub fn clear_notes() {
+    if let Ok(mut n) = NOTES.lock() {
+        n.clear();
+    }
+}
+
+pub fn notes() -> Vec<String> {
+    NOTES.lock().map(|n| n.clone()).unwrap_or_default()
+}
+
+fn note(text: &str) {
+    if let Ok(mut n) = NOTES.lock() {
+        n.push(text.to_owned());
+    }
+}
+
 /// Watches palera1n's log until stopped; resets the port when the device
 /// dropped after checkm8 and did not come back. Returns the number of resets.
 /// The port is always enabled again.
 pub fn watch(log: &Path, control: &Path, stop: &AtomicBool, timing: Timing) -> u32 {
+    if let Ok(mut n) = NOTES.lock() {
+        n.clear();
+    }
     let settle = loop {
         if stop.load(Ordering::Relaxed) {
             return 0;
@@ -127,6 +150,7 @@ pub fn watch(log: &Path, control: &Path, stop: &AtomicBool, timing: Timing) -> u
             return resets;
         }
         resets += 1;
+        note(&format!("USB port reset by the installer ({resets})"));
         if await_until(stop, timing.wait, || returned(log)) {
             return resets;
         }

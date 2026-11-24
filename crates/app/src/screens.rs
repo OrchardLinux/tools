@@ -707,6 +707,7 @@ fn launcher_column(installer: &mut Installer, cx: &mut Context<Installer>) -> Op
         State::Found { device, .. } => column()
             .child(title(format!("Starting your {}", kind(device).0)))
             .children(crate::install_screens::attempt_line(installer.flow.start_attempt))
+            .child(crate::details::details(installer, cx))
             .into_any_element(),
         State::ChooseSystem { device, entries, selected } => choose_system(device, entries, *selected, cx).into_any_element(),
         // Until m1n1 took the entry, the window stays connected (quitting

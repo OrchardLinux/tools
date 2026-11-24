@@ -562,10 +562,12 @@ pub fn replug_dialog() -> Div {
 }
 
 /// 2.1a: palera1n is starting the iPad; from the second attempt on, which one.
-fn starting_ipad(attempt: u32) -> Div {
+fn starting_ipad(installer: &mut Installer, cx: &mut Context<Installer>) -> Div {
+    let attempt = installer.flow.start_attempt;
     column()
         .child(header(orchard_flow::for_device("Starting your iPad"), orchard_flow::for_device("This takes about a minute. The window moves on when iPadOS is coming up."), TITLE))
         .children(attempt_line(attempt))
+        .child(crate::details::details(installer, cx))
 }
 
 /// "Attempt 3. …" while the exploit is tried again (2.1a, 3.2, the launcher).
@@ -1054,7 +1056,7 @@ pub fn text_column(installer: &mut Installer, cx: &mut Context<Installer>) -> Op
     Some(match &state {
         State::UsbAccessNeeded => usb_access(cx).into_any_element(),
         // 2.1a until palera1n boots iPadOS, then 2.1.
-        State::WaitingForIpados { .. } if !installer.flow.booting => starting_ipad(installer.flow.start_attempt).into_any_element(),
+        State::WaitingForIpados { .. } if !installer.flow.booting => starting_ipad(installer, cx).into_any_element(),
         State::WaitingForIpados { slow, .. } => waiting_for_ipados(*slow, cx).into_any_element(),
         State::ChooseSplit { layout, omarchy_gb, approved, .. } => {
             installer.layout = Some(layout.clone());
