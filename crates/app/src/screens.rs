@@ -251,11 +251,12 @@ fn table(steps: &'static [Step], rows: Option<f32>, guide: Option<(Option<crate:
         match moment {
             // The moment's row: its countdown instead of the duration.
             Some(m) => {
-                if let (Some(progress), Some(left)) = (m.progress, m.remaining) {
-                    // The seconds left, then the circle.
-                    row = row
-                        .child(div().font_family(MONO).text_size(px(12.)).text_color(c(SUBTITLE)).child(format!("{}", left.ceil() as u32)))
-                        .child(countdown(progress, guide_color(m.glow)));
+                if let Some(progress) = m.progress {
+                    // The seconds left (none while settling), then the circle.
+                    if let Some(left) = m.remaining {
+                        row = row.child(div().font_family(MONO).text_size(px(12.)).text_color(c(SUBTITLE)).child(format!("{}", left.ceil() as u32)));
+                    }
+                    row = row.child(countdown(progress, guide_color(m.glow)));
                 }
             }
             None => {

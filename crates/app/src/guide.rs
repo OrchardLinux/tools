@@ -33,6 +33,11 @@ struct Phase {
 
 const GET_READY: Phase = Phase { row: 0, seconds: 2., glow: &[], countdown: true };
 
+/// The second after the last step: its row still active (circle full, no
+/// number), nothing lit, the rest still darkened; then the run ends.
+const SETTLE_ROW_2: Phase = Phase { row: 2, seconds: 1., glow: &[], countdown: false };
+const SETTLE_ROW_4: Phase = Phase { row: 4, seconds: 1., glow: &[], countdown: false };
+
 /// The run of each button layout; rows as in screens.rs's step lists.
 fn phases(sequence: Sequence) -> &'static [Phase] {
     match sequence {
@@ -40,22 +45,25 @@ fn phases(sequence: Sequence) -> &'static [Phase] {
             GET_READY,
             Phase { row: 1, seconds: 10., glow: &[Home, Power], countdown: true },
             Phase { row: 2, seconds: 10., glow: &[Home], countdown: true },
+            SETTLE_ROW_2,
         ],
         Sequence::VolumeDownSide => &[
             GET_READY,
             Phase { row: 1, seconds: 10., glow: &[VolumeDown, Power], countdown: true },
             Phase { row: 2, seconds: 10., glow: &[VolumeDown], countdown: true },
+            SETTLE_ROW_2,
         ],
         Sequence::VolumeSequence => &[
             GET_READY,
-            // Two taps, each 0.8 s lit and a 0.2 s break, so they read as two.
-            Phase { row: 1, seconds: 0.8, glow: &[VolumeUp], countdown: false },
-            Phase { row: 1, seconds: 0.2, glow: &[], countdown: false },
-            Phase { row: 1, seconds: 0.8, glow: &[VolumeDown], countdown: false },
-            Phase { row: 1, seconds: 0.2, glow: &[], countdown: false },
+            // Two taps, each 0.6 s lit and a 0.4 s break, so they read as two.
+            Phase { row: 1, seconds: 0.6, glow: &[VolumeUp], countdown: false },
+            Phase { row: 1, seconds: 0.4, glow: &[], countdown: false },
+            Phase { row: 1, seconds: 0.6, glow: &[VolumeDown], countdown: false },
+            Phase { row: 1, seconds: 0.4, glow: &[], countdown: false },
             Phase { row: 2, seconds: 10., glow: &[Power], countdown: true },
             Phase { row: 3, seconds: 5., glow: &[Power, VolumeDown], countdown: true },
             Phase { row: 4, seconds: 10., glow: &[VolumeDown], countdown: true },
+            SETTLE_ROW_4,
         ],
     }
 }
@@ -86,9 +94,13 @@ pub fn at(sequence: Sequence, elapsed: f32) -> Option<Moment> {
     for (i, phase) in phases.iter().enumerate() {
         let end = start + phase.seconds;
         if elapsed < end {
+            // Settling (the last phase, after the last step): the full circle.
+            if i == phases.len() - 1 && phase.glow.is_empty() && !phase.countdown {
+                return Some(Moment { row: phase.row, glow: phase.glow, progress: Some(1.), remaining: None });
+            }
             // A countdown spans every phase of its row (one row, one circle).
             let row_start = start - phases[..i].iter().rev().take_while(|p| p.row == phase.row).map(|p| p.seconds).sum::<f32>();
-            let row_len: f32 = phases.iter().filter(|p| p.row == phase.row).map(|p| p.seconds).sum();
+            let row_len: f32 = phases.iter().filter(|p| p.row == phase.row && (p.countdown || !phase.countdown)).map(|p| p.seconds).sum();
             let progress = phase.countdown.then(|| ((elapsed - row_start) / row_len).clamp(0., 1.));
             let remaining = phase.countdown.then(|| (row_start + row_len - elapsed).max(0.));
             return Some(Moment { row: phase.row, glow: phase.glow, progress, remaining });
@@ -172,30 +184,33 @@ mod tests {
     #[test]
     fn the_no_home_button_run() {
         let s = Sequence::VolumeSequence;
-        assert_eq!(length(s), 29.);
+        assert_eq!(length(s), 30.);
         let m = at(s, 1.).unwrap();
         assert_eq!((m.row, m.glow, m.progress), (0, &[][..], Some(0.5)));
         assert_eq!(at(s, 2.5).unwrap().glow, &[VolumeUp]);
-        let down = at(s, 3.4).unwrap();
+        let down = at(s, 3.3).unwrap();
         assert_eq!((down.row, down.glow, down.progress), (1, &[VolumeDown][..], None));
         let hold = at(s, 9.).unwrap();
         assert_eq!((hold.row, hold.glow), (2, &[Power][..]));
         assert!((hold.progress.unwrap() - 0.5).abs() < 1e-6);
         assert_eq!(at(s, 16.).unwrap().glow, &[Power, VolumeDown]);
         assert_eq!(at(s, 28.9).unwrap().row, 4);
-        assert_eq!(at(s, 29.), None);
+        // Settling: the last row, full circle, no number, nothing lit.
+        let settle = at(s, 29.5).unwrap();
+        assert_eq!((settle.row, settle.glow, settle.progress, settle.remaining), (4, &[][..], Some(1.), None));
+        assert_eq!(at(s, 30.), None);
     }
 
     #[test]
     fn glows_stay_whole_while_held_and_fade_after() {
         let s = Sequence::VolumeSequence;
         let at = |t: f32| levels(s, t);
-        // Volume Up 2–2.8 s, a tap: in and out within 0.15 s, then a break
+        // Volume Up 2–2.6 s, a tap: in and out within 0.15 s, then a break
         // with nothing lit before Volume Down at 3.
         assert!(at(2.05)[2] > 0. && at(2.05)[2] < 1.);
-        assert_eq!(at(2.5)[2], 1.);
-        assert_eq!(at(2.97)[2], 0.);
-        assert_eq!(at(2.97)[3], 0.);
+        assert_eq!(at(2.4)[2], 1.);
+        assert_eq!(at(2.9)[2], 0.);
+        assert_eq!(at(2.9)[3], 0.);
         assert_eq!(at(3.3)[3], 1.);
         // A held button fades slowly: Power half-way in after 0.35 s.
         assert!((at(4.35)[1] - 0.5).abs() < 1e-3);
@@ -207,10 +222,10 @@ mod tests {
 
     #[test]
     fn the_home_button_and_iphone_7_runs() {
-        assert_eq!(length(Sequence::HomePower), 22.);
+        assert_eq!(length(Sequence::HomePower), 23.);
         assert_eq!(at(Sequence::HomePower, 5.).unwrap().glow, &[Home, Power]);
         assert_eq!(at(Sequence::HomePower, 14.).unwrap().glow, &[Home]);
         assert_eq!(at(Sequence::VolumeDownSide, 5.).unwrap().glow, &[VolumeDown, Power]);
-        assert_eq!(at(Sequence::VolumeDownSide, 22.), None);
+        assert_eq!(at(Sequence::VolumeDownSide, 23.), None);
     }
 }
