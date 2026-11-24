@@ -196,11 +196,11 @@ fn guide_color(glow: &[crate::guide::Button]) -> gpui::Hsla {
 /// The steps with "Guide me" running (G.2–G.7): the moment's row as is, the
 /// cable step reading "Get ready", the countdown in place of the duration,
 /// the other rows darkened by `dim` (the fade, 0…1).
-pub fn steps_guided(steps: &'static [Step], rows: f32, guide: Option<crate::guide::Moment>, dim: f32) -> Div {
-    table(steps, Some(rows), Some((guide, dim)))
+pub fn steps_guided(steps: &'static [Step], rows: f32, guide: Option<crate::guide::Moment>, highlight: [f32; 6], dim: f32) -> Div {
+    table(steps, Some(rows), Some((guide, highlight, dim)))
 }
 
-fn table(steps: &'static [Step], rows: Option<f32>, guide: Option<(Option<crate::guide::Moment>, f32)>) -> Div {
+fn table(steps: &'static [Step], rows: Option<f32>, guide: Option<(Option<crate::guide::Moment>, [f32; 6], f32)>) -> Div {
     let mut list = div().w_full();
     if let Some(rows) = rows {
         list = list.h(px(table_height(rows))).overflow_hidden();
@@ -208,7 +208,7 @@ fn table(steps: &'static [Step], rows: Option<f32>, guide: Option<(Option<crate:
     let fixed = rows.is_some();
     // "Guide me" fades the table's own background and frame with the rest;
     // the moment's row keeps the full background below.
-    let table_fade = 1. - GUIDE_DARKEN * guide.map(|(_, d)| d).unwrap_or(0.);
+    let table_fade = 1. - GUIDE_DARKEN * guide.map(|(_, _, d)| d).unwrap_or(0.);
     let faded = |rgb: u32| {
         let mut color = c(rgb);
         color.a *= table_fade;
@@ -221,8 +221,9 @@ fn table(steps: &'static [Step], rows: Option<f32>, guide: Option<(Option<crate:
         .border_1()
         .border_color(faded(PANEL_LINE));
     for (i, step) in steps.iter().enumerate() {
-        let moment = guide.and_then(|(m, _)| m).filter(|m| m.row == i);
-        let dim = guide.map(|(_, d)| d).unwrap_or(0.);
+        let moment = guide.and_then(|(m, _, _)| m).filter(|m| m.row == i);
+        // How highlighted this row is (0…1, cross-fading between steps).
+        let lit = guide.map(|(_, h, _)| h.get(i).copied().unwrap_or(0.)).unwrap_or(0.);
         let mut instruction = div().flex().flex_row().items_center().text_size(px(14.)).text_color(c(TEXT));
         // "Get ready" stands in for the cable step while its time runs.
         let get_ready: &'static [Part] = &[T("Get ready")];
@@ -256,10 +257,16 @@ fn table(steps: &'static [Step], rows: Option<f32>, guide: Option<(Option<crate:
             // A single run of text fills the row itself; the spacer only pushes
             // a duration to the right of a step with button names.
             .when(parts.len() != 1 || !matches!(parts[0], Part::Text(_)), |r| r.child(div().flex_1()));
+        if guide.is_some() {
+            // Dark like the rest, brought back by its highlight: opacity and
+            // background follow it, so the highlight cross-fades between rows.
+            let mut bg = c(PANEL);
+            bg.a = lit;
+            row = row.bg(bg).opacity(table_fade + (1. - table_fade) * lit);
+        }
         match moment {
-            // The moment's row: the full background, its countdown instead of the duration.
+            // The moment's row: its countdown instead of the duration.
             Some(m) => {
-                row = row.bg(c(PANEL));
                 if let Some(progress) = m.progress {
                     // The seconds left (none while settling), then the circle.
                     if let Some(left) = m.remaining {
@@ -271,9 +278,6 @@ fn table(steps: &'static [Step], rows: Option<f32>, guide: Option<(Option<crate:
             None => {
                 if let Some(d) = step.duration {
                     row = row.child(div().font_family(MONO).text_size(px(12.)).text_color(c(MUTED)).child(d));
-                }
-                if guide.is_some() {
-                    row = row.opacity(1. - GUIDE_DARKEN * dim);
                 }
             }
         }
@@ -343,8 +347,8 @@ fn trouble(cx: &mut Context<Installer>) -> gpui::Stateful<Div> {
 const NOTE_GAP: f32 = 16.;
 const NOTE_LINE: f32 = 19.;
 
-fn waiting_for_dfu(tab: Sequence, rows: f32, note: f32, guide: (bool, Option<crate::guide::Moment>, f32), unresponsive: bool, launcher: Option<Option<String>>, cx: &mut Context<Installer>) -> Div {
-    let (running, moment, dim) = guide;
+fn waiting_for_dfu(tab: Sequence, rows: f32, note: f32, guide: (bool, Option<crate::guide::Moment>, [f32; 6], f32), unresponsive: bool, launcher: Option<Option<String>>, cx: &mut Context<Installer>) -> Div {
+    let (running, moment, highlight, dim) = guide;
     let darken = 1. - GUIDE_DARKEN * dim;
     let list = match tab {
         Sequence::HomePower => HOME_POWER,
@@ -371,7 +375,7 @@ fn waiting_for_dfu(tab: Sequence, rows: f32, note: f32, guide: (bool, Option<cra
                         .w_full()
                         .flex()
                         .flex_col()
-                        .child(steps_guided(list, rows, moment, dim))
+                        .child(steps_guided(list, rows, moment, highlight, dim))
                         // The iPhone 8 has a Home button but the no-Home-button
                         // steps. Its height and opacity animate with the table's
                         // (`note`, 0…1), so the two morph together.
@@ -856,7 +860,21 @@ pub fn text_column(installer: &mut Installer, kind: ScreenKind, cx: &mut Context
                     None
                 }
             };
-            let guide = (installer.guide.is_some(), moment, fade);
+            // The rows' highlights: from the run's timeline, or the last row
+            // held while the darkening fades out after it.
+            let highlight = match installer.guide {
+                Some((at, sequence)) => crate::guide::row_levels(sequence, at.elapsed().as_secs_f32()),
+                None => {
+                    let mut h = [0.; 6];
+                    if let Some(m) = moment {
+                        if m.row < 6 {
+                            h[m.row] = 1.;
+                        }
+                    }
+                    h
+                }
+            };
+            let guide = (installer.guide.is_some(), moment, highlight, fade);
             let unresponsive = installer.flow.unresponsive;
             let launcher = (installer.app == orchard_flow::App::Launcher).then(|| installer.flow.launch_problem.clone());
             waiting_for_dfu(tab, installer.rows.value(), installer.note.value(), guide, unresponsive, launcher, cx).into_any_element()

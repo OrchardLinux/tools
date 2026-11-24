@@ -172,6 +172,37 @@ impl Button {
     }
 }
 
+/// How long a row's highlight takes to come on or go out.
+const ROW_FADE: f32 = 0.3;
+
+/// Each step row's highlight (rows 0…5), 0…1, at `elapsed`: it fades in
+/// where the row's stretch starts and out after it ends.
+pub fn row_levels(sequence: Sequence, elapsed: f32) -> [f32; 6] {
+    let mut out = [0.; 6];
+    let mut start = 0.;
+    let mut span: Option<(usize, f32)> = None;
+    let close = |out: &mut [f32; 6], row: usize, from: f32, to: f32| {
+        if row < 6 {
+            out[row] = out[row].max(window(from, to, elapsed, ROW_FADE));
+        }
+    };
+    for phase in phases(sequence) {
+        match span {
+            Some((row, _)) if row == phase.row => {}
+            Some((row, from)) => {
+                close(&mut out, row, from, start);
+                span = Some((phase.row, start));
+            }
+            None => span = Some((phase.row, start)),
+        }
+        start += phase.seconds;
+    }
+    if let Some((row, from)) = span {
+        close(&mut out, row, from, start);
+    }
+    out
+}
+
 /// How long the run of `sequence` takes.
 pub fn length(sequence: Sequence) -> f32 {
     phases(sequence).iter().map(|p| p.seconds).sum()
@@ -218,6 +249,17 @@ mod tests {
         assert_eq!(at(14.)[1], 1.);
         assert_eq!(at(18.9)[1], 1.);
         assert_eq!(at(1.)[1], 0.);
+    }
+
+    #[test]
+    fn row_highlights_cross_fade() {
+        let s = Sequence::VolumeSequence;
+        // Get ready (row 0) 0–2 s, the taps (row 1) 2–4 s.
+        assert_eq!(row_levels(s, 1.)[0], 1.);
+        let hand_over = row_levels(s, 2.15);
+        assert!(hand_over[0] > 0. && hand_over[0] < 1. && hand_over[1] > 0. && hand_over[1] < 1.);
+        assert_eq!(row_levels(s, 3.)[1], 1.);
+        assert_eq!(row_levels(s, 3.)[0], 0.);
     }
 
     #[test]
