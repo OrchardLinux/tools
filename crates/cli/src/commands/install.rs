@@ -40,6 +40,10 @@ pub struct InstallArgs {
     /// Approve erasing the partitions after iPadOS
     #[arg(long)]
     pub yes: bool,
+    /// Install into the existing split without starting iPadOS (the storage
+    /// is split already); an unprepared iPad is split as usual
+    #[arg(long, conflicts_with = "split")]
+    pub keep_split: bool,
     /// Allow SSH from this computer (import its keys)
     #[arg(long)]
     pub ssh: bool,
@@ -451,7 +455,13 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
                 if continued_from.as_deref() != Some("found") {
                     continued_from = Some("found".into());
                     out.say("✓", &format!("{} in DFU mode", device.name));
-                    send(Event::Continue);
+                    if args.keep_split {
+                        // Straight to the install system (the window's "Skip").
+                        send(Event::Skip);
+                        send(Event::ConfirmSkip);
+                    } else {
+                        send(Event::Continue);
+                    }
                 }
             }
             State::WaitingForIpados { slow, .. } => {
