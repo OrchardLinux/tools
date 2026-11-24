@@ -831,3 +831,13 @@ fn the_installed_system_coming_up_finishes_an_install_whose_done_got_lost() {
     assert!(matches!(s, State::Starting { .. }));
 }
 
+
+#[test]
+fn palera1n_2_pins_cover_every_supported_host() {
+    for (os, arch) in [("macos", "aarch64"), ("macos", "x86_64"), ("linux", "aarch64"), ("linux", "x86_64")] {
+        let pin = assets::palera1n_2_pin(os, arch).expect("pinned");
+        assert_eq!(pin.package, assets::Package::Bare);
+        assert_eq!(pin.sha256.len(), 64);
+    }
+    assert!(assets::PALERA1N_2_RELEASE.ends_with("v2.4"));
+}

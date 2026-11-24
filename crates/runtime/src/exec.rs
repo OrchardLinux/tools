@@ -145,9 +145,10 @@ impl Executor {
                 firmware_build::build(&self.data()?, Some(&store), board, &out, &request).map(drop)
             }
             Asset::Palera1n => {
-                let pin = palera1n_pin(std::env::consts::OS, std::env::consts::ARCH)
+                // The one that runs (ORCHARD_PALERA1N_BETA=0: v2.4).
+                let (pin, release) = crate::flags::palera1n_pin()
                     .ok_or_else(|| Error::new(Code::NotFound, "palera1n publishes no build for this computer"))?;
-                self.palera1n(pin).map(drop)
+                self.palera1n(pin, release).map(drop)
             }
             Asset::KernelPackage => {
                 let rel = self.release()?;
@@ -209,9 +210,9 @@ impl Executor {
     }
 
     /// The palera1n executable, unpacked from its verified package.
-    pub fn palera1n(&self, pin: &orchard_flow::assets::Pin) -> Result<PathBuf> {
+    pub fn palera1n(&self, pin: &orchard_flow::assets::Pin, release: &str) -> Result<PathBuf> {
         let receipt = Receipt {
-            url: format!("{PALERA1N_RELEASE}/{}", pin.asset),
+            url: format!("{release}/{}", pin.asset),
             bytes: pin.size,
             sha256: pin.sha256.into(),
             expanded_bytes: None,

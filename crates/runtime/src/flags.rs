@@ -4,11 +4,11 @@
 //!
 //! - `ORCHARD_PORT_RESET_SECONDS`: seconds after "Checkmate" before the USB
 //!   port reset (Linux); 0 turns the reset off.
-//! - `ORCHARD_PALERA1N`: a palera1n executable to run instead of the pinned one.
+//! - `ORCHARD_PALERA1N_BETA=0`: runs palera1n v2.4 (pinned, checked like the
+//!   beta) instead of the 3.0 beta.
 //! - `ORCHARD_KEEP_AWAKE=1`: keeps the CPU out of its deep sleep states while
 //!   the exploit runs (Linux, `/dev/cpu_dma_latency`, which must be writable:
 //!   root's by default), for hosts where checkm8 only succeeds under load.
-use std::path::PathBuf;
 use std::time::Duration;
 
 fn var(name: &str) -> Option<String> {
@@ -20,8 +20,16 @@ pub fn port_reset() -> Option<Duration> {
     var("ORCHARD_PORT_RESET_SECONDS")?.parse::<f64>().ok().filter(|s| *s >= 0.0).map(Duration::from_secs_f64)
 }
 
-pub fn palera1n() -> Option<PathBuf> {
-    var("ORCHARD_PALERA1N").map(PathBuf::from)
+/// The palera1n to run on this computer: the 3.0 beta, or v2.4 with
+/// ORCHARD_PALERA1N_BETA=0.
+pub fn palera1n_pin() -> Option<(&'static orchard_flow::assets::Pin, &'static str)> {
+    use orchard_flow::assets::{palera1n_2_pin, palera1n_pin, PALERA1N_2_RELEASE, PALERA1N_RELEASE};
+    let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
+    if var("ORCHARD_PALERA1N_BETA").as_deref() == Some("0") {
+        palera1n_2_pin(os, arch).map(|p| (p, PALERA1N_2_RELEASE))
+    } else {
+        palera1n_pin(os, arch).map(|p| (p, PALERA1N_RELEASE))
+    }
 }
 
 pub fn keep_awake() -> bool {
@@ -57,7 +65,7 @@ pub fn stay_awake() -> Option<Awake> {
 
 /// One line per switch that is set (and understood), for the log.
 pub fn log_active() {
-    for name in ["ORCHARD_PORT_RESET_SECONDS", "ORCHARD_PALERA1N", "ORCHARD_KEEP_AWAKE"] {
+    for name in ["ORCHARD_PORT_RESET_SECONDS", "ORCHARD_PALERA1N_BETA", "ORCHARD_KEEP_AWAKE"] {
         if let Some(value) = var(name) {
             let understood = name != "ORCHARD_PORT_RESET_SECONDS" || port_reset().is_some();
             eprintln!("flags: {name}={value}{}", if understood { "" } else { " (not understood, ignored)" });

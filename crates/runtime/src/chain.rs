@@ -9,7 +9,6 @@ use crate::exec::Executor;
 use crate::ecid_key;
 use orchard_boards::install_env;
 use orchard_cache::{Code, Error, Result};
-use orchard_flow::assets::palera1n_pin;
 use orchard_flow::Device;
 use orchard_usb::pongo::Pongo;
 use orchard_usb::Mode;
@@ -74,12 +73,8 @@ fn run_palera1n(executor: &Executor, device: &Device, args: &[std::ffi::OsString
 /// palera1n on the device in `from`: DFU (the exploit, with the port reset
 /// on Linux), or Pongo (palera1n carries on from there).
 fn run_palera1n_from(executor: &Executor, device: &Device, from: Mode, args: &[std::ffi::OsString], seconds: u64) -> Result<()> {
-    let pin = palera1n_pin(std::env::consts::OS, std::env::consts::ARCH)
-        .ok_or_else(|| fail("palera1n publishes no build for this computer"))?;
-    let palera1n = match crate::flags::palera1n() {
-        Some(path) => path,
-        None => executor.palera1n(pin)?,
-    };
+    let (pin, release) = crate::flags::palera1n_pin().ok_or_else(|| fail("palera1n publishes no build for this computer"))?;
+    let palera1n = executor.palera1n(pin, release)?;
     let Some(found) = the_device(device, from)? else {
         return Err(fail(if from == Mode::Dfu { "the device is no longer in DFU mode" } else { "the device is not in Pongo" }));
     };

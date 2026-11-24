@@ -25,8 +25,13 @@ impl<S: Source> Disk for Adapter<S> {
 
 /// The executable's bytes from a verified package file.
 pub fn executable(package: &Path, pin: &Pin) -> Result<Vec<u8>> {
+    if pin.package == Package::Bare {
+        // The release file is the executable; its download was checked.
+        return Ok(std::fs::read(package)?);
+    }
     let member = pin.member.ok_or_else(|| Error::new(Code::NotFound, "the pin names no executable"))?;
     let bytes = match pin.package {
+        Package::Bare => unreachable!(),
         Package::Dmg => {
             let image = DiskImage::open(FileSource::open(package)?)?;
             let part = image

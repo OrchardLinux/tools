@@ -125,6 +125,8 @@ pub const WITH_BOARD: [Asset; 4] = [Asset::PlatformLayer, Asset::Firmware, Asset
 pub enum Package {
     Dmg,
     TarGz,
+    /// The release file is the executable itself.
+    Bare,
 }
 
 /// A release file of a tool for one host.
@@ -191,6 +193,60 @@ pub const PALERA1N_PINS: &[Pin] = &[
         executable_sha256: Some("6aac0aee825cea96656d8d873944065a7b6ab89b5fa97582b8d0d5c23a14f1b9"),
     },
 ];
+
+pub const PALERA1N_2_RELEASE: &str = "https://github.com/palera1n/palera1n/releases/download/v2.4";
+
+/// palera1n v2.4, the stable release orchard's Python CLI pins (same sizes
+/// and SHA-256): bare executables. Run instead of the beta only when a tester
+/// turns the beta off (ORCHARD_PALERA1N_BETA=0); the overlay is still built
+/// from the beta's binpack.
+pub const PALERA1N_2_PINS: &[Pin] = &[
+    Pin {
+        os: "macos",
+        arch: "aarch64",
+        asset: "palera1n-macos-universal",
+        size: 9_757_024,
+        sha256: "dcf2f827e89a12215685c55f0462cd7d0cbc0551e3acd340bf0216c274c2e83e",
+        package: Package::Bare,
+        member: None,
+        executable_sha256: None,
+    },
+    Pin {
+        os: "macos",
+        arch: "x86_64",
+        asset: "palera1n-macos-universal",
+        size: 9_757_024,
+        sha256: "dcf2f827e89a12215685c55f0462cd7d0cbc0551e3acd340bf0216c274c2e83e",
+        package: Package::Bare,
+        member: None,
+        executable_sha256: None,
+    },
+    Pin {
+        os: "linux",
+        arch: "aarch64",
+        asset: "palera1n-linux-arm64",
+        size: 5_059_168,
+        sha256: "0ddcc3e703709f9cf9a85eb7c598f7500e2028fc4c60f3085eecb0b2bcbb138b",
+        package: Package::Bare,
+        member: None,
+        executable_sha256: None,
+    },
+    Pin {
+        os: "linux",
+        arch: "x86_64",
+        asset: "palera1n-linux-x86_64",
+        size: 5_042_624,
+        sha256: "ea531df933c0c8edab25ecb8f43faedd010177484482bb3744eaa4cf1cd48658",
+        package: Package::Bare,
+        member: None,
+        executable_sha256: None,
+    },
+];
+
+/// The v2.4 pin for a host.
+pub fn palera1n_2_pin(os: &str, arch: &str) -> Option<&'static Pin> {
+    PALERA1N_2_PINS.iter().find(|p| p.os == os && p.arch == arch)
+}
 
 /// The pin for a host, if palera1n publishes one.
 pub fn palera1n_pin(os: &str, arch: &str) -> Option<&'static Pin> {
