@@ -478,7 +478,7 @@ impl Installer {
 
     fn device_layer(&mut self) -> gpui::Div {
         let seconds = self.seconds();
-        let glow = self.guide_moment().map(|m| m.glow);
+        let glow = self.guide.map(|(at, sequence)| guide::levels(sequence, at.elapsed().as_secs_f32()));
         let shown = self.shown.as_mut().expect("tracked");
         let current = shown.device;
         let mut layer = div().relative().w(px(device::WIDTH)).h(px(device::HEIGHT)).flex_none();

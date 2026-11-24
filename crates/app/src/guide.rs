@@ -64,6 +64,8 @@ pub struct Moment {
     pub glow: &'static [Button],
     /// 0…1 through the row's countdown; None for a row without one.
     pub progress: Option<f32>,
+    /// Seconds left in the row's countdown.
+    pub remaining: Option<f32>,
 }
 
 /// The run of `sequence`, `elapsed` seconds in; None once it is over.
@@ -74,16 +76,69 @@ pub fn at(sequence: Sequence, elapsed: f32) -> Option<Moment> {
         let end = start + phase.seconds;
         if elapsed < end {
             // A countdown spans every phase of its row (one row, one circle).
-            let progress = phase.countdown.then(|| {
-                let row_start = start - phases[..i].iter().rev().take_while(|p| p.row == phase.row).map(|p| p.seconds).sum::<f32>();
-                let row_len: f32 = phases.iter().filter(|p| p.row == phase.row).map(|p| p.seconds).sum();
-                ((elapsed - row_start) / row_len).clamp(0., 1.)
-            });
-            return Some(Moment { row: phase.row, glow: phase.glow, progress });
+            let row_start = start - phases[..i].iter().rev().take_while(|p| p.row == phase.row).map(|p| p.seconds).sum::<f32>();
+            let row_len: f32 = phases.iter().filter(|p| p.row == phase.row).map(|p| p.seconds).sum();
+            let progress = phase.countdown.then(|| ((elapsed - row_start) / row_len).clamp(0., 1.));
+            let remaining = phase.countdown.then(|| (row_start + row_len - elapsed).max(0.));
+            return Some(Moment { row: phase.row, glow: phase.glow, progress, remaining });
         }
         start = end;
     }
     None
+}
+
+/// How long a glow takes to come on or go out.
+const FADE: f32 = 0.25;
+
+/// Each button's glow (Home, Power, Volume Up, Volume Down), 0…1, at
+/// `elapsed`: it fades in where the button's stretch starts and out where it
+/// ends; a button lit across adjacent phases stays lit in between.
+pub fn levels(sequence: Sequence, elapsed: f32) -> [f32; 4] {
+    let mut out = [0.; 4];
+    for (slot, button) in [Home, Power, VolumeUp, VolumeDown].into_iter().enumerate() {
+        let mut start = 0.;
+        let mut lit: Option<f32> = None;
+        let mut level: f32 = 0.;
+        for phase in phases(sequence) {
+            let on = phase.glow.contains(&button);
+            match (on, lit) {
+                (true, None) => lit = Some(start),
+                (false, Some(from)) => {
+                    level = level.max(window(from, start, elapsed));
+                    lit = None;
+                }
+                _ => {}
+            }
+            start += phase.seconds;
+        }
+        if let Some(from) = lit {
+            level = level.max(window(from, start, elapsed));
+        }
+        out[slot] = level;
+    }
+    out
+}
+
+/// 1 inside [from, to], easing in over FADE after `from` and out over FADE
+/// before `to`.
+fn window(from: f32, to: f32, t: f32) -> f32 {
+    let ease = |x: f32| {
+        let x = x.clamp(0., 1.);
+        x * x * (3. - 2. * x)
+    };
+    ease((t - from) / FADE).min(ease((to - t) / FADE))
+}
+
+impl Button {
+    /// Its slot in [`levels`].
+    pub fn slot(self) -> usize {
+        match self {
+            Home => 0,
+            Power => 1,
+            VolumeUp => 2,
+            VolumeDown => 3,
+        }
+    }
 }
 
 /// How long the run of `sequence` takes.
@@ -110,6 +165,21 @@ mod tests {
         assert_eq!(at(s, 17.).unwrap().glow, &[Power, VolumeDown]);
         assert_eq!(at(s, 29.9).unwrap().row, 4);
         assert_eq!(at(s, 30.), None);
+    }
+
+    #[test]
+    fn glows_fade_and_stay_lit_across_steps() {
+        let s = Sequence::VolumeSequence;
+        let at = |t: f32| levels(s, t);
+        // Volume Up 3–4 s: half-way into its fade at 3.125, full at 3.5.
+        assert!((at(3.125)[2] - 0.5).abs() < 1e-3);
+        assert_eq!(at(3.5)[2], 1.);
+        // At the hand-over to Volume Down, both are half-way.
+        assert!(at(4.)[2] < 0.01 && at(4.)[3] < 0.01);
+        assert_eq!(at(4.5)[3], 1.);
+        // Power from 5 to 20 s, through the step change at 15 s without a dip.
+        assert_eq!(at(15.)[1], 1.);
+        assert_eq!(at(1.)[1], 0.);
     }
 
     #[test]

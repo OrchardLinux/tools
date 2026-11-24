@@ -173,7 +173,7 @@ fn bar(x: f32, y: f32, w: f32, h: f32, color: Hsla, radius: [f32; 4]) -> Div {
 /// `view`'s device, or for `view.pair` (1.11) the iPhone with a Home button
 /// in front on the left and the iPad without one behind on the right, every
 /// button of both in sight.
-pub fn drawing(view: &DeviceView, seconds: f32, guide: Option<&[crate::guide::Button]>) -> Div {
+pub fn drawing(view: &DeviceView, seconds: f32, guide: Option<[f32; 4]>) -> Div {
     if !view.pair {
         return device(view, seconds, guide);
     }
@@ -190,7 +190,7 @@ pub fn drawing(view: &DeviceView, seconds: f32, guide: Option<&[crate::guide::Bu
 
 /// The device as `view` describes it, `seconds` into the app's life (for
 /// the spinner). The waves are a separate layer ([`waves`]).
-pub fn device(view: &DeviceView, seconds: f32, guide: Option<&[crate::guide::Button]>) -> Div {
+pub fn device(view: &DeviceView, seconds: f32, guide: Option<[f32; 4]>) -> Div {
     let step = (seconds * 10.) as usize;
     let p = paint(view);
     let pressed = pressed(view.buttons, view.model);
@@ -202,7 +202,8 @@ pub fn device(view: &DeviceView, seconds: f32, guide: Option<&[crate::guide::But
         Button::VolumeUp => crate::guide::Button::VolumeUp,
         Button::VolumeDown => crate::guide::Button::VolumeDown,
     };
-    let glowing = |b: Button| pressed.contains(&b) && guide.is_some_and(|g| g.contains(&as_guide(b)));
+    // How lit the button is, 0…1 (fading in and out with the guide's timeline).
+    let level = |b: Button| if pressed.contains(&b) { guide.map(|g| g[as_guide(b).slot()]).unwrap_or(0.) } else { 0. };
     let button = |b: Button| {
         if !pressed.contains(&b) {
             return p.idle_button;
@@ -212,18 +213,19 @@ pub fn device(view: &DeviceView, seconds: f32, guide: Option<&[crate::guide::But
             Button::VolumeUp => c(BUTTON_VOLUME_UP),
             Button::Home | Button::VolumeDown => c(BUTTON_OTHER),
         };
-        if guide.is_some() && !glowing(b) {
-            color.a = 0.35;
+        if guide.is_some() {
+            color.a = 0.35 + 0.65 * level(b);
         }
         color
     };
     // The glow: a soft halo in the button's colour.
     let shine = |d: Div, b: Button| {
-        if !glowing(b) {
+        let lit = level(b);
+        if lit < 0.01 {
             return d;
         }
         let mut halo = button(b);
-        halo.a = 0.8;
+        halo.a = 0.8 * lit;
         d.shadow(vec![gpui::BoxShadow { color: halo, offset: gpui::point(px(0.), px(0.)), blur_radius: px(10.), spread_radius: px(1.) }])
     };
     let mut frame = div().relative().w(px(WIDTH)).h(px(HEIGHT)).flex_none();
