@@ -170,13 +170,41 @@ fn bar(x: f32, y: f32, w: f32, h: f32, color: Hsla, radius: [f32; 4]) -> Div {
         .rounded_bl(r(radius[3]))
 }
 
+/// `view`'s device, or for `view.pair` (1.11) the iPhone with a Home button
+/// in front on the left and the iPad without one behind on the right, every
+/// button of both in sight.
+pub fn drawing(view: &DeviceView, seconds: f32) -> Div {
+    if !view.pair {
+        return device(view, seconds);
+    }
+    let iphone = DeviceView { model: Model::IphoneHome, rings: false, pair: false, ..*view };
+    let ipad = DeviceView { pair: false, ..*view };
+    div()
+        .relative()
+        .w(px(WIDTH))
+        .h(px(HEIGHT))
+        .flex_none()
+        .child(at(35., -10., WIDTH, HEIGHT).child(device(&ipad, seconds)))
+        .child(at(-85., 20., WIDTH, HEIGHT).child(device(&iphone, seconds)))
+}
+
 /// The device as `view` describes it, `seconds` into the app's life (for
 /// the spinner). The waves are a separate layer ([`waves`]).
 pub fn device(view: &DeviceView, seconds: f32) -> Div {
     let step = (seconds * 10.) as usize;
     let p = paint(view);
     let pressed = pressed(view.buttons, view.model);
-    let button = |b: Button| if pressed.contains(&b) { p.pressed_button } else { p.idle_button };
+    // Each pressed button in its own colour (theme::button_color's).
+    let button = |b: Button| {
+        if !pressed.contains(&b) {
+            return p.idle_button;
+        }
+        match b {
+            Button::Top | Button::Side => c(BUTTON_POWER),
+            Button::VolumeUp => c(BUTTON_VOLUME_UP),
+            Button::Home | Button::VolumeDown => c(BUTTON_OTHER),
+        }
+    };
     let mut frame = div().relative().w(px(WIDTH)).h(px(HEIGHT)).flex_none();
     let body = |left: f32, width: f32, radius: f32| {
         at(left, 16., width, 367.).bg(c(0x1f2230)).rounded(px(radius)).border_1().border_color(p.body_line)

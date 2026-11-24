@@ -481,7 +481,7 @@ impl Installer {
         const CLIP_Y: f32 = 70.;
         const SPACING: f32 = 200.;
         let place = |view: &DeviceView, dx: f32, opacity: f32| {
-            div().absolute().left(px(CLIP_X + dx)).top(px(CLIP_Y)).opacity(opacity).child(device::device(view, seconds))
+            div().absolute().left(px(CLIP_X + dx)).top(px(CLIP_Y)).opacity(opacity).child(device::drawing(view, seconds))
         };
         let mut strip = div()
             .absolute()

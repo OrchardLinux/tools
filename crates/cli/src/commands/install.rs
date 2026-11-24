@@ -178,7 +178,8 @@ fn read_secret(path: &PathBuf) -> Result<String, String> {
 /// The DFU steps: words with the buttons in blue, and how long each takes.
 fn steps(sequence: Sequence) -> Vec<(Vec<Span>, &'static str)> {
     let t = |x: &str| s(x, FG);
-    let k = |x: &str| s(x, BLUE);
+    // The buttons in the app's colours: Power pink, Volume Up teal, others blue.
+    let k = |x: &str| s(x, match x { "Power" => 0xbb9af7, "Volume Up" => 0x73daca, _ => BLUE });
     let mut out = vec![(vec![t("Connect it to this computer with a USB cable")], "")];
     out.extend(match sequence {
         Sequence::HomePower => vec![

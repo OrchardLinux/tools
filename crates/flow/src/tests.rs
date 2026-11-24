@@ -841,3 +841,11 @@ fn palera1n_2_pins_cover_every_supported_host() {
     }
     assert!(assets::PALERA1N_2_RELEASE.ends_with("v2.4"));
 }
+
+#[test]
+fn the_no_home_button_tab_draws_the_iphone_beside_the_ipad_until_a_device_is_known() {
+    let waiting = |tab| State::WaitingForDfu { tab, seen: Vec::new(), leaving: None };
+    assert!(view::view(App::Installer, &waiting(Sequence::VolumeSequence)).0.pair);
+    assert!(!view::view(App::Installer, &waiting(Sequence::HomePower)).0.pair);
+    assert!(!view::view(App::Installer, &waiting(Sequence::VolumeDownSide)).0.pair);
+}

@@ -42,6 +42,9 @@ pub struct DeviceView {
     pub buttons: Option<Sequence>,
     /// The app is waiting for the device to show up.
     pub rings: bool,
+    /// The no-Home-button tab before a device is known: an iPhone with a
+    /// Home button drawn in front of the iPad, both taking these steps.
+    pub pair: bool,
 }
 
 /// Which screen design the state shows; the text column's key.
@@ -85,6 +88,7 @@ pub fn view(app: App, state: &State) -> (DeviceView, ScreenKind) {
         tint: Tint::Neutral,
         buttons: None,
         rings: false,
+        pair: false,
     };
     let lit = |m: Model, glyph: Glyph| DeviceView { screen: Screen::Lit, glyph, ..off(m) };
     let error = |m: Model, glyph: Glyph| DeviceView { tint: Tint::Error, glyph, ..off(m) };
@@ -99,7 +103,8 @@ pub fn view(app: App, state: &State) -> (DeviceView, ScreenKind) {
                 Some(s) => (s.device.model, ScreenKind::WrongMode),
                 None => (model_for(*tab), ScreenKind::WaitingForDfu),
             };
-            (waiting(m, *tab), kind)
+            let pair = kind == ScreenKind::WaitingForDfu && *tab == Sequence::VolumeSequence;
+            (DeviceView { pair, ..waiting(m, *tab) }, kind)
         }
         S::SeveralInDfu { .. } => (off(Model::IpadHome), ScreenKind::SeveralInDfu),
         S::Unsupported { .. } => (DeviceView { glyph: G::Sad, ..off(m) }, ScreenKind::Unsupported),

@@ -29,3 +29,18 @@ pub const GREEN: u32 = 0x9ece6a;
 pub const AMBER: u32 = 0xe0af68;
 /// Dark text on a blue button.
 pub const ON_BLUE: u32 = 0x16161e;
+
+/// The DFU buttons' colours, the same in the drawing and the steps: Power
+/// (Top, Side) pink, Volume Up teal, Home and Volume Down blue.
+pub const BUTTON_POWER: u32 = 0xbb9af7;
+pub const BUTTON_VOLUME_UP: u32 = 0x73daca;
+pub const BUTTON_OTHER: u32 = BLUE;
+
+/// The colour of a button named in the steps.
+pub fn button_color(name: &str) -> u32 {
+    match name {
+        "Power" => BUTTON_POWER,
+        "Volume Up" => BUTTON_VOLUME_UP,
+        _ => BUTTON_OTHER,
+    }
+}

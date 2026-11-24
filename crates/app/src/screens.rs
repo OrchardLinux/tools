@@ -161,7 +161,7 @@ fn table(steps: &'static [Step], rows: Option<f32>) -> Div {
                 Part::Text(t) if only => instruction.flex_1().min_w(px(0.)).line_height(px(20.)).child(div().w_full().child(orchard_flow::for_device(t))),
                 Part::Text(t) => instruction.child(div().whitespace_nowrap().child(orchard_flow::for_device(t))),
                 Part::Button(b) => {
-                    instruction.child(div().whitespace_nowrap().font_weight(FontWeight::SEMIBOLD).text_color(c(BLUE)).child(*b))
+                    instruction.child(div().whitespace_nowrap().font_weight(FontWeight::SEMIBOLD).text_color(c(button_color(b))).child(*b))
                 }
             };
         }
