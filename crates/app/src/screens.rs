@@ -279,14 +279,21 @@ fn waiting_for_dfu(tab: Sequence, rows: f32, note: f32, unresponsive: bool, laun
                         // The iPhone 8 has a Home button but the no-Home-button
                         // steps. Its height and opacity animate with the table's
                         // (`note`, 0…1), so the two morph together.
+                        // The space grows and shrinks; the text sits at its
+                        // final place on top of it and only fades (no clipping).
                         .child(
-                            div()
-                                .h(px((NOTE_GAP + NOTE_LINE) * note))
-                                .overflow_hidden()
-                                // Fades in after its space opened, out before it
-                                // closes: the fade reads as its own step.
-                                .opacity(note.powi(3))
-                                .child(div().pt(px(NOTE_GAP)).text_size(px(13.)).line_height(px(NOTE_LINE)).text_color(c(MUTED)).child("iPhone 8 and later use the No Home button steps.")),
+                            div().relative().w_full().h(px((NOTE_GAP + NOTE_LINE) * note)).child(
+                                div()
+                                    .absolute()
+                                    .top(px(NOTE_GAP))
+                                    .left(px(0.))
+                                    .whitespace_nowrap()
+                                    .opacity(note.powi(3))
+                                    .text_size(px(13.))
+                                    .line_height(px(NOTE_LINE))
+                                    .text_color(c(MUTED))
+                                    .child("iPhone 8 and later use the No Home button steps."),
+                            ),
                         ),
                 ),
         )
