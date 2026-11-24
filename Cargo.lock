@@ -3833,10 +3833,13 @@ name = "orchard-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "libc",
  "orchard-boards",
  "orchard-cache",
  "orchard-device",
+ "orchard-flow",
  "orchard-formats",
+ "orchard-runtime",
  "orchard-usb",
  "serde",
  "serde_json",

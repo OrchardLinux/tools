@@ -55,6 +55,12 @@ impl DeviceArgs {
 
 #[derive(Subcommand)]
 pub enum Command {
+    /// Install a system on your iPad or iPhone, from DFU mode (as the
+    /// graphical installer does); --json prints one event per line
+    Install(crate::commands::install::InstallArgs),
+    /// Start a system installed on your iPad or iPhone, from DFU mode (as
+    /// Orchard, the launcher, does)
+    Launch(crate::commands::install::LaunchArgs),
     /// Boot Linux build outputs in RAM on J71b through iBSS/recovery
     Run(crate::commands::run::Args),
     /// List connected devices

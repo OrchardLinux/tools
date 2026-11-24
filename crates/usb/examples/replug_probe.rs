@@ -6,6 +6,7 @@
 //! USBDeviceReEnumerate on the hub: its ports are detected again, a software
 //! replug), up to 3 times 5 s apart. The iPad itself is off USB then.
 //! Usage: replug_probe <palera1n> <pongo.bin>
+#![cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports))]
 use nusb::MaybeFuture;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
@@ -26,6 +27,12 @@ fn describe(d: &nusb::DeviceInfo) -> String {
     format!("{:04x} {mode} {:?}", d.product_id(), d.serial_number().map(|s| s.chars().take(40).collect::<String>()))
 }
 
+#[cfg(not(target_os = "macos"))]
+fn main() {
+    eprintln!("macOS only: it reads USB location IDs");
+}
+
+#[cfg(target_os = "macos")]
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let (palera1n, pongo) = (&args[1], &args[2]);

@@ -17,7 +17,14 @@ fn main() -> ExitCode {
             Err(e) => output::finish(&cli.global, Err(e)),
         };
     }
+    // Install and launch stream their own output and exit codes.
+    match &cli.command {
+        args::Command::Install(a) => return commands::install::install(cli.global.json, a),
+        args::Command::Launch(a) => return commands::install::launch(cli.global.json, a),
+        _ => {}
+    }
     let result = match cli.command {
+        args::Command::Install(_) | args::Command::Launch(_) => unreachable!("handled above"),
         args::Command::Run(args) => commands::run::run(&cli.global, &args),
         args::Command::Session { .. } => unreachable!("handled above"),
         args::Command::Devices(a) => commands::devices::run(&cli.global, &a),

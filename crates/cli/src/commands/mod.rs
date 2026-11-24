@@ -5,6 +5,7 @@ pub mod data;
 pub mod devices;
 pub mod dfu;
 pub mod fw;
+pub mod install;
 pub mod load;
 pub mod m1n1;
 pub mod pongo;

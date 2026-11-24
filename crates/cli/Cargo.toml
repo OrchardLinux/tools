@@ -15,6 +15,9 @@ orchard-cache.workspace = true
 orchard-device.workspace = true
 orchard-formats.workspace = true
 orchard-usb.workspace = true
+orchard-flow = { path = "../flow" }
+orchard-runtime = { path = "../runtime" }
+libc = "0.2"
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true

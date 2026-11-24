@@ -113,6 +113,8 @@ pub fn run(app: App, mut observer: impl Observer, input: Receiver<Event>, _event
                         .collect();
                     due.push((at(4.), Event::EntriesListed(entries)));
                 }
+                // m1n1 took the start command: it carries on by itself.
+                Effect::BootEntry(_) => due.push((at(1.5), Event::EntryStarted)),
                 Effect::Quit => observer.quit(),
                 Effect::Fetch(asset) => due.push((at(0.5), Event::AssetReady(asset))),
                 _ => {}
