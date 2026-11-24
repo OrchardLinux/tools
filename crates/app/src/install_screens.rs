@@ -738,7 +738,7 @@ pub fn erase_dialog(layout: &Layout, approved: bool, focus: &gpui::FocusHandle, 
     let cancel = cancel.on_click(cx.listener(|this, _, _, _| this.send(Event::Cancel)));
     crate::screens::dialog(480.)
         .child(div().text_size(px(18.)).font_weight(FontWeight::SEMIBOLD).text_color(c(TITLE)).child("Before installing"))
-        .child(crate::screens::paragraph(format!("{} goes into its own space, next to iPadOS.", sys())))
+        .child(crate::screens::paragraph("Installing erases these partitions. iPadOS and its data stay as they are."))
         .child(erase_alert(layout))
         .child(approve(approved, cx))
         .child(

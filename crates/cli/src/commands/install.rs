@@ -742,7 +742,7 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
                 if !erase_done {
                     erase_done = true;
                     out.term.live(None);
-                    if !erase_consent(&mut out, layout, args.yes, "Before installing", &format!("{name} goes into its own space, next to iPadOS. These partitions are erased:")) {
+                    if !erase_consent(&mut out, layout, args.yes, "Before installing", "Installing erases these partitions. iPadOS and its data stay as they are.") {
                         send(Event::Quit);
                         std::thread::sleep(Duration::from_secs(1));
                         return finish(&mut out, Exit::NeedsInput, "needs-input", "--yes");
