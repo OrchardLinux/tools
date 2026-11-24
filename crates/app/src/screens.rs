@@ -225,9 +225,11 @@ fn table(steps: &'static [Step], rows: Option<f32>, guide: Option<(Option<crate:
         // How highlighted this row is (0…1, cross-fading between steps).
         let lit = guide.map(|(_, h, _)| h.get(i).copied().unwrap_or(0.)).unwrap_or(0.);
         let mut instruction = div().flex().flex_row().items_center().text_size(px(14.)).text_color(c(TEXT));
-        // "Get ready" stands in for the cable step while its time runs.
+        // "Get ready" stands in for the cable step during the run.
         let get_ready: &'static [Part] = &[T("Get ready")];
-        let parts = if moment.is_some() && i == 0 { get_ready } else { step.parts };
+        // It stays until the run is over and its darkening has faded.
+        let running = guide.is_some_and(|(_, _, d)| d > 0.001);
+        let parts = if running && i == 0 { get_ready } else { step.parts };
         for part in parts {
             let only = parts.len() == 1;
             instruction = match part {
