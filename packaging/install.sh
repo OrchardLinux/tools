@@ -4,8 +4,9 @@
 #   curl -fsSL @BASE@/install.sh | sh
 # The command-line installer instead (no screen, scripts):
 #   curl -fsSL @BASE@/install.sh | sh -s -- --cli
-# It is the release's install-cli.sh; this script only hands over to it, also
-# on Linux without a display (an SSH session).
+# That is the distribution's own command-line installer (from its latest
+# release); this script only hands over to it, also on Linux without a display
+# (an SSH session).
 # macOS: into ~/Applications (curl sets no quarantine flag, so it opens without
 # Gatekeeper's prompt). Linux: into ~/.local/bin, with a desktop entry and icons
 # in ~/.local/share. Nothing needs root, except the window's libraries and
@@ -14,6 +15,7 @@
 # so it downloads from the release it came with, a pre-release too.)
 set -eu
 BASE=${ORCHARD_RELEASE_URL:-@BASE@}
+CLI_SCRIPT=${ORCHARD_CLI_SCRIPT:-@CLI@}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
@@ -21,7 +23,7 @@ say() { printf '%s\n' "$*"; }
 fetch() { curl -fL --progress-bar -o "$2" "$BASE/$1" || { say "Couldn't download $1."; exit 1; }; }
 
 cli() {
-    fetch install-cli.sh "$work/install-cli.sh"
+    curl -fL --progress-bar -o "$work/install-cli.sh" "$CLI_SCRIPT" || { say "Couldn't download the command-line installer."; exit 1; }
     sh "$work/install-cli.sh"
     exit $?
 }

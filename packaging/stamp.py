@@ -106,10 +106,12 @@ def stamp_linux(generic, out, stamp, name, slug, arch):
     print(f"stamped {dest.name}")
 
 
-def install_sh(out, name, slug, release):
-    """install.sh downloads from the release it is published in (also a pre-release)."""
+def install_sh(out, name, slug, release, cli_script):
+    """install.sh downloads from the release it is published in (also a
+    pre-release); --cli hands over to the distribution's own CLI installer."""
     text = (HERE / "install.sh").read_text()
     text = text.replace("@NAME@", name).replace("@SLUG@", slug).replace("@SLUG_LOWER@", slug.lower()).replace("@BASE@", release)
+    text = text.replace("@CLI@", cli_script)
     (out / "install.sh").write_text(text)
     (out / "install.sh").chmod(0o755)
 
@@ -121,6 +123,8 @@ def main():
     p.add_argument("--name", required=True)
     p.add_argument("--wordmark", type=Path)
     p.add_argument("--release", required=True, help="where these files will be downloadable (the versioned release)")
+    p.add_argument("--cli-script", help="the distribution's command-line installer script for install.sh --cli "
+                   "(default: install-cli.sh in the distribution's latest release)")
     p.add_argument("--index", help="the release index (default: the latest release's index.toml)")
     a = p.parse_args()
     release = a.release.rstrip("/")
@@ -145,7 +149,8 @@ def main():
     stamp_macos(a.generic, a.out, stamp, a.name, slug)
     for arch in ARCHES:
         stamp_linux(a.generic, a.out, stamp, a.name, slug, arch)
-    install_sh(a.out, a.name, slug, release)
+    cli_script = a.cli_script or f"{latest}/install-cli.sh"
+    install_sh(a.out, a.name, slug, release, cli_script)
     files = sorted(f for f in a.out.iterdir() if f.is_file() and f.name != "SHA256SUMS")
     (a.out / "SHA256SUMS").write_text("".join(f"{sha256(f)}  {f.name}\n" for f in files))
     print(f"\n{a.out}:")
