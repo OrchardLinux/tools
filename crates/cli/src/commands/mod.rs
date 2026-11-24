@@ -13,6 +13,7 @@ pub mod prep;
 pub mod recovery;
 pub mod run;
 pub mod session;
+pub mod term;
 
 use crate::args::{FirmwareArgs, Global, PathArgs, PayloadArgs};
 use crate::output::Report;
