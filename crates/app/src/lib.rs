@@ -236,6 +236,9 @@ pub struct Installer {
     /// None when it isn't running. `guide_fade` darkens the rest (0…1).
     pub guide: Option<(Instant, orchard_flow::Sequence)>,
     pub guide_fade: Tween,
+    /// The run's last moment, so its row stays bright while the darkening
+    /// fades out after the run.
+    pub guide_last: Option<guide::Moment>,
     /// The start's Details panel (2.1p/2.1q): open or not, its height, its
     /// log's scroll, how many log lines were shown, when Copy was pressed.
     pub details_open: bool,
@@ -478,7 +481,16 @@ impl Installer {
 
     fn device_layer(&mut self) -> gpui::Div {
         let seconds = self.seconds();
-        let glow = self.guide.map(|(at, sequence)| guide::levels(sequence, at.elapsed().as_secs_f32()));
+        // The buttons follow the run's glow, and fade back with the darkening.
+        let fade = self.guide_fade.value();
+        let glow = match self.guide {
+            Some((at, sequence)) => {
+                let t = at.elapsed().as_secs_f32();
+                Some(guide::Look { levels: guide::levels(sequence, t), urgency: guide::urgency(sequence, t), fade, seconds: t })
+            }
+            None if fade > 0.001 => Some(guide::Look { levels: [0.; 4], urgency: [0.; 4], fade, seconds: 0. }),
+            None => None,
+        };
         let shown = self.shown.as_mut().expect("tracked");
         let current = shown.device;
         let mut layer = div().relative().w(px(device::WIDTH)).h(px(device::HEIGHT)).flex_none();
@@ -970,7 +982,8 @@ pub fn run(app: Kind) {
                     rows: Tween::new(4., 280.),
                     note: Tween::new(1., 280.),
                     guide: None,
-                    guide_fade: Tween::new(0., 220.),
+                    guide_fade: Tween::new(0., 300.),
+                    guide_last: None,
                     details_open: false,
                     details: Tween::new(0., 220.),
                     details_scroll: gpui::ScrollHandle::new(),

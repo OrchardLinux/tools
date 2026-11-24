@@ -254,7 +254,7 @@ fn table(steps: &'static [Step], rows: Option<f32>, guide: Option<(Option<crate:
                 if let (Some(progress), Some(left)) = (m.progress, m.remaining) {
                     // The seconds left, then the circle.
                     row = row
-                        .child(div().font_family(MONO).text_size(px(12.)).text_color(c(SUBTITLE)).child(format!("{} s", left.ceil() as u32)))
+                        .child(div().font_family(MONO).text_size(px(12.)).text_color(c(SUBTITLE)).child(format!("{}", left.ceil() as u32)))
                         .child(countdown(progress, guide_color(m.glow)));
                 }
             }
@@ -394,10 +394,11 @@ fn waiting_for_dfu(tab: Sequence, rows: f32, note: f32, guide: (bool, Option<cra
                 orchard_flow::for_device("An iPad is connected but isn't responding. Unplug the cable at your iPad and plug it back in."),
             )
         }))
-        // "Having trouble?" and, right-aligned, "Guide me" (or "Stop" while it runs).
+        // "Having trouble?" and, right-aligned, "Guide me" (or "Stop" while it
+        // runs): the row is the text column's width (440 px beside the device).
         .child(
             div()
-                .w_full()
+                .w(px(440.))
                 .flex()
                 .flex_row()
                 .items_center()
@@ -830,9 +831,22 @@ pub fn text_column(installer: &mut Installer, kind: ScreenKind, cx: &mut Context
             if installer.guide.is_some_and(|(_, s)| s != tab) || (installer.guide.is_some() && installer.guide_moment().is_none()) {
                 installer.guide = None;
             }
-            let moment = installer.guide_moment();
             installer.guide_fade.set(if installer.guide.is_some() { 1. } else { 0. });
-            let guide = (installer.guide.is_some(), moment, installer.guide_fade.value());
+            let fade = installer.guide_fade.value();
+            // While the darkening fades out after the run, its last row stays
+            // bright (without its countdown); once faded, nothing is held.
+            let moment = match installer.guide_moment() {
+                Some(m) => {
+                    installer.guide_last = Some(m);
+                    Some(m)
+                }
+                None if fade > 0.001 => installer.guide_last.map(|m| crate::guide::Moment { progress: None, remaining: None, ..m }),
+                None => {
+                    installer.guide_last = None;
+                    None
+                }
+            };
+            let guide = (installer.guide.is_some(), moment, fade);
             let unresponsive = installer.flow.unresponsive;
             let launcher = (installer.app == orchard_flow::App::Launcher).then(|| installer.flow.launch_problem.clone());
             waiting_for_dfu(tab, installer.rows.value(), installer.note.value(), guide, unresponsive, launcher, cx).into_any_element()

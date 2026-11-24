@@ -57,6 +57,16 @@ fn phases(sequence: Sequence) -> &'static [Phase] {
     }
 }
 
+/// What the drawing needs of the run at a moment: each button's glow and
+/// urgency, how far the run's look is faded in, and the time (for pulsing).
+#[derive(Debug, Clone, Copy)]
+pub struct Look {
+    pub levels: [f32; 4],
+    pub urgency: [f32; 4],
+    pub fade: f32,
+    pub seconds: f32,
+}
+
 /// Where the run is.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Moment {
@@ -141,6 +151,35 @@ impl Button {
     }
 }
 
+/// How long before a held button's release it starts pulsing.
+const URGENT: f32 = 2.;
+
+/// Each button's urgency (Home, Power, Volume Up, Volume Down), 0…1: a
+/// button held through a countdown pulses in the last URGENT seconds before
+/// it is to be let go (it isn't held in the next phase, or the run ends).
+/// Taps (phases without a countdown) don't.
+pub fn urgency(sequence: Sequence, elapsed: f32) -> [f32; 4] {
+    let phases = phases(sequence);
+    let mut out = [0.; 4];
+    let mut start = 0.;
+    for (i, phase) in phases.iter().enumerate() {
+        let end = start + phase.seconds;
+        if elapsed >= start && elapsed < end && phase.countdown {
+            let left = end - elapsed;
+            if left < URGENT {
+                for b in phase.glow {
+                    let held_on = phases.get(i + 1).is_some_and(|next| next.glow.contains(b));
+                    if !held_on {
+                        out[b.slot()] = 1. - left / URGENT;
+                    }
+                }
+            }
+        }
+        start = end;
+    }
+    out
+}
+
 /// How long the run of `sequence` takes.
 pub fn length(sequence: Sequence) -> f32 {
     phases(sequence).iter().map(|p| p.seconds).sum()
@@ -180,6 +219,19 @@ mod tests {
         // Power from 5 to 20 s, through the step change at 15 s without a dip.
         assert_eq!(at(15.)[1], 1.);
         assert_eq!(at(1.)[1], 0.);
+    }
+
+    #[test]
+    fn held_buttons_pulse_before_they_are_let_go() {
+        let s = Sequence::VolumeSequence;
+        // Power: held 5–20 s, let go at 20: urgent from 18, not at 14 (held on at 15).
+        assert_eq!(urgency(s, 14.)[1], 0.);
+        assert_eq!(urgency(s, 18.5)[1], 0.25);
+        // Volume Down held on from 15 to the end: not urgent at 19, urgent at 29.
+        assert_eq!(urgency(s, 19.)[3], 0.);
+        assert!(urgency(s, 29.)[3] > 0.4);
+        // Taps never.
+        assert_eq!(urgency(s, 3.9)[2], 0.);
     }
 
     #[test]

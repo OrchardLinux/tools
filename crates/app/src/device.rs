@@ -173,7 +173,7 @@ fn bar(x: f32, y: f32, w: f32, h: f32, color: Hsla, radius: [f32; 4]) -> Div {
 /// `view`'s device, or for `view.pair` (1.11) the iPhone with a Home button
 /// in front on the left and the iPad without one behind on the right, every
 /// button of both in sight.
-pub fn drawing(view: &DeviceView, seconds: f32, guide: Option<[f32; 4]>) -> Div {
+pub fn drawing(view: &DeviceView, seconds: f32, guide: Option<crate::guide::Look>) -> Div {
     if !view.pair {
         return device(view, seconds, guide);
     }
@@ -190,7 +190,7 @@ pub fn drawing(view: &DeviceView, seconds: f32, guide: Option<[f32; 4]>) -> Div 
 
 /// The device as `view` describes it, `seconds` into the app's life (for
 /// the spinner). The waves are a separate layer ([`waves`]).
-pub fn device(view: &DeviceView, seconds: f32, guide: Option<[f32; 4]>) -> Div {
+pub fn device(view: &DeviceView, seconds: f32, guide: Option<crate::guide::Look>) -> Div {
     let step = (seconds * 10.) as usize;
     let p = paint(view);
     let pressed = pressed(view.buttons, view.model);
@@ -203,7 +203,21 @@ pub fn device(view: &DeviceView, seconds: f32, guide: Option<[f32; 4]>) -> Div {
         Button::VolumeDown => crate::guide::Button::VolumeDown,
     };
     // How lit the button is, 0…1 (fading in and out with the guide's timeline).
-    let level = |b: Button| if pressed.contains(&b) { guide.map(|g| g[as_guide(b).slot()]).unwrap_or(0.) } else { 0. };
+    let level = |b: Button| if pressed.contains(&b) { guide.map(|g| g.levels[as_guide(b).slot()]).unwrap_or(0.) } else { 0. };
+    // How far the run's look is faded in (0…1): muted buttons come back with it.
+    let fade = guide.map(|g| g.fade).unwrap_or(0.);
+    // Before a held button is let go it pulses: faster and stronger as the
+    // moment nears (urgency 0…1).
+    let pulse = |b: Button| {
+        let Some(g) = guide else { return 1. };
+        let u = if pressed.contains(&b) { g.urgency[as_guide(b).slot()] } else { 0. };
+        if u <= 0. {
+            return 1.;
+        }
+        let hz = 2. + 4. * u;
+        let wave = 0.5 + 0.5 * (g.seconds * hz * std::f32::consts::TAU).sin();
+        1. - (0.7 * u) * (1. - wave)
+    };
     let button = |b: Button| {
         if !pressed.contains(&b) {
             return p.idle_button;
@@ -214,7 +228,7 @@ pub fn device(view: &DeviceView, seconds: f32, guide: Option<[f32; 4]>) -> Div {
             Button::Home | Button::VolumeDown => c(BUTTON_OTHER),
         };
         if guide.is_some() {
-            color.a = 0.35 + 0.65 * level(b);
+            color.a = (1. - (1. - (0.35 + 0.65 * level(b))) * fade) * pulse(b);
         }
         color
     };
@@ -225,7 +239,7 @@ pub fn device(view: &DeviceView, seconds: f32, guide: Option<[f32; 4]>) -> Div {
             return d;
         }
         let mut halo = button(b);
-        halo.a = 0.8 * lit;
+        halo.a = 0.8 * lit * fade * pulse(b);
         d.shadow(vec![gpui::BoxShadow { color: halo, offset: gpui::point(px(0.), px(0.)), blur_radius: px(10.), spread_radius: px(1.) }])
     };
     let mut frame = div().relative().w(px(WIDTH)).h(px(HEIGHT)).flex_none();
