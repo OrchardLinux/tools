@@ -25,13 +25,16 @@ pub fn spawn(executor: Executor, events: Sender<Event>) -> Sender<Job> {
                 }),
                 Job::Boot(id) => match manager.as_mut() {
                     Some(m) => {
-                        // When m1n1 answers relative to the command (it answers after
-                        // loading the entry, just before jumping into it).
+                        // Once the command is out, m1n1 loads and starts the entry
+                        // by itself, also when Orchard quits (m1n1 keeps going
+                        // without the computer): Done right away. m1n1's answer,
+                        // after loading, still reports a failure while the
+                        // window is open.
                         let sent = std::time::Instant::now();
                         eprintln!("{} launcher: start command sent for {id}", crate::install::stamp());
+                        let _ = events.send(Event::EntryStarted);
                         m.start(&id).map_err(|e| e.to_string()).map(|()| {
                             eprintln!("{} launcher: m1n1 answered after {:.1}s", crate::install::stamp(), sent.elapsed().as_secs_f64());
-                            let _ = events.send(Event::EntryStarted);
                         })
                     }
                     None => Err("m1n1 is not running".into()),

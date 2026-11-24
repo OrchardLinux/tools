@@ -77,6 +77,7 @@ fn main() {
                 password_again: (*password).into(),
                 pin: (*pin).into(),
                 pin_again: (*pin).into(),
+                ssh: false,
             }),
             ["e"] => Event::Approve(true),
             ["c"] => Event::Continue,

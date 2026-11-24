@@ -181,9 +181,12 @@ impl Worker {
                 }
             }
             Fail::Proto(Failure::Refused(r)) if r.code == "layout-changed" => {
-                // Inspect again and let the flow decide anew.
+                // Inspect again and let the flow decide anew; refused at
+                // Install (the plan is written then), it says so.
                 if let Err(e) = self.inspect() {
                     self.send(Event::ChainFailed(e.to_string()));
+                } else if matches!(self.current, Some(Interrupted::Start(_))) {
+                    self.send(Event::InstallRefused("The storage changed since it was read. Try again.".into()));
                 }
             }
             e => {
@@ -313,7 +316,19 @@ impl Worker {
         Ok(())
     }
 
+    /// Ahead of Install, while the account is typed: the downloads and the
+    /// staged files (layer, firmware, kernel package). The plan waits for
+    /// Install, which carries the account's choices (SSH keys).
     fn prepare(&mut self) -> std::result::Result<(), Fail> {
+        self.stage()
+    }
+
+    /// Writes the plan, with what the account chose, unless the device holds
+    /// one already (an install picked up after a restart).
+    fn write_plan(&mut self, account: &Account) -> std::result::Result<(), Fail> {
+        if self.session()?.info()?.phase != Phase::Ready {
+            return Ok(());
+        }
         let release = self.executor.release()?;
         let device = self.device.clone().ok_or(Fail::Other(Error::new(Code::NotFound, "no device")))?;
         let gpt = self.gpt.clone().ok_or(Fail::Other(Error::new(Code::NotFound, "no layout yet")))?;
@@ -321,18 +336,13 @@ impl Worker {
             .platform_for(&device.board)
             .ok_or_else(|| Error::new(Code::NotFound, format!("{} does not cover this board yet", release.name)))?
             .clone();
-        // The layer is fetched now (stage puts it), so a missing download fails early.
-        self.executor.download(&platform.layer)?;
         let firmware = firmware_files(&self.executor.firmware_dir(&device.board))?;
         let mixin = install_env::firmware_mixin(&device.board, &firmware)?;
         let mixin_sha = sha256(&mixin);
         let map = std::fs::read(self.executor.download(&release.root_map)?).map_err(|e| Fail::Other(e.into()))?;
         let devicetree = self.executor.devicetree(&device.board)?;
         let mut plan = build_plan(&release, &gpt, &devicetree, &map, &platform.layer, (mixin.len() as u64, &mixin_sha))?;
-        // Resolved as an asset before PrepareInstall; None when no package
-        // is published for exactly this layer.
-        let kernel = self.executor.kernel_package(&device.board)?;
-        if let Some((pkg, _)) = &kernel {
+        if let Some((pkg, _)) = &self.executor.kernel_package(&device.board)? {
             plan["kernel_package"] = json!({
                 "path": format!("{STAGING}/{}", pkg.file),
                 "base": pkg.base,
@@ -341,11 +351,19 @@ impl Worker {
                 "version": pkg.version,
             });
         }
-        let session = self.session()?;
+        if account.ssh {
+            if let Some(a) = plan.get_mut("account").filter(|a| a.is_object()) {
+                a["ssh_keys"] = json!(crate::ssh_keys::keys(self.executor.cache())?);
+            }
+        }
+        // This computer's time zone (the install tools link /etc/localtime to it).
+        if let Some(zone) = crate::timezone::here() {
+            plan["timezone"] = json!(zone);
+        }
         let t = std::time::Instant::now();
-        let nodes = session.plan(&plan)?;
+        let nodes = self.session()?.plan(&plan)?;
         eprintln!("{} timing: plan written in {:.1} s; partitions {nodes}", stamp(), t.elapsed().as_secs_f64());
-        self.stage()
+        Ok(())
     }
 
     /// Puts the files the plan names that the device doesn't hold yet (its
@@ -386,6 +404,7 @@ impl Worker {
 
     fn start(&mut self, account: &Account) -> std::result::Result<(), Fail> {
         eprintln!("{} timing: install pressed", stamp());
+        self.write_plan(account)?;
         // Anything the plan needs that isn't on the device yet (a resumed install).
         self.stage()?;
         let secrets = json!({"password": account.password, "pin": account.pin}).to_string().into_bytes();

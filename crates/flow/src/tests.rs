@@ -43,6 +43,7 @@ fn account() -> Account {
         password_again: "correct horse".into(),
         pin: "123456".into(),
         pin_again: "123456".into(),
+        ssh: false,
     }
 }
 

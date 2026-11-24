@@ -134,6 +134,8 @@ pub struct Account {
     pub password_again: String,
     pub pin: String,
     pub pin_again: String,
+    /// "Allow SSH from this computer": import this computer's keys.
+    pub ssh: bool,
 }
 
 impl Account {

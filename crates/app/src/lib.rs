@@ -172,6 +172,8 @@ pub enum DialogKind {
     Quit,
     /// ⌘Q / close while the split or the install runs: not now.
     QuitBlocked,
+    /// What "Allow SSH from this computer" does (3.2i).
+    SshInfo,
     /// A download failed for good (retries didn't help): why, and try again.
     Download,
 }
@@ -236,6 +238,10 @@ pub struct Installer {
     pub drag: Option<Drag>,
     /// The trouble dialog (1.5) is open.
     pub trouble: bool,
+    /// The SSH explanation (3.2i) is open.
+    pub ssh_info: bool,
+    /// SSH was allowed for this install: 3.5 shows how to sign in.
+    pub ssh_chosen: bool,
     /// The install's progress, eased between the receiver's reports.
     pub progress: Tween,
     /// The window's own focus, so the first Tab has somewhere to start from.
@@ -379,7 +385,9 @@ impl Installer {
             password_again: texts[1].clone(),
             pin: texts[2].clone(),
             pin_again: texts[3].clone(),
+            ssh: account.ssh,
         };
+        self.ssh_chosen = account.ssh;
         if typed != *account {
             self.send(Event::EditAccount(typed));
         }
@@ -429,6 +437,7 @@ impl Installer {
             self.refocus = true;
             // A new screen closes the trouble dialog; focus starts afresh.
             self.trouble = false;
+            self.ssh_info = false;
             self.focus_before_dialog = None;
             // Back when the screen goes back in the flow.
             let back = (content as u8) < (shown.content as u8);
@@ -706,6 +715,9 @@ impl Installer {
                 } else if this.trouble {
                     this.trouble = false;
                     cx.notify();
+                } else if this.ssh_info {
+                    this.ssh_info = false;
+                    cx.notify();
                 } else if matches!(this.flow.state, orchard_flow::State::Found { confirm_skip: true, .. }) {
                     this.send(Event::CancelSkip);
                 } else if matches!(this.flow.state, orchard_flow::State::ConfirmErase { .. }) || this.flow.confirming_split {
@@ -921,6 +933,8 @@ pub fn run(app: Kind) {
                     since: Instant::now(),
                     drag: None,
                     trouble: false,
+                    ssh_info: false,
+                    ssh_chosen: false,
                     progress: Tween::new(0., 900.),
                     root_focus: cx.focus_handle(),
                     slider_focus: cx.focus_handle().tab_stop(true).tab_index(0),

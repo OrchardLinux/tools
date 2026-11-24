@@ -204,14 +204,9 @@ impl Progress {
 /// iPadOS's USB (normal mode).
 pub fn boot_ipados(executor: &Executor, device: &Device) -> Result<()> {
     let overlay = executor.overlay()?;
-    // palera1n's own Pongo unless one is given (`--pongo`): a release Pongo
-    // booted iPadOS without the overlay (2026-11-22), and 0.3.3's left
-    // iPadOS's lockdown unresponsive (2026-11-24). Ours only once tested here.
-    let ours = executor.has_pongo_override().then(|| executor.pongo_image()).transpose()?;
-    let mut first = vec![std::ffi::OsString::from("-p")];
-    if let Some(p) = &ours {
-        first.extend(["-k".into(), p.clone().into_os_string()]);
-    }
+    // Orchard's Pongo (or `--pongo`'s), as every other boot.
+    let ours = executor.pongo_image()?;
+    let first = vec![std::ffi::OsString::from("-p"), "-k".into(), ours.clone().into_os_string()];
     run_palera1n(executor, device, &first, PALERA1N_SECONDS)?;
     let deadline = Instant::now() + Duration::from_secs(PONGO_SECONDS);
     while the_device(device, Mode::Pongo)?.is_none() {
@@ -220,10 +215,7 @@ pub fn boot_ipados(executor: &Executor, device: &Device) -> Result<()> {
         }
         std::thread::sleep(Duration::from_millis(250));
     }
-    let mut second = vec![std::ffi::OsString::from("-l"), "-o".into(), overlay.into_os_string()];
-    if let Some(p) = ours {
-        second.extend(["-k".into(), p.into_os_string()]);
-    }
+    let second = vec![std::ffi::OsString::from("-l"), "-o".into(), overlay.into_os_string(), "-k".into(), ours.into_os_string()];
     run_palera1n_from(executor, device, Mode::Pongo, &second, IPADOS_SECONDS)
 }
 

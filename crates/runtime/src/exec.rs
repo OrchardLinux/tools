@@ -235,9 +235,9 @@ impl Executor {
         self
     }
 
-    /// Whether `--pongo` names one (the overlay boot only uses it then).
-    pub fn has_pongo_override(&self) -> bool {
-        self.pongo.is_some()
+    /// orchard2's cache directory.
+    pub fn cache(&self) -> &Path {
+        &self.cache
     }
 
     /// The Pongo every boot sends: `--pongo`'s, else the release's.
@@ -258,10 +258,16 @@ impl Executor {
         if let Some(t) = slot.as_ref() {
             return Ok(t.clone());
         }
-        let me = self.clone();
-        let t = crate::orchard_tools::latest(&self.cache, move |r| {
-            let _ = me.download(r);
-        })?;
+        // The installer takes the newest now; the launcher starts with what
+        // it has and refreshes in the background.
+        let t = if self.index.is_empty() {
+            let me = self.clone();
+            crate::orchard_tools::latest(&self.cache, move |r| {
+                let _ = me.download(r);
+            })?
+        } else {
+            crate::orchard_tools::newest(&self.cache)?
+        };
         *slot = Some(t.clone());
         Ok(t)
     }

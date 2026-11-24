@@ -75,6 +75,51 @@ fn approve(approved: bool, cx: &mut Context<Installer>) -> impl IntoElement {
     div().flex().flex_row().items_center().gap(px(10.)).child(boxed).child(label)
 }
 
+/// The address an installed system answers on over the USB cable.
+const USB_ADDRESS: &str = "172.16.42.1";
+
+/// "Allow SSH from this computer", with its (i) (3.2).
+fn ssh_row(account: &Account, cx: &mut Context<Installer>) -> impl IntoElement {
+    let on = account.ssh;
+    let toggled = {
+        let mut a = account.clone();
+        a.ssh = !on;
+        a
+    };
+    let boxed = div().id("ssh").w(px(16.)).h(px(16.)).flex().items_center().justify_center().cursor_pointer().border_1();
+    let boxed = if on { boxed.bg(c(BLUE)).border_color(c(BLUE)).child(icon("check", 12., c(ON_BLUE))) } else { boxed.border_color(c(0x565f89)) };
+    let ring = if on { c(TITLE) } else { c(BLUE) };
+    let send = toggled.clone();
+    let boxed = pressable(boxed, move |s| s.border_color(ring), cx, move |this, _, _| this.send(Event::EditAccount(send.clone())));
+    let label = div()
+        .id("ssh-label")
+        .cursor_pointer()
+        .text_size(px(14.))
+        .text_color(c(TEXT))
+        .child("Allow SSH from this computer")
+        .on_click(cx.listener(move |this, _, _, _| this.send(Event::EditAccount(toggled.clone()))));
+    let info = div().id("ssh-info").cursor_pointer().child(icon("info", 15., c(MUTED))).on_click(cx.listener(|this, _, _, cx| {
+        this.ssh_info = true;
+        cx.notify();
+    }));
+    div().flex().flex_row().items_center().gap(px(10.)).child(boxed).child(label).child(info)
+}
+
+/// 3.2i: what "Allow SSH from this computer" does.
+pub fn ssh_dialog(installer: &Installer, focus: &gpui::FocusHandle, cx: &mut Context<Installer>) -> Div {
+    crate::screens::dialog(480.)
+        .child(div().text_size(px(18.)).font_weight(FontWeight::SEMIBOLD).text_color(c(TITLE)).child("SSH from this computer"))
+        .child(crate::screens::paragraph(format!(
+            "Adds this computer's SSH keys to {}, so you can sign in from here without a password, over the USB cable:",
+            sys()
+        )))
+        .child(div().font_family(MONO).text_size(px(13.)).text_color(c(SUBTITLE)).child(format!("ssh {}@{USB_ADDRESS}", installer.username)))
+        .child(div().w_full().flex().flex_row().justify_end().pt(px(4.)).child(crate::screens::dialog_button("ssh-ok", "OK", true, Some(focus), cx, |this, cx| {
+            this.ssh_info = false;
+            cx.notify();
+        })))
+}
+
 /// The red list of what the install erases (2.3, 3.6).
 fn erase_alert(layout: &Layout) -> Div {
     let total: u32 = layout.outside.iter().map(|p| p.gb).sum();
@@ -604,6 +649,7 @@ fn create_account(installer: &Installer, account: &Account, ready: bool, cx: &mu
                 })),
         )
         .child(form)
+        .child(ssh_row(account, cx))
         // The hint beside the button, well apart from it.
         .child(
             div()
@@ -751,13 +797,12 @@ fn installing(percent: u8, shown: f32, streamed: bool, since: Instant) -> Div {
 }
 
 /// 3.5: the system is starting.
-fn starting(took: Option<std::time::Duration>, cx: &mut Context<Installer>) -> Div {
+fn starting(took: Option<std::time::Duration>, ssh_user: Option<&str>, cx: &mut Context<Installer>) -> Div {
     column()
-        .child(header(format!("{} is starting", sys()), "It's installed and starting up on your iPad. Carry on there.", TITLE))
-        // The install time in whole seconds (Omarchy's own installer shows it too).
-        .children(took.map(|t| {
-            div().font_family(MONO).text_size(px(13.)).text_color(c(SUBTITLE)).child(format!("Installed {} in {:.1}s", sys(), t.as_secs_f64()))
-        }))
+        .child(title(format!("{} is starting", sys())))
+        // The install time (Omarchy's own installer shows it too), in the
+        // progress bar's gradient, one shade per character.
+        .children(took.map(|t| div().font_family(MONO).text_size(px(13.)).child(gradient_text(&format!("Installed {} in {:.1}s", sys(), t.as_secs_f64())))))
         .child(
             div().w(px(342.)).flex().flex_col().gap(px(10.)).child(heading("Starting it again later")).child({
                 // "Orchard" in the accent: the app to open.
@@ -773,7 +818,29 @@ fn starting(took: Option<std::time::Duration>, cx: &mut Context<Installer>) -> D
             }),
         )
         .children(launcher_line())
+        .children(ssh_user.map(|user| {
+            div()
+                .w(px(342.))
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .child(heading("Signing in from this computer"))
+                .child(div().font_family(MONO).text_size(px(13.)).text_color(c(SUBTITLE)).child(format!("ssh {user}@{USB_ADDRESS}")))
+        }))
         .child(actions().child(primary("done", "Done", 18., 9., Event::Continue, cx)))
+}
+
+/// Monospace text in the progress bar's blue-to-violet gradient.
+fn gradient_text(text: &str) -> gpui::StyledText {
+    let (from, to) = ((0x7a, 0xa2, 0xf7), (0xbb, 0x9a, 0xf7));
+    let n = text.chars().count().max(2) - 1;
+    let mut runs = Vec::new();
+    for (i, (at, ch)) in text.char_indices().enumerate() {
+        let mix = |a: u32, b: u32| (a as f32 + (b as f32 - a as f32) * i as f32 / n as f32).round() as u32;
+        let rgb = (mix(from.0, to.0) << 16) | (mix(from.1, to.1) << 8) | mix(from.2, to.2);
+        runs.push((at..at + ch.len_utf8(), gpui::HighlightStyle { color: Some(c(rgb)), ..Default::default() }));
+    }
+    gpui::StyledText::new(text.to_owned()).with_highlights(runs)
 }
 
 /// Where the installer put Orchard, or why it couldn't (every error shows).
@@ -981,7 +1048,8 @@ pub fn text_column(installer: &mut Installer, cx: &mut Context<Installer>) -> Op
         }
         State::Starting { .. } => {
             let took = installer.install_took;
-            starting(took, cx).into_any_element()
+            let user = installer.username.clone();
+            starting(took, installer.ssh_chosen.then_some(user.as_ref()), cx).into_any_element()
         }
         _ => return None,
     })

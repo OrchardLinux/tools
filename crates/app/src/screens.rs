@@ -514,6 +514,7 @@ pub fn overlay(installer: &Installer, cx: &mut Context<Installer>) -> Option<Any
     let focus = installer.dialog_focus.clone();
     let dialog = match kind {
         crate::DialogKind::Trouble => crate::install_screens::trouble_dialog(&focus, cx),
+        crate::DialogKind::SshInfo => crate::install_screens::ssh_dialog(installer, &focus, cx),
         crate::DialogKind::Skip => skip_dialog(&focus, cx),
         crate::DialogKind::Replug => crate::install_screens::replug_dialog(),
         crate::DialogKind::SplitErase => {
@@ -600,6 +601,8 @@ pub fn open_dialog(installer: &Installer) -> Option<crate::DialogKind> {
         Some(crate::DialogKind::Download)
     } else if installer.trouble {
         Some(crate::DialogKind::Trouble)
+    } else if installer.ssh_info {
+        Some(crate::DialogKind::SshInfo)
     } else if matches!(installer.flow.state, State::Found { confirm_skip: true, .. }) {
         Some(crate::DialogKind::Skip)
     } else if matches!(installer.flow.state, State::ConfirmErase { .. }) {
@@ -780,7 +783,7 @@ fn choose_system(device: &Device, entries: &[orchard_flow::Entry], selected: usi
 }
 
 /// A dialog button that runs `act` (not a flow event).
-fn dialog_button(id: &'static str, label: &'static str, primary: bool, focus: Option<&gpui::FocusHandle>, cx: &mut Context<Installer>, act: impl Fn(&mut Installer, &mut Context<Installer>) + 'static) -> impl IntoElement {
+pub(crate) fn dialog_button(id: &'static str, label: &'static str, primary: bool, focus: Option<&gpui::FocusHandle>, cx: &mut Context<Installer>, act: impl Fn(&mut Installer, &mut Context<Installer>) + 'static) -> impl IntoElement {
     let mut button = div().id(id).px(px(if primary { 15. } else { 16. })).py(px(if primary { 7. } else { 8. })).border_1().text_size(px(14.)).cursor_pointer().child(label);
     if let Some(focus) = focus {
         button = button.track_focus(focus);

@@ -47,6 +47,18 @@ pub fn latest(cache: &Path, fetch_file: impl Fn(&Receipt) + Send + 'static) -> R
     Ok(tools)
 }
 
+/// The newest release's tools now (the installer, which needs the network
+/// anyway), or the last ones fetched when it can't be reached.
+pub fn newest(cache: &Path) -> Result<Tools> {
+    match fetch() {
+        Ok(tools) => {
+            remember(cache, &tools);
+            Ok(tools)
+        }
+        Err(e) => recall(cache).ok_or_else(|| e.context("Orchard's tools (needs the internet once)")),
+    }
+}
+
 fn fetch() -> Result<Tools> {
     let mut sums = Http::probe(&format!("{LATEST}/SHA256SUMS"), TIMEOUT)?;
     let size = sums.size() as usize;
