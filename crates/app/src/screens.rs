@@ -245,6 +245,12 @@ pub fn trouble_link(cx: &mut Context<Installer>) -> impl IntoElement {
 
 /// 1.1 / 1.11 (and 1.9 on Linux): waiting for DFU, with the steps of the
 /// selected button layout.
+/// The note under the Home button steps (1.1): its gap and line height, and
+/// the same in table rows (49 px each), for the reveal's height.
+const NOTE_GAP: f32 = 16.;
+const NOTE_LINE: f32 = 19.;
+pub const NOTE_ROWS: f32 = (NOTE_GAP + NOTE_LINE) / 49.;
+
 fn waiting_for_dfu(tab: Sequence, rows: f32, unresponsive: bool, launcher: Option<Option<String>>, cx: &mut Context<Installer>) -> Div {
     let list = match tab {
         Sequence::HomePower => HOME_POWER,
@@ -266,16 +272,19 @@ fn waiting_for_dfu(tab: Sequence, rows: f32, unresponsive: bool, launcher: Optio
                 .flex_col()
                 .gap(px(16.))
                 .child(tabs(tab, cx))
-                .child(steps(list, rows))
-                // The iPhone 8 has a Home button but the no-Home-button steps.
-                // Its space stays on every tab, so switching tabs doesn't
-                // change the column's height (the table's animation stays smooth).
+                // The table's reveal: its animated height (rows) also takes in
+                // the note below it on the Home button tab, so the note comes
+                // and goes with the table instead of jumping.
                 .child(
                     div()
-                        .text_size(px(13.))
-                        .text_color(c(MUTED))
-                        .opacity(if tab == Sequence::HomePower { 1. } else { 0. })
-                        .child("iPhone 8 and later use the No Home button steps."),
+                        .w_full()
+                        .h(px(table_height(rows)))
+                        .overflow_hidden()
+                        .child(steps(list, list.len() as f32))
+                        // The iPhone 8 has a Home button but the no-Home-button steps.
+                        .when(tab == Sequence::HomePower, |d| {
+                            d.child(div().pt(px(NOTE_GAP)).h(px(NOTE_GAP + NOTE_LINE)).text_size(px(13.)).line_height(px(NOTE_LINE)).text_color(c(MUTED)).child("iPhone 8 and later use the No Home button steps."))
+                        }),
                 ),
         )
         // The launcher's last start failed: why (draft copy).
@@ -689,7 +698,9 @@ pub fn text_column(installer: &mut Installer, kind: ScreenKind, cx: &mut Context
                 Sequence::VolumeSequence => VOLUME_SEQUENCE.len(),
                 Sequence::VolumeDownSide => VOLUME_DOWN_SIDE.len(),
             };
-            installer.rows.set(count as f32);
+            // The Home button tab's reveal also holds its note (NOTE_ROWS).
+            let note = if tab == Sequence::HomePower { NOTE_ROWS } else { 0. };
+            installer.rows.set(count as f32 + note);
             let unresponsive = installer.flow.unresponsive;
             let launcher = (installer.app == orchard_flow::App::Launcher).then(|| installer.flow.launch_problem.clone());
             waiting_for_dfu(tab, installer.rows.value(), unresponsive, launcher, cx).into_any_element()
