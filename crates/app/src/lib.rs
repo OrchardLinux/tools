@@ -229,6 +229,8 @@ pub struct Installer {
     shown: Option<Shown>,
     /// The waiting screen's step table, in rows, so its height animates.
     pub rows: Tween,
+    /// 1.1's note under the steps (0…1), animating with `rows`.
+    pub note: Tween,
     /// The start's Details panel (2.1p/2.1q): open or not, its height, its
     /// log's scroll, how many log lines were shown, when Copy was pressed.
     pub details_open: bool,
@@ -522,6 +524,7 @@ impl Installer {
             || shown.previous.is_some_and(|(_, at)| busy(at, DEVICE_MILLIS))
             || busy(shown.content_at, CONTENT_MILLIS)
             || self.rows.progress() < 1.
+            || self.note.progress() < 1.
             || self.progress.progress() < 1.
             || self.dialog_fade.progress() < 1.
             || matches!(self.flow.state, orchard_flow::State::Splitting { .. })
@@ -950,6 +953,7 @@ pub fn run(app: Kind) {
                     title: title.clone(),
                     shown: None,
                     rows: Tween::new(4., 280.),
+                    note: Tween::new(1., 280.),
                     details_open: false,
                     details: Tween::new(0., 220.),
                     details_scroll: gpui::ScrollHandle::new(),
