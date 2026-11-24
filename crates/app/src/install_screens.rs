@@ -335,8 +335,8 @@ fn choose_split(layout: &Layout, shown_gb: f32, approved: bool, connected: bool,
     // The companion's connection dropped: it comes back by itself.
     if !connected {
         // Not back after 20 s: the USB link is stuck; a replug clears it.
-        let (line, color) = if stuck { ("Unplug the cable from your iPad and plug it back in.", AMBER) } else { ("Reconnecting…", MUTED) };
-        buttons = buttons.child(div().ml(px(16.)).text_size(px(13.)).text_color(c(color)).child(line));
+        let (line, color) = if stuck { (STUCK_LINE, AMBER) } else { ("Reconnecting…", MUTED) };
+        buttons = buttons.child(div().ml(px(16.)).flex_1().min_w(px(0.)).text_size(px(13.)).line_height(px(19.)).text_color(c(color)).child(line));
     } else if let Some(problem) = problem {
         // Why the last split didn't happen (the iPad's own words).
         let line = format!("Your iPad didn't split the storage: {problem}");
@@ -348,6 +348,9 @@ fn choose_split(layout: &Layout, shown_gb: f32, approved: bool, connected: bool,
         col.child(approve(approved, cx)).child(buttons)
     }
 }
+
+/// The companion's connection hasn't come back after 20 s (2.2s, 2.3s).
+const STUCK_LINE: &str = "The connection stopped. Unplug the cable from your iPad and plug it back in.";
 
 /// 2.3's confirmation, opened by Continue: what the split erases and the
 /// backup approval (draft copy). Cancel is the safe default.
@@ -371,19 +374,21 @@ pub fn split_erase_dialog(layout: &Layout, approved: bool, connected: bool, stuc
         .child(crate::screens::paragraph(format!("The partitions after iPadOS are erased, and {} gets their space.", sys())))
         .child(erase_alert(layout))
         .child(approve(approved, cx))
+        // The companion's connection dropped: its own line above the buttons;
+        // Split storage waits for it.
+        .when(!connected, |d| {
+            let (line, color) = if stuck { (STUCK_LINE, AMBER) } else { ("Reconnecting…", MUTED) };
+            d.child(div().w_full().text_size(px(13.)).line_height(px(19.)).text_color(c(color)).child(line))
+        })
         .child(
             div()
                 .w_full()
                 .flex()
                 .flex_row()
+                .justify_end()
                 .items_center()
                 .gap(px(10.))
                 .pt(px(4.))
-                // The companion's connection dropped: Split storage waits for it.
-                .child(div().flex_1().min_w(px(0.)).text_size(px(13.)).line_height(px(19.)).when(!connected, |d| {
-                    let (line, color) = if stuck { ("Unplug the cable from your iPad and plug it back in.", AMBER) } else { ("Reconnecting…", MUTED) };
-                    d.text_color(c(color)).child(line)
-                }))
                 .child(cancel)
                 .child(gated("confirm-split", "Split storage", approved && connected, Event::Continue, cx)),
         )
