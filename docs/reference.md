@@ -62,8 +62,8 @@ They have their own statuses:
 | 3 | no device in DFU mode within `--wait` |
 | 4 | the device is not supported |
 | 5 | an answer is needed and there is no terminal |
-| 6 | it failed |
-| 7 | a download or a release file failed |
+| 6 | it failed, or files it got for the device can't be used |
+| 7 | a download failed: the network, or the release's own files |
 | 8 | interrupted |
 
 and with `--json` these events, one object per line with an `event` field:

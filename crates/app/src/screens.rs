@@ -1122,12 +1122,7 @@ fn download_dialog(
     focus: &gpui::FocusHandle,
     cx: &mut Context<Installer>,
 ) -> Div {
-    let what = match asset {
-        orchard_flow::assets::Asset::RootImage => format!("{} itself", orchard_flow::system_name()),
-        orchard_flow::assets::Asset::Palera1n => orchard_flow::for_device("palera1n, which starts your iPad").to_owned(),
-        _ => format!("part of {}", orchard_flow::system_name()),
-    };
-    let (title, text) = cause.copy(&what);
+    let (title, text) = cause.copy(&asset.what());
     dialog(480.)
         .child(div().text_size(px(18.)).font_weight(FontWeight::SEMIBOLD).text_color(c(TITLE)).child(title))
         .child(paragraph(text))

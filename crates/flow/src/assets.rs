@@ -51,6 +51,17 @@ pub enum Cause {
     Other,
 }
 
+impl Asset {
+    /// How a failure names the asset to the user, for [`Cause::copy`].
+    pub fn what(self) -> String {
+        match self {
+            Asset::RootImage => format!("{} itself", crate::system_name()),
+            Asset::Palera1n => crate::for_device("palera1n, which starts your iPad").to_owned(),
+            _ => format!("part of {}", crate::system_name()),
+        }
+    }
+}
+
 impl Cause {
     /// The failure dialog's title and text; `what` names the asset, such as
     /// "part of Omarchy".

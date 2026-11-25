@@ -381,12 +381,17 @@ fn finish(out: &mut Out, exit: Exit, code: &str, message: &str) -> ExitCode {
     ExitCode::from(exit as u8)
 }
 
-/// A failed download (after the runtime's own retries), if any.
-fn failed_asset(flow: &Flow) -> Option<String> {
-    orchard_flow::assets::ALL.iter().find_map(|&a| match flow.assets.get(a) {
-        orchard_flow::assets::AssetState::Failed(_, why) => Some(format!("{a:?}: {why}")),
-        _ => None,
-    })
+/// An asset that failed for good (after the runtime's own retries), if any:
+/// the words the windows say for it, the error itself, and how to end. Only
+/// a network failure is a download problem.
+fn failed_asset(flow: &Flow) -> Option<(String, String, Exit, &'static str)> {
+    let (asset, cause, why) = flow.assets.failed()?;
+    let (title, text) = cause.copy(&asset.what());
+    let (exit, code) = match cause {
+        orchard_flow::Cause::Network => (Exit::Network, "download"),
+        orchard_flow::Cause::Data | orchard_flow::Cause::Other => (Exit::Failed, "prepare"),
+    };
+    Some((format!("{title}. {text}"), format!("{asset:?}: {why}"), exit, code))
 }
 
 /// Waiting for DFU mode. The steps show once USB has had a moment to report
@@ -655,11 +660,11 @@ impl Shared {
     }
 
     fn see(&mut self, out: &mut Out, flow: &Flow) -> Next {
-        if let Some(why) = failed_asset(flow) {
+        if let Some((said, why, exit, code)) = failed_asset(flow) {
             out.term.live(None);
-            out.fail("A download didn't work. Check the internet connection, then try again.");
+            out.fail(said);
             out.muted(&why);
-            return Next::Exit(finish(out, Exit::Network, "download", &why));
+            return Next::Exit(finish(out, exit, code, &why));
         }
         // Other Apple devices on USB: nothing goes on until they're gone, then
         // the current step is shown again.
@@ -1304,6 +1309,25 @@ mod tests {
     fn sources_become_index_urls() {
         assert_eq!(index_for("omarchy-a"), "https://github.com/OrchardLinux/omarchy-a/releases/latest/download/index.toml");
         assert_eq!(index_for("https://x/index.toml"), "https://x/index.toml");
+    }
+
+    #[test]
+    fn only_a_network_failure_is_called_a_download_problem() {
+        use orchard_flow::assets::{Asset, AssetState};
+        let failed = |cause| {
+            let mut flow = Flow::new();
+            flow.assets.set(Asset::RootImage, AssetState::Failed(cause, "why".into()));
+            failed_asset(&flow).unwrap()
+        };
+        assert!(failed_asset(&Flow::new()).is_none());
+        let (said, why, exit, code) = failed(orchard_flow::Cause::Network);
+        assert!(said.starts_with("A download didn't work. ") && said.contains("internet connection"), "{said}");
+        assert_eq!((why.as_str(), exit as u8, code), ("RootImage: why", 7, "download"));
+        for cause in [orchard_flow::Cause::Data, orchard_flow::Cause::Other] {
+            let (said, _, exit, code) = failed(cause);
+            assert!(!said.contains("internet") && !said.contains("download"), "{said}");
+            assert_eq!((exit as u8, code), (6, "prepare"));
+        }
     }
 
     #[test]
