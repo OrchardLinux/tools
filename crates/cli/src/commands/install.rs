@@ -392,9 +392,6 @@ struct Waiting {
     sequence: Option<Sequence>,
     /// The connected device, and its mode, whose own steps are showing.
     seen: Option<(String, UsbMode)>,
-    /// The lines of the steps with their tabs, while nothing was printed
-    /// after them: another tab is drawn in their place.
-    block: Option<usize>,
 }
 
 /// The app's three tabs (1.1): which buttons the device has.
@@ -410,10 +407,11 @@ fn tabbed_steps(out: &mut Out, waiting: &mut Waiting, sequence: Sequence, wait: 
     let list = steps(sequence);
     out.event(json!({"event": "needs", "action": "dfu", "device": null, "steps": list.iter().map(|(p, d)| format!("{}{}", plain(p), if d.is_empty() { String::new() } else { format!(" ({d})") })).collect::<Vec<_>>(), "wait_s": wait}));
     out.term.live(None);
-    match waiting.block.take() {
-        Some(lines) => out.term.erase(lines),
-        None => out.term.blank(),
+    // Another tab takes the place of the last, unless something was said since.
+    if !out.term.take_block() {
+        out.term.blank();
     }
+    out.term.begin_block();
     out.heading("Put your device in DFU mode", None);
     let mut tabs = vec![s("  ", MUTED)];
     for (tab, label) in TABS {
@@ -434,14 +432,12 @@ fn tabbed_steps(out: &mut Out, waiting: &mut Waiting, sequence: Sequence, wait: 
         }
         out.term.line(l);
     }
-    let mut lines = 3 + list.len();
     if sequence == Sequence::HomePower {
         out.muted("iPhone 8 and later use the No Home button steps.");
-        lines += 1;
     }
     out.term.blank();
     out.term.line(vec![s("  ← →", BLUE), s(" other buttons · ", MUTED), s("t", BLUE), s(" tips", MUTED)]);
-    waiting.block = Some(lines + 2);
+    out.term.end_block();
     waiting.sequence = Some(sequence);
     out.term.live_restart(vec![s("Waiting for a device in DFU mode", SUB)]);
     out.term.keys(true);
@@ -449,7 +445,7 @@ fn tabbed_steps(out: &mut Out, waiting: &mut Waiting, sequence: Sequence, wait: 
 
 impl Waiting {
     fn new() -> Waiting {
-        Waiting { since: Instant::now(), shown: false, sequence: None, seen: None, block: None }
+        Waiting { since: Instant::now(), shown: false, sequence: None, seen: None }
     }
 }
 
@@ -521,8 +517,6 @@ fn waiting_keys(out: &mut Out, waiting: &mut Waiting, wait: u64) {
                     out.term.line(vec![s(format!("  {}  ", i + 1), MUTED), s(*head, FG)]);
                     out.muted(format!("   {body}"));
                 }
-                // The steps are further up now: another tab is drawn below.
-                waiting.block = None;
                 None
             }
             _ => None,
@@ -649,7 +643,7 @@ impl Shared {
         self.attempt_said = 1;
         self.stage_said = None;
         dfu_block(out, &title, Some(&sub), device.sequence, Some(&device.name), wait);
-        self.waiting = Waiting { since: Instant::now(), shown: true, sequence: Some(device.sequence), seen: None, block: None };
+        self.waiting = Waiting { since: Instant::now(), shown: true, sequence: Some(device.sequence), seen: None };
     }
 
     fn see(&mut self, out: &mut Out, flow: &Flow) -> Next {
@@ -709,7 +703,6 @@ impl Shared {
                         self.waiting.seen = Some(now);
                         self.waiting.shown = true;
                         self.waiting.sequence = Some(seen.device.sequence);
-                        self.waiting.block = None;
                         wrong_mode(out, seen, self.wait);
                     }
                 }

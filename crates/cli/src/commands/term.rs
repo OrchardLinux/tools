@@ -76,6 +76,10 @@ pub struct Term {
     /// Where the log goes (--log, else the cache's logs/cli-<time>.log).
     pub log_path: Option<std::path::PathBuf>,
     raw: Option<libc::termios>,
+    /// Rows of the block being printed (see `begin_block`).
+    counting: Option<usize>,
+    /// Rows of the last block, while nothing was printed after it.
+    block: Option<usize>,
 }
 
 impl Term {
@@ -117,7 +121,7 @@ impl Term {
                 }
             }
         }
-        Term { out, tty, color, live: None, log: log_file, log_path, raw: None }
+        Term { out, tty, color, live: None, log: log_file, log_path, raw: None, counting: None, block: None }
     }
 
     fn paint(&self, spans: &[Span]) -> String {
@@ -143,6 +147,10 @@ impl Term {
 
     /// A permanent line.
     pub fn line(&mut self, spans: Vec<Span>) {
+        match self.counting {
+            Some(rows) => self.counting = Some(rows + self.rows(&spans)),
+            None => self.block = None,
+        }
         self.clear_live();
         let text = self.paint(&spans);
         let _ = writeln!(self.out, "{text}");
@@ -153,12 +161,39 @@ impl Term {
         self.draw_live();
     }
 
-    /// Takes back the last LINES permanent lines, to draw them anew in place.
-    pub fn erase(&mut self, lines: usize) {
-        if self.tty && lines > 0 {
-            self.clear_live();
-            let _ = write!(self.out, "\x1b[{lines}A\r\x1b[J");
+    /// Takes the last block back when it is still the last thing printed,
+    /// so the next one is drawn in its place (true).
+    pub fn take_block(&mut self) -> bool {
+        match self.block.take() {
+            Some(rows) if self.tty && rows > 0 => {
+                self.clear_live();
+                let _ = write!(self.out, "\x1b[{rows}A\r\x1b[J");
+                true
+            }
+            _ => false,
         }
+    }
+
+    /// Starts a block; whatever prints after `end_block` leaves it standing.
+    pub fn begin_block(&mut self) {
+        self.counting = Some(0);
+    }
+
+    pub fn end_block(&mut self) {
+        self.block = self.counting.take();
+    }
+
+    /// The rows a line takes on the terminal: a long one wraps.
+    fn rows(&self, spans: &[Span]) -> usize {
+        let width: usize = spans.iter().map(|(text, _)| text.chars().count()).sum();
+        let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+        use std::os::fd::AsRawFd;
+        // SAFETY: asks the terminal for its size into a struct this owns.
+        let columns = match unsafe { libc::ioctl(self.out.as_raw_fd(), libc::TIOCGWINSZ, &mut size) } {
+            0 if size.ws_col > 0 => usize::from(size.ws_col),
+            _ => 80,
+        };
+        width.div_ceil(columns).max(1)
     }
 
     pub fn blank(&mut self) {
@@ -216,6 +251,7 @@ impl Term {
         }
         self.keys(false);
         self.clear_live();
+        self.block = None;
         let live = self.live.take();
         let text = self.paint(&prompt);
         let _ = write!(self.out, "{text}");
@@ -242,6 +278,7 @@ impl Term {
         }
         self.keys(false);
         self.clear_live();
+        self.block = None;
         let live = self.live.take();
         let saved = cbreak()?;
         let mut at = selected.min(rows.len() - 1);
