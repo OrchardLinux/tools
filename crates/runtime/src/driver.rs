@@ -28,6 +28,8 @@ pub struct Options {
     pub companion: Option<PathBuf>,
     /// A Pongo to use instead of the release's (testing a build).
     pub pongo: Option<PathBuf>,
+    /// The one device this run is for; any other is not worked on.
+    pub only: Option<crate::Only>,
     /// Download and build assets; off only to watch the flow without work.
     pub fetch: bool,
     /// Act on the device: palera1n boots, splitting, installing. Off, those
@@ -46,6 +48,7 @@ impl Options {
             local: None,
             companion: None,
             pongo: None,
+            only: None,
             fetch: true,
             live: false,
             // orchard2's cache (the cache crate's place, or ORCHARD_CACHE),
@@ -126,6 +129,7 @@ pub fn start(options: Options, observer: impl Observer) -> Result<Handle> {
         app: options.app,
         fetch: options.fetch,
         live: options.live,
+        only: options.only.clone(),
         jobs: installing::spawn(executor.clone(), tx.clone()),
         launcher_jobs: crate::launcher::spawn(executor.clone(), tx.clone()),
         companion_jobs: companion::spawn(tx.clone(), options.cache.join("logs")),
@@ -141,6 +145,7 @@ struct Driver<O: Observer> {
     app: App,
     fetch: bool,
     live: bool,
+    only: Option<crate::Only>,
     executor: Executor,
     events: Sender<Event>,
     jobs: Sender<Job>,
@@ -239,6 +244,8 @@ impl<O: Observer> Driver<O> {
         let wait_key = |flow: &Flow| (std::mem::discriminant(&flow.state), orchard_flow::timeout(&flow.state).is_some());
         let mut waiting = (wait_key(&flow), Instant::now(), false);
         let mut next_poll = Instant::now();
+        // Where the device named for this run (Options::only) was last seen.
+        let mut named_at: Option<String> = None;
         loop {
             let kind = wait_key(&flow);
             if kind != waiting.0 {
@@ -290,12 +297,31 @@ impl<O: Observer> Driver<O> {
                             unresponsive = silent;
                             flow = self.feed(flow, Event::Unresponsive(silent));
                         }
-                        let seen_events = watcher.see(&catalog, &devices);
+                        // With one device named, the flow hears of no other.
+                        // A device that does not tell its ECID (the installed
+                        // system, Pongo) is the named one at the port it was at.
+                        if let Some(only) = &self.only {
+                            let told = devices.iter().find(|d| watcher.ecid(d).is_some_and(|ecid| only.is(d, Some(&ecid))));
+                            if let Some(device) = told {
+                                named_at = Some(device.location.clone());
+                            }
+                        }
+                        let (named, unnamed): (Vec<_>, Vec<_>) = devices.iter().cloned().partition(|d| {
+                            self.only.as_ref().is_none_or(|only| {
+                                let ecid = watcher.ecid(d);
+                                only.is(d, ecid.as_deref()) || (ecid.is_none() && named_at.as_deref() == Some(d.location.as_str()))
+                            })
+                        });
+                        let unnamed: Vec<_> = unnamed.into_iter().filter(orchard_usb::apple_device).collect();
+                        let seen_events = watcher.see(&catalog, &named);
                         // Other Apple devices besides the one being worked on:
                         // neither app goes on until they're gone.
                         {
                             let target = flow.state.device().map(|d| d.id.clone());
-                            let others = if watcher.others(&devices, target.as_ref()).is_empty() {
+                            let others = if target.is_none() && !unnamed.is_empty() {
+                                // Only devices that were not named are there.
+                                listed_devices(&catalog, &watcher, &unnamed, None)
+                            } else if watcher.others(&devices, target.as_ref()).is_empty() {
                                 Vec::new()
                             } else {
                                 listed_devices(&catalog, &watcher, &devices, flow.state.device())

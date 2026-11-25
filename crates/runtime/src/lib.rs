@@ -72,6 +72,27 @@ pub fn layout(product: &str) -> (Model, Sequence) {
     (Model::IpadHome, Sequence::HomePower)
 }
 
+/// The one device a run is for, named by the person: its ECID, the USB port
+/// it is at, or both. Every other device is one too many.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Only {
+    pub ecid: Option<String>,
+    pub location: Option<String>,
+}
+
+impl Only {
+    /// Whether a listed device is the named one; `ecid` is what is known of
+    /// its ECID. A device that has not told its ECID yet is not it yet.
+    pub fn is(&self, usb: &orchard_usb::Device, ecid: Option<&str>) -> bool {
+        let at = self.location.as_deref().is_none_or(|location| usb.location == location);
+        let named = match self.ecid.as_deref() {
+            Some(wanted) => ecid.is_some_and(|known| ecid_key(known) == ecid_key(wanted)),
+            None => true,
+        };
+        at && named
+    }
+}
+
 /// A device as discovery saw it, before the flow hears about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Seen {
@@ -203,6 +224,13 @@ impl Watcher {
         catalog.board_for_product(product).ok().map(|board| describe(catalog, &board, &format!("udid-{udid}")))
     }
 
+    /// A listed device's ECID: from the boot ROM or iBoot, or what it said
+    /// while running iOS.
+    pub fn ecid(&self, usb: &orchard_usb::Device) -> Option<String> {
+        let told = || usb.identity.udid.as_deref().and_then(|u| self.told.get(u)).and_then(|t| t.ecid.clone());
+        usb.identity.ecid.clone().or_else(told)
+    }
+
     /// The Apple devices in `listing` other than `target` (any mode), by the
     /// shared rule (orchard_usb::others): its ECID, else the port it was
     /// last seen at. A device running iOS that told its ECID is known by it.
@@ -308,6 +336,21 @@ impl Watcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_named_device_is_told_by_its_ecid_or_its_port() {
+        let device = usb_at(orchard_usb::Mode::Dfu, "CPID:8010 BDID:0C ECID:00000000000000AB", "0x1100000");
+        let ecid = device.identity.ecid.clone();
+        let only = |ecid: Option<&str>, location: Option<&str>| Only { ecid: ecid.map(str::to_owned), location: location.map(str::to_owned) };
+        assert!(only(Some("0xab"), None).is(&device, ecid.as_deref()));
+        assert!(!only(Some("ac"), None).is(&device, ecid.as_deref()));
+        // Running iOS before it said who it is: not it yet.
+        assert!(!only(Some("ab"), None).is(&device, None));
+        assert!(only(None, Some("0x1100000")).is(&device, None));
+        assert!(!only(None, Some("0x1200000")).is(&device, ecid.as_deref()));
+        assert!(!only(Some("ab"), Some("0x1200000")).is(&device, ecid.as_deref()));
+        assert!(Only::default().is(&device, None));
+    }
 
     #[test]
     fn a_32_bit_board_is_unsupported_whatever_its_status() {

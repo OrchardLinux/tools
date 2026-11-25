@@ -357,6 +357,11 @@ fn start(app: App, global: &Global, index: Option<String>, demo: bool) -> Result
     if let Some(cache) = &global.cache {
         options.cache = cache.clone();
     }
+    // --ecid, --location: the one device this run is for.
+    let device = &global.device;
+    if device.ecid.is_some() || device.location.is_some() {
+        options.only = Some(orchard_runtime::Only { ecid: device.ecid.clone(), location: device.location.clone() });
+    }
     options.live = true;
     let started = if demo { driver::start_demo(options, Relay(tx)) } else { driver::start(options, Relay(tx)) };
     started.map(|h| (h, rx)).map_err(|e| e.to_string())
@@ -565,6 +570,8 @@ struct Shared {
     stage_said: Option<&'static str>,
     /// --wait, for what is asked of the person.
     wait: u64,
+    /// The run is for one named device (--ecid, --location).
+    named: bool,
 }
 
 enum Next {
@@ -576,8 +583,9 @@ enum Next {
 }
 
 impl Shared {
-    fn new(app: App, wait: u64) -> Shared {
-        Shared { app, last: String::new(), waiting: Waiting::new(), stalled: false, others_said: Vec::new(), attempt_said: 1, stage_said: None, wait }
+    fn new(app: App, wait: u64, global: &Global) -> Shared {
+        let named = global.device.ecid.is_some() || global.device.location.is_some();
+        Shared { named, app, last: String::new(), waiting: Waiting::new(), stalled: false, others_said: Vec::new(), attempt_said: 1, stage_said: None, wait }
     }
 
     /// "Unplug the ones you don't want to install on." and the launcher's own.
@@ -659,13 +667,22 @@ impl Shared {
             if flow.others != self.others_said {
                 self.others_said = flow.others.clone();
                 out.term.live(None);
-                out.event(json!({"event": "needs", "action": "disconnect-others", "devices": flow.others.iter().map(|o| json!({"name": o.name, "mode": o.mode})).collect::<Vec<_>>()}));
-                out.warn(orchard_flow::SEVERAL_TITLE);
+                let devices: Vec<_> = flow.others.iter().map(|o| json!({"name": o.name, "mode": o.mode})).collect();
+                // With a device named (--ecid, --location) and not there,
+                // what is connected is only not it.
+                let absent = self.named && flow.state.device().is_none();
+                out.event(json!({"event": "needs", "action": if absent { "connect-named" } else { "disconnect-others" }, "devices": devices}));
+                out.warn(if absent { "The device you named is not connected" } else { orchard_flow::SEVERAL_TITLE });
                 for other in &flow.others {
                     out.sub(format!("{} · {}", other.name, other.mode));
                 }
-                out.sub(self.unplug_hint());
-                out.term.live_restart(vec![s("Waiting for one device", SUB)]);
+                if absent {
+                    out.sub("Connect the one --ecid or --location names; orchard2 devices lists what is there.");
+                    out.term.live_restart(vec![s("Waiting for the named device", SUB)]);
+                } else {
+                    out.sub(self.unplug_hint());
+                    out.term.live_restart(vec![s("Waiting for one device", SUB)]);
+                }
             }
             return Next::Skip;
         }
@@ -779,7 +796,7 @@ pub fn install(global: &Global, args: &InstallArgs) -> ExitCode {
     let send = |e: Event| {
         let _ = handle.events.send(e);
     };
-    let mut shared = Shared::new(App::Installer, args.wait);
+    let mut shared = Shared::new(App::Installer, args.wait, global);
     let mut found = false;
     let mut split_done = false;
     let mut erase_done = false;
@@ -1157,7 +1174,7 @@ pub fn launch(global: &Global, args: &LaunchArgs) -> ExitCode {
         // starts only the entry it names.
         send(Event::AskEntry);
     }
-    let mut shared = Shared::new(App::Launcher, args.wait);
+    let mut shared = Shared::new(App::Launcher, args.wait, global);
     let mut chosen = false;
     loop {
         out.term.tick();
