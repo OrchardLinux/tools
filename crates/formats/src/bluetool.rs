@@ -36,7 +36,7 @@ pub fn regulatory(data: &[u8], address: u64, size: u64) -> Result<&[u8]> {
     let mut mapping = header
         .segments
         .iter()
-        .filter(|s| s.vmaddr <= address && address + size <= s.vmaddr.saturating_add(s.filesize));
+        .filter(|s| s.vmaddr <= address && address.saturating_add(size) <= s.vmaddr.saturating_add(s.filesize));
     let (Some(segment), None) = (mapping.next(), mapping.next()) else {
         return Err(Error("regulatory range does not map to one file-backed segment"));
     };

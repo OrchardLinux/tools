@@ -49,14 +49,29 @@ Until then:
 
 ## Firmware of the 32-bit boards
 
-`fw build p105 --type peripheral` stops at its first input: a 32-bit
-restore image's root filesystem is an encrypted disk image and its kernel
-an encrypted IMG3, and both need the board's firmware keys. orchard's
-Python reads them (`legacy_images.py`: `Encrcdsa`, `img3_kernelcache`,
-with its key store); here only the step that follows is ported
-(`sgx543-from-kernelcache@1`, checked against Python on a made-up kernel).
-`install` refuses 32-bit boards before it gets there, so nobody meets it
-yet. It belongs to bringing Cascadia into the installer.
+To do with the Cascadia flow, not before: reading a 32-bit board's firmware
+inputs, so that `fw build p105 --type peripheral` and then the installer
+make its files.
+
+Today it stops at the first input: a 32-bit restore image's root filesystem
+is an encrypted disk image and its kernel an encrypted IMG3, and both need
+the board's firmware keys. What is missing is small, because the means to
+get the keys are here already: the boot firmware of the 32-bit chains is
+built from IMG3 with keys from the key store, a file, the board data or the
+device (`crates/boards/src/boot_firmware.rs`, `data/firmware_keys.rs`,
+`crates/formats/src/img3.rs`). To add, after orchard's Python
+(`legacy_images.py`, `remote_ipsw.py`):
+
+- the kernel input: an IMG3 kernelcache decrypted with its key and
+  decompressed (`img3_kernelcache`);
+- the root filesystem inputs: the encrypted disk image read at random
+  (`Encrcdsa`), under the image reader the 64-bit boards use;
+- the keys for both from the same sources as the boot firmware's.
+
+The step that follows is ported and checked against Python on a made-up
+kernel (`sgx543-from-kernelcache@1`); p105's real file has not been made.
+`install` refuses 32-bit boards before it gets there, so nobody meets this
+yet.
 
 ## Not run on a device yet
 

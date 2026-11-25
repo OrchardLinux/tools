@@ -72,6 +72,8 @@ fn a_regulatory_table_at_its_address() {
     assert!(bluetool::regulatory(&tool, 0x1_0000_11f0, 32).is_err());
     assert!(bluetool::regulatory(&tool, 0x1_0000_0ff0, 32).is_err());
     assert!(bluetool::regulatory(&tool, 0x2_0000_0000, 16).is_err());
+    // An address at the end of the address space is refused, not added up.
+    assert!(bluetool::regulatory(&tool, u64::MAX - 8, 16).is_err());
     assert!(bluetool::regulatory(&tool[..0x450], 0x1_0000_1080, 210).is_err());
 }
 
