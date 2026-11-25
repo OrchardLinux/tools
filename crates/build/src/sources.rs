@@ -34,6 +34,7 @@ pub fn git<S: AsRef<OsStr>>(
 
 /// Whether git in `repository` succeeds with `args`.
 pub fn git_ok<S: AsRef<OsStr>>(repository: &Path, args: &[S]) -> bool {
+    let _running = crate::Running::new();
     command(repository)
         .args(args)
         .stdin(std::process::Stdio::null())

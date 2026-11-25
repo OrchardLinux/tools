@@ -62,8 +62,9 @@ nothing itself, so a payload's format is its producer's.
   Podman is missing, does not answer or its VM is not running. The record
   of what ran names each command with the variables the build gave it.
 - **Ctrl-C** ends the running producer, and the build removes what it
-  staged; a second one, or one while no producer runs, ends the build at
-  once, and the next build removes what was left.
+  staged; one while no producer runs ends the build, which removes what it
+  staged in the project, and the next build removes what is left in the
+  cache. A second one ends it at once. The exit status is 130.
 - **Python**: the producers need 3.11: `ORCHARD_PYTHON`, else the newest
   `python3.N` on PATH.
 - **The USB session** (`transport`, on by default): a payload gets orchard's

@@ -149,6 +149,19 @@ fn remove_tree(path: &Path) -> bool {
 /// What a kernel tree is called while it is deleted.
 const REMOVING: &str = ".removing-";
 
+/// Deletes m1n1's copies of its patch whose work directory is gone. Only
+/// while no build uses the cache.
+fn remove_unused_patches(cache: &Components) {
+    let Ok(items) = std::fs::read_dir(cache.work().join(".m1n1-patches")) else {
+        return;
+    };
+    for item in items.flatten() {
+        if !cache.work().join("m1n1").join(item.file_name()).is_dir() {
+            let _ = std::fs::remove_dir_all(item.path());
+        }
+    }
+}
+
 /// Deletes what interrupted builds left behind: unfinished entries and
 /// their staging directories, and trees that were being deleted. Only while
 /// no build uses the cache.
@@ -277,6 +290,7 @@ pub fn remove(cache: &Components, selectors: &[String], say: &dyn Fn(&str)) -> R
         removed.push(format!("{}/{}", entry.name, entry.key));
     }
     cache.remove_unshared();
+    remove_unused_patches(cache);
     Ok(removed)
 }
 
@@ -317,6 +331,7 @@ pub fn prune(cache: &Components, keep: usize, say: &dyn Fn(&str)) -> Result<u64>
                 say(&format!("Removed work {}/{}", entry.name, entry.key));
             }
         }
+        remove_unused_patches(cache);
     }
     let after = on_disk(&cache.dir()) + on_disk(&cache.work());
     say(&format!(
@@ -397,6 +412,7 @@ pub fn fit(cache: &Components, limit: u64, say: &dyn Fn(&str)) -> u64 {
     }
     if idle.is_some() {
         cache.remove_unshared();
+        remove_unused_patches(cache);
     }
     let used = usage(cache);
     if used < start {
@@ -516,6 +532,18 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         panic!("the cache never became free");
+    }
+
+    #[test]
+    fn m1n1s_patch_copy_goes_with_its_work_directory() {
+        let (_dir, cache) = cache();
+        for key in ["kept", "gone"] {
+            std::fs::create_dir_all(cache.work().join(".m1n1-patches").join(key)).unwrap();
+        }
+        std::fs::create_dir_all(cache.work().join("m1n1/kept")).unwrap();
+        remove_unused_patches(&cache);
+        assert!(cache.work().join(".m1n1-patches/kept").exists());
+        assert!(!cache.work().join(".m1n1-patches/gone").exists());
     }
 
     #[test]

@@ -402,6 +402,7 @@ fn assemble(build: &Build, output: &Path, payload: &Payload) -> Result<Value> {
         .tempdir_in(output)
         .context(output.display())?;
     let work = temporary.path();
+    let _staged = crate::Staged::new(work);
     let root = work.join("root");
     for name in [
         "bin", "sbin", "usr/bin", "usr/sbin", "dev", "proc", "sys", "run", "tmp", "root", "etc",

@@ -28,19 +28,53 @@ use orchard_cache::{Code, Context, Error, Result};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 static INTERRUPTS: AtomicUsize = AtomicUsize::new(0);
 /// Commands of the build that run now.
 static RUNNING: AtomicUsize = AtomicUsize::new(0);
 
+/// Set when Ctrl-C came while no command ran: nothing returns from it.
+static ALONE: AtomicBool = AtomicBool::new(false);
+/// What the build stages outside the cache, to remove when it is ended.
+static STAGED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
 extern "C" fn on_interrupt(_: libc::c_int) {
-    let waits = RUNNING.load(Ordering::SeqCst) > 0;
-    if INTERRUPTS.fetch_add(1, Ordering::SeqCst) >= 1 || !waits {
+    if INTERRUPTS.fetch_add(1, Ordering::SeqCst) >= 1 {
         // SAFETY: _exit is async-signal-safe.
         unsafe { libc::_exit(130) };
     }
+    if RUNNING.load(Ordering::SeqCst) == 0 {
+        ALONE.store(true, Ordering::SeqCst);
+    }
+}
+
+/// A directory the build stages in a project, removed when Ctrl-C ends the
+/// build while it lives. In the cache, the next build removes what is left.
+pub(crate) struct Staged(PathBuf);
+
+impl Staged {
+    pub(crate) fn new(path: &Path) -> Staged {
+        if let Ok(mut staged) = STAGED.lock() {
+            staged.push(path.to_owned());
+        }
+        Staged(path.to_owned())
+    }
+}
+
+impl Drop for Staged {
+    fn drop(&mut self) {
+        if let Ok(mut staged) = STAGED.lock() {
+            staged.retain(|path| *path != self.0);
+        }
+    }
+}
+
+/// Whether the person interrupted the build.
+pub fn was_interrupted() -> bool {
+    INTERRUPTS.load(Ordering::SeqCst) > 0
 }
 
 /// While it lives, Ctrl-C is the running command's to act on first.
@@ -62,9 +96,23 @@ impl Drop for Running {
 /// The first Ctrl-C ends the running producer, which the terminal signals
 /// too, and the build returns and removes what it staged; the second ends
 /// the process. With no command running (a download, a copy, waiting for
-/// another build) the first ends the process: nothing would act on it
-/// otherwise, and what the build staged goes with the next build.
+/// another build) nothing would act on the first, so the build ends then:
+/// what it staged in the project is removed, and what it staged in the
+/// cache goes with the next build.
 pub fn catch_interrupts() {
+    static WATCHED: std::sync::Once = std::sync::Once::new();
+    WATCHED.call_once(|| {
+        std::thread::spawn(|| loop {
+            std::thread::sleep(Duration::from_millis(50));
+            if ALONE.load(Ordering::SeqCst) {
+                let staged = STAGED.lock().map(|s| s.clone()).unwrap_or_default();
+                for path in staged {
+                    let _ = std::fs::remove_dir_all(path);
+                }
+                std::process::exit(130);
+            }
+        });
+    });
     // SAFETY: installs a handler that only uses async-signal-safe calls.
     unsafe {
         libc::signal(

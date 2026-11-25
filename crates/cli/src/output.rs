@@ -58,7 +58,11 @@ pub fn finish(global: &Global, result: Result<Output, Error>) -> ExitCode {
             } else {
                 eprintln!("error: {e}");
             }
-            ExitCode::from(e.code.exit_status())
+            // Ctrl-C ended it: the status a shell gives an interrupted command.
+            match orchard_build::was_interrupted() {
+                true => ExitCode::from(130),
+                false => ExitCode::from(e.code.exit_status()),
+            }
         }
     }
 }

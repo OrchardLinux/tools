@@ -288,6 +288,7 @@ fn apply(source: &Path, delta: &[u8], check: bool) -> Result<()> {
     if check {
         command.arg("--check");
     }
+    let _running = crate::Running::new();
     let mut child = command
         .arg("-")
         .stdin(std::process::Stdio::piped())
