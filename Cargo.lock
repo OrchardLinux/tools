@@ -3818,7 +3818,7 @@ dependencies = [
 
 [[package]]
 name = "orchard-build"
-version = "0.1.2"
+version = "0.1.4"
 dependencies = [
  "flate2",
  "libc",

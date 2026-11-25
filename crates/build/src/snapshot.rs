@@ -6,6 +6,7 @@
 //! compiling. A copy that is there is used as it is; [`update`] fetches the
 //! newest.
 use crate::{published, read_text, write_text, RELEASES};
+use orchard_cache::component::Components;
 use orchard_cache::store::Store;
 use orchard_cache::{Code, Context, Error, Result};
 use serde_json::{json, Value};
@@ -96,23 +97,41 @@ pub fn update(store: &Store, say: &dyn Fn(&str)) -> Result<PathBuf> {
             &top.join(RECORD),
             &crate::json::pretty(&json!({"tag": tag, "commit": pointer["commit"]})),
         )?;
-        if target.exists() {
-            std::fs::remove_dir_all(&target).context(target.display())?;
+        if let Err(error) = std::fs::rename(&top, &target) {
+            // Another command fetched the same copy first.
+            if !target.join("kernel/build").is_file() {
+                return Err(Error::from(error).context(target.display()));
+            }
         }
-        std::fs::rename(&top, &target).context(target.display())?;
     }
     write_text(&directory.join("current"), &format!("{tag}\n"))?;
-    // Older copies are not used again.
-    for item in std::fs::read_dir(&directory)
-        .context(directory.display())?
-        .flatten()
-    {
-        let path = item.path();
-        if path.is_dir() && path != target && !item.file_name().to_string_lossy().starts_with('.') {
-            let _ = std::fs::remove_dir_all(path);
-        }
-    }
+    remove_old(store, &directory, &target);
     Ok(target)
+}
+
+/// How many copies stay besides the one in use: payloads built from them
+/// name files in them.
+const KEEP: usize = 2;
+
+/// Deletes copies that are not used again, only while no build uses the
+/// cache: a running build reads its recipes until it ends.
+fn remove_old(store: &Store, directory: &Path, target: &Path) {
+    let Ok(Some(_held)) = Components::open(store.dir()).and_then(|cache| cache.try_lock()) else {
+        return;
+    };
+    let Ok(items) = std::fs::read_dir(directory) else {
+        return;
+    };
+    let mut old: Vec<PathBuf> = items
+        .flatten()
+        .filter(|item| !item.file_name().to_string_lossy().starts_with('.'))
+        .map(|item| item.path())
+        .filter(|path| path.is_dir() && path != target)
+        .collect();
+    old.sort_by_key(|path| std::fs::metadata(path).and_then(|m| m.modified()).ok());
+    for path in old.iter().rev().skip(KEEP) {
+        let _ = std::fs::remove_dir_all(path);
+    }
 }
 
 fn download(url: &str, to: &Path) -> Result<()> {

@@ -134,8 +134,7 @@ struct Released {
 /// Pongo needs macOS with Xcode and the iPhoneOS SDK to build and is the
 /// same for every device, so an unchanged recipe uses the released binary.
 /// A checkout says whether its recipe changed since its newest release tag;
-/// data without history is a published state, whose Pongo is the newest
-/// release's.
+/// a copy of a nightly uses the Pongo that nightly was published with.
 fn released_pongo(build: &Build) -> Option<Released> {
     let root = &build.root;
     let (base, release) = if root.join(".git").exists() {
@@ -152,10 +151,8 @@ fn released_pongo(build: &Build) -> Option<Released> {
         }
         (format!("{RELEASES}/{tag}"), tag)
     } else {
-        (
-            "https://github.com/OrchardLinux/orchard/releases/latest/download".to_owned(),
-            "the newest release".to_owned(),
-        )
+        let tag = crate::snapshot::record(root)?["tag"].as_str()?.to_owned();
+        (format!("{RELEASES}/{tag}"), tag)
     };
     let text = published::fetch(&format!("{base}/SHA256SUMS"), 1 << 20).ok()?;
     let checksum = published::sums(&String::from_utf8_lossy(&text)).remove("pongo.bin")?;
@@ -307,16 +304,15 @@ pub fn cascadia_loader(build: &Build, board: &str) -> Result<PathBuf> {
         &format!("loader-cascadia-{board}"),
         &mut || Ok(Key::plain(key_of(build, &inputs)?)),
         &mut |stage| {
-            let builder = root.join("boot/cascadia/build");
-            build.command(
+            // Not by its first line: the system's python3 can be too old for it.
+            build.python(
+                &root.join("boot/cascadia/build"),
                 &[
-                    builder.as_os_str(),
-                    "--profile".as_ref(),
+                    OsStr::new("--profile"),
                     profile.as_os_str(),
                     "--output".as_ref(),
                     stage.as_os_str(),
                 ],
-                &[],
             )
         },
     )?;

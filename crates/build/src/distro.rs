@@ -145,6 +145,9 @@ pub fn build(build: &Build, root: &Path, distro: &Release, request: &Request) ->
         .env("ORCHARD_PYTHON", &build.python)
         .env("ORCHARD_CHECKOUT", &build.root)
         .env("ORCHARD_CACHE_DIR", build.cache.root())
+        // The entry's own `inputs` works with this build's cache and data.
+        .env("ORCHARD_CACHE", build.cache.root())
+        .env_remove("ORCHARD_DATA")
         .env("ORCHARD_TOOL", &tool);
     let mut shown = String::new();
     if let Some(tree) = &request.kernel_tree {
@@ -178,8 +181,9 @@ pub fn build(build: &Build, root: &Path, distro: &Release, request: &Request) ->
             "#!/bin/sh\n# What orchard build ran for this release (--explain prints it); the build script\n\
              # runs orchard's producers itself, from the data ORCHARD_CHECKOUT names; how each component was\n\
              # got (built, reused, or downloaded from a nightly) is in the inputs document, under \"produced\".\n\
-             set -eu\ncd {}\n{shown}ORCHARD_CHECKOUT={} ORCHARD_TOOL={} {}\n",
+             set -eu\ncd {}\nunset ORCHARD_DATA\n{shown}ORCHARD_CACHE={} ORCHARD_CHECKOUT={} ORCHARD_TOOL={} {}\n",
             quote(&root.to_string_lossy()),
+            quote(&build.cache.root().to_string_lossy()),
             quote(&build.root.to_string_lossy()),
             quote(&tool.to_string_lossy()),
             words.join(" ")
@@ -188,6 +192,7 @@ pub fn build(build: &Build, root: &Path, distro: &Release, request: &Request) ->
     let status = crate::to_stderr(&mut command)
         .status()
         .map_err(|e| Error::new(Code::NotFound, e.to_string()).context(&argv[0]))?;
+    crate::interrupted()?;
     let shown_entry = entry.strip_prefix(root).unwrap_or(entry).display();
     if !status.success() {
         return Err(Error::new(
@@ -513,7 +518,7 @@ given = [os.environ['ORCHARD_CHECKOUT'], os.environ['ORCHARD_TOOL'], os.environ.
         );
         let commands = std::fs::read_to_string(&built.commands).unwrap();
         assert!(
-            commands.contains("ORCHARD_KERNEL_TREE=/trees/linux ORCHARD_CHECKOUT="),
+            commands.contains("ORCHARD_KERNEL_TREE=/trees/linux ORCHARD_CACHE="),
             "{commands}"
         );
 

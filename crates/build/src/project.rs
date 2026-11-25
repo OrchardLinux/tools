@@ -337,7 +337,8 @@ pub fn packages(directory: &Path, given: Option<&Path>) -> Result<Option<PathBuf
             found.display()
         )));
     }
-    Ok(Some(found))
+    // The build entry runs in the distribution's directory.
+    Ok(Some(found.canonicalize().context(found.display())?))
 }
 
 /// What a build is asked to cover.

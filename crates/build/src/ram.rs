@@ -313,9 +313,13 @@ fn authorized_keys(cache: &Path) -> Result<PathBuf> {
     let text = lines.join("\n") + "\n";
     let path = directory.join("authorized_keys");
     if std::fs::read_to_string(&path).ok().as_deref() != Some(&text) {
-        write_text(&path, &text)?;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+        // Whole at once: another build may be copying it.
+        let mut file = tempfile::NamedTempFile::new_in(&directory).context(directory.display())?;
+        std::io::Write::write_all(&mut file, text.as_bytes()).context(path.display())?;
+        std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o644))
             .context(path.display())?;
+        file.persist(&path)
+            .map_err(|e| Error::from(e.error).context(path.display()))?;
     }
     Ok(path)
 }

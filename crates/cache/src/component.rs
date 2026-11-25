@@ -547,52 +547,67 @@ pub fn free_space(path: &Path) -> Result<u64> {
 /// not free at once.
 pub fn lock(path: &Path, exclusive: bool, waiting: &dyn Fn()) -> Result<Lock> {
     use std::os::fd::AsRawFd;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).context(parent.display())?;
-    }
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .context(path.display())?;
     let how = if exclusive {
         libc::LOCK_EX
     } else {
         libc::LOCK_SH
     };
-    // SAFETY: flock on a descriptor this function owns.
-    if unsafe { libc::flock(file.as_raw_fd(), how | libc::LOCK_NB) } != 0 {
-        waiting();
-        loop {
-            // SAFETY: as above.
-            if unsafe { libc::flock(file.as_raw_fd(), how) } == 0 {
-                break;
+    let mut told = false;
+    loop {
+        let file = open_lock(path)?;
+        // SAFETY: flock on a descriptor this function owns.
+        if unsafe { libc::flock(file.as_raw_fd(), how | libc::LOCK_NB) } != 0 {
+            if !told {
+                waiting();
+                told = true;
             }
-            let error = std::io::Error::last_os_error();
-            if error.kind() != std::io::ErrorKind::Interrupted {
-                return Err(Error::from(error).context(path.display()));
+            loop {
+                // SAFETY: as above.
+                if unsafe { libc::flock(file.as_raw_fd(), how) } == 0 {
+                    break;
+                }
+                let error = std::io::Error::last_os_error();
+                if error.kind() != std::io::ErrorKind::Interrupted {
+                    return Err(Error::from(error).context(path.display()));
+                }
             }
         }
+        if still_there(&file, path) {
+            return Ok(Lock { _file: file });
+        }
     }
-    Ok(Lock { _file: file })
+}
+
+fn open_lock(path: &Path) -> Result<File> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).context(parent.display())?;
+    }
+    fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .context(path.display())
+}
+
+/// Whether the lock that was taken is still the file at `path`: what was
+/// waited for can have been deleted with its directory, and its lock then
+/// protects nothing.
+fn still_there(file: &File, path: &Path) -> bool {
+    match (file.metadata(), fs::metadata(path)) {
+        (Ok(held), Ok(now)) => same_file(&held, &now),
+        _ => false,
+    }
 }
 
 /// Holds `path`'s lock exclusively, or `None` when another process has it.
 pub fn try_lock(path: &Path) -> Result<Option<Lock>> {
     use std::os::fd::AsRawFd;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).context(parent.display())?;
-    }
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .context(path.display())?;
+    let file = open_lock(path)?;
     // SAFETY: flock on a descriptor this function owns.
     if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
         return Ok(None);
     }
-    Ok(Some(Lock { _file: file }))
+    Ok(still_there(&file, path).then_some(Lock { _file: file }))
 }
 
 fn mode(meta: &fs::Metadata) -> u32 {

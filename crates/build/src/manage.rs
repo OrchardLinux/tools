@@ -87,7 +87,7 @@ pub fn kernel_trees(cache: &Components) -> Vec<KernelTree> {
     let mut trees: Vec<KernelTree> = items
         .flatten()
         .map(|item| item.path())
-        .filter(|path| path.is_dir())
+        .filter(|path| path.is_dir() && !name_of(path).starts_with('.'))
         .map(|path| {
             let marks = ["prepared-tree", "applied-patches"]
                 .iter()
@@ -96,19 +96,99 @@ pub fn kernel_trees(cache: &Components) -> Vec<KernelTree> {
             let used = marks
                 .or_else(|| modified(path.clone()))
                 .unwrap_or(SystemTime::UNIX_EPOCH);
-            let baseline = std::fs::read_to_string(path.join("prepared-tree")).ok();
-            let source = path.join("source");
-            let clean = match baseline {
-                Some(baseline) if source.join(".git").exists() => {
-                    sources::working_tree(&source, true).is_ok_and(|tree| tree == baseline.trim())
-                }
-                _ => false,
-            };
+            let clean = is_clean(&path);
             KernelTree { path, used, clean }
         })
         .collect();
     trees.sort_by_key(|tree| tree.used);
     trees
+}
+
+/// Whether a kernel tree holds nothing that can't be made again: its content
+/// is what orchard prepared, and its git has no work of its own (staged
+/// content, stashes, branches, tags, or commits made in it).
+fn is_clean(tree: &Path) -> bool {
+    let source = tree.join("source");
+    let Ok(baseline) = std::fs::read_to_string(tree.join("prepared-tree")) else {
+        return false;
+    };
+    let git = |args: &[&str]| sources::git(&source, args, &[]).ok();
+    source.join(".git").exists()
+        && sources::working_tree(&source, true).is_ok_and(|tree| tree == baseline.trim())
+        && git(&["for-each-ref", "--format=%(refname)"]).is_some_and(|refs| refs.is_empty())
+        && sources::git_ok(&source, &["diff", "--cached", "--quiet"])
+        && git(&["rev-parse", "HEAD"]).is_some_and(|head| {
+            // Commits made on the detached HEAD are only in its reflog.
+            git(&["reflog", "show", "--format=%H", "HEAD"])
+                .is_some_and(|log| log.lines().all(|commit| commit == head))
+        })
+}
+
+/// Deletes a kernel tree that nobody uses and that can be made again. It is
+/// moved away under its lock first, so what waits for the lock finds no
+/// tree instead of half of one.
+fn remove_tree(path: &Path) -> bool {
+    let Some(_held) = try_lock(&path.join(".lock")).ok().flatten() else {
+        return false;
+    };
+    if !is_clean(path) {
+        return false;
+    }
+    let aside = path.with_file_name(format!(
+        "{REMOVING}{}-{}",
+        name_of(path),
+        std::process::id()
+    ));
+    if std::fs::rename(path, &aside).is_err() {
+        return false;
+    }
+    let _ = std::fs::remove_dir_all(&aside);
+    true
+}
+
+/// What a kernel tree is called while it is deleted.
+const REMOVING: &str = ".removing-";
+
+/// Deletes what interrupted builds left behind: unfinished entries and
+/// their staging directories, and trees that were being deleted. Only while
+/// no build uses the cache.
+fn sweep(cache: &Components) {
+    for entry in cache.entries() {
+        if entry.key.starts_with("build-") {
+            let _ = std::fs::remove_dir_all(&entry.path);
+        }
+    }
+    let within = |directory: &Path| -> Vec<PathBuf> {
+        std::fs::read_dir(directory)
+            .map(|items| items.flatten().map(|item| item.path()).collect())
+            .unwrap_or_default()
+    };
+    for path in within(&cache.kernel_work()) {
+        if name_of(&path).starts_with(REMOVING) {
+            let _ = std::fs::remove_dir_all(&path);
+            continue;
+        }
+        if !path.is_dir() || name_of(&path).starts_with('.') {
+            continue;
+        }
+        let Some(_held) = try_lock(&path.join(".lock")).ok().flatten() else {
+            continue;
+        };
+        for left in within(&path) {
+            let name = name_of(&left);
+            if ["base-", "modules-", "source-"]
+                .iter()
+                .any(|prefix| name.starts_with(prefix))
+            {
+                let _ = std::fs::remove_dir_all(&left);
+            }
+        }
+    }
+    for left in within(&cache.root().join("recipes")) {
+        if name_of(&left).starts_with(".fetch-") {
+            let _ = std::fs::remove_dir_all(&left);
+        }
+    }
 }
 
 /// Bytes the build cache takes on disk.
@@ -254,6 +334,10 @@ pub fn prune(cache: &Components, keep: usize, say: &dyn Fn(&str)) -> Result<u64>
 /// `limit` bytes; 0 is no limit. Never waits for a running build: what it
 /// uses is skipped. Returns the bytes still in use.
 pub fn fit(cache: &Components, limit: u64, say: &dyn Fn(&str)) -> u64 {
+    let idle = cache.try_lock().ok().flatten();
+    if idle.is_some() {
+        sweep(cache);
+    }
     let start = usage(cache);
     if limit == 0 || start <= limit {
         return start;
@@ -261,7 +345,6 @@ pub fn fit(cache: &Components, limit: u64, say: &dyn Fn(&str)) -> u64 {
     let mut used = start;
     // (last use, path, label, whether it is a kernel tree)
     let mut candidates: Vec<(SystemTime, PathBuf, String, bool)> = Vec::new();
-    let idle = cache.try_lock().ok().flatten();
     if idle.is_some() {
         // Component entries and work directories, all but the newest of each.
         for (rows, kind) in [(cache.entries(), ""), (cache.work_entries(), "work ")] {
@@ -300,8 +383,11 @@ pub fn fit(cache: &Components, limit: u64, say: &dyn Fn(&str)) -> u64 {
         }
         let size = on_disk(&path);
         // A kernel tree in use by a build is locked; it is skipped.
-        let free = !tree || try_lock(&path.join(".lock")).ok().flatten().is_some();
-        if free && std::fs::remove_dir_all(&path).is_ok() {
+        let removed = match tree {
+            true => remove_tree(&path),
+            false => std::fs::remove_dir_all(&path).is_ok(),
+        };
+        if removed {
             used = used.saturating_sub(size);
             say(&format!(
                 "Removed {label} ({}, least recently used)",
@@ -413,6 +499,19 @@ mod tests {
         found.path
     }
 
+    /// Fits until `done`: another test's child holds a copy of a released
+    /// lock for the moment between its fork and its exec.
+    fn fit_until(cache: &Components, limit: u64, done: &dyn Fn() -> bool) {
+        for _ in 0..200 {
+            fit(cache, limit, &quiet);
+            if done() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("the cache never became free");
+    }
+
     #[test]
     fn sizes_read_as_people_expect() {
         assert_eq!(human(512), "512B");
@@ -464,8 +563,125 @@ mod tests {
         fit(&cache, 5000, &quiet);
         assert!(old.exists());
         drop(building);
-        fit(&cache, 5000, &quiet);
-        assert!(!old.exists());
+        fit_until(&cache, 5000, &|| !old.exists());
+    }
+
+    /// A kernel tree as a build leaves it, last used `age` hours ago.
+    fn tree(cache: &Components, name: &str, age: u64) -> PathBuf {
+        let path = cache.kernel_work().join(name);
+        let source = path.join("source");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("file.c"), "int a;\n").unwrap();
+        let git = |args: &[&str]| sources::git(&source, args, &[]).unwrap();
+        let user = ["-c", "user.name=t", "-c", "user.email=t@example.org"];
+        git(&["init", "-q", "-b", "main"]);
+        git(&["add", "."]);
+        git(&[&user[..], &["commit", "-q", "-m", "base"]].concat());
+        // A build's tree is a detached checkout without branches or history.
+        git(&["checkout", "-q", "--detach"]);
+        git(&["branch", "-q", "-D", "main"]);
+        std::fs::write(source.join("patched.c"), "int b;\n").unwrap();
+        let prepared = sources::working_tree(&source, true).unwrap();
+        std::fs::write(path.join("prepared-tree"), format!("{prepared}\n")).unwrap();
+        let at = SystemTime::now() - Duration::from_secs(age * 3600);
+        std::fs::File::open(path.join("prepared-tree"))
+            .unwrap()
+            .set_modified(at)
+            .unwrap();
+        path
+    }
+
+    #[test]
+    fn an_idle_kernel_tree_goes_but_never_one_with_work_in_it() {
+        let user = ["-c", "user.name=t", "-c", "user.email=t@example.org"];
+        type Work = fn(&Path, &[&str]);
+        let works: [(&str, Work); 5] = [
+            ("edited", |source, _| {
+                std::fs::write(source.join("file.c"), "int c;\n").unwrap()
+            }),
+            ("staged", |source, _| {
+                std::fs::write(source.join("file.c"), "int c;\n").unwrap();
+                sources::git(source, &["add", "file.c"], &[]).unwrap();
+                std::fs::write(source.join("file.c"), "int a;\n").unwrap();
+            }),
+            ("stashed", |source, user| {
+                std::fs::write(source.join("file.c"), "int c;\n").unwrap();
+                sources::git(
+                    source,
+                    &[user, &["stash", "push", "-q", "file.c"]].concat(),
+                    &[],
+                )
+                .unwrap();
+            }),
+            ("branch", |source, user| {
+                sources::git(source, &["checkout", "-q", "-b", "mine"], &[]).unwrap();
+                sources::git(
+                    source,
+                    &[user, &["commit", "-q", "--allow-empty", "-m", "work"]].concat(),
+                    &[],
+                )
+                .unwrap();
+                sources::git(source, &["checkout", "-q", "--detach", "HEAD^"], &[]).unwrap();
+            }),
+            ("detached commit", |source, user| {
+                sources::git(
+                    source,
+                    &[user, &["commit", "-q", "--allow-empty", "-m", "work"]].concat(),
+                    &[],
+                )
+                .unwrap();
+                sources::git(source, &["checkout", "-q", "--detach", "HEAD^"], &[]).unwrap();
+            }),
+        ];
+        for (what, work) in works {
+            let (_dir, cache) = cache();
+            let old = tree(&cache, "apple-old", 5);
+            tree(&cache, "apple-new", 1);
+            assert!(is_clean(&old), "{what}");
+            work(&old.join("source"), &user);
+            assert!(!is_clean(&old), "{what}");
+            fit(&cache, 1, &quiet);
+            assert!(old.join("source/file.c").exists(), "{what}");
+        }
+        let (_dir, cache) = cache();
+        let old = tree(&cache, "apple-old", 5);
+        let new = tree(&cache, "apple-new", 1);
+        let building = try_lock(&old.join(".lock")).unwrap().unwrap();
+        fit(&cache, 1, &quiet);
+        assert!(old.exists(), "in use");
+        drop(building);
+        fit_until(&cache, 1, &|| !old.exists());
+        assert!(new.exists());
+        let left: Vec<_> = std::fs::read_dir(cache.kernel_work())
+            .unwrap()
+            .flatten()
+            .collect();
+        assert_eq!(left.len(), 1, "{left:?}");
+    }
+
+    #[test]
+    fn what_an_interrupted_build_left_goes_and_never_counts_as_newest() {
+        let (_dir, cache) = cache();
+        let good = entry(&cache, "kernel", "good", 4000, 2);
+        let left = cache.dir().join("kernel/build-abc");
+        std::fs::create_dir_all(left.join("component")).unwrap();
+        let tree = tree(&cache, "apple-new", 1);
+        for name in ["base-x", "modules-x", "source-x"] {
+            std::fs::create_dir_all(tree.join(name)).unwrap();
+        }
+        let fetch = cache.root().join("recipes/.fetch-x");
+        std::fs::create_dir_all(&fetch).unwrap();
+        // A running build keeps its own staging directories.
+        let building = cache.lock(false, &quiet).unwrap();
+        fit(&cache, 1, &quiet);
+        assert!(left.exists() && tree.join("base-x").exists() && fetch.exists());
+        drop(building);
+        fit_until(&cache, 1, &|| !left.exists() && !fetch.exists());
+        assert!(good.exists());
+        assert!(tree.join("source").exists());
+        for name in ["base-x", "modules-x", "source-x"] {
+            assert!(!tree.join(name).exists());
+        }
     }
 
     #[test]

@@ -7,6 +7,7 @@ use orchard_boards::catalog::Catalog;
 use orchard_build::components::Given;
 use orchard_build::project::{self, Choice};
 use orchard_build::{distro, inputs, manage, ram, snapshot, Build};
+use orchard_cache::component::Components;
 use orchard_cache::store::Store;
 use orchard_cache::{Code, Context, Error, Result};
 use orchard_device::select;
@@ -154,15 +155,20 @@ fn attached_board(global: &Global, root: &Path) -> Option<String> {
 }
 
 pub fn build(global: &Global, args: &BuildArgs) -> Result<Output> {
+    orchard_build::catch_interrupts();
     let store = Store::open(global.cache.as_deref())?;
-    let root = snapshot::resolve(global.data.as_deref(), &store, &say)?;
-    let build = Build::new(&root, &store, &say)?;
     let directory = args
         .directory
         .canonicalize()
         .context(args.directory.display())?;
-    manage::fit(&build.cache, manage::budget(), &say);
-    manage::check_free(&[build.cache.root(), &directory])?;
+    let cache = Components::open(store.dir())?;
+    manage::fit(&cache, manage::budget(), &say);
+    manage::check_free(&[cache.root(), &directory])?;
+    // Held from before the recipes are chosen: what deletes recipes and
+    // entries waits for it or leaves them alone.
+    let _held = cache.lock(false, &say)?;
+    let root = snapshot::resolve(global.data.as_deref(), &store, &say)?;
+    let build = Build::new(&root, &store, &say)?;
     let attached = attached_board(global, &build.root);
     let choice = Choice {
         platforms: &args.platform,
@@ -203,7 +209,6 @@ pub fn build(global: &Global, args: &BuildArgs) -> Result<Output> {
             kernel_tree: project::kernel_tree(&checkout, args.kernel_tree.as_deref())?,
             packages: project::packages(&checkout, args.packages.as_deref())?,
         };
-        let _held = build.cache.lock(false, &say)?;
         let built = distro::build(&build, &checkout, &release, &request)?;
         return Ok(Built {
             kind: "release",
@@ -238,7 +243,6 @@ pub fn build(global: &Global, args: &BuildArgs) -> Result<Output> {
         pongo: args.pongo.clone(),
         kernel_tree: args.kernel_tree.clone(),
     };
-    let _held = build.cache.lock(false, &say)?;
     let built = ram::build_directory(&build, &directory, &choice, &given)?;
     Ok(Built {
         kind: "payload",
@@ -275,7 +279,9 @@ impl Report for Resolved {
 }
 
 pub fn inputs(global: &Global, args: &InputsArgs) -> Result<Output> {
+    orchard_build::catch_interrupts();
     let store = Store::open(global.cache.as_deref())?;
+    let _held = Components::open(store.dir())?.lock(false, &say)?;
     // Under `build`, the entry's orchard is the data the build was started with.
     let checkout = std::env::var_os("ORCHARD_CHECKOUT").map(PathBuf::from);
     let root = snapshot::resolve(global.data.as_deref().or(checkout.as_deref()), &store, &say)?;
@@ -289,7 +295,6 @@ pub fn inputs(global: &Global, args: &InputsArgs) -> Result<Output> {
         loaders: args.loader.iter().cloned().collect(),
         kernel_tree: args.kernel_tree.clone(),
     };
-    let _held = build.cache.lock(false, &say)?;
     let document = inputs::resolve(&build, &request)?;
     if let Some(parent) = args.output.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent).context(parent.display())?;

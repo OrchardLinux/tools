@@ -12,7 +12,7 @@
 //! `ORCHARD_PUBLISHED=off` (`ORCHARD_KERNEL=local` for kernels only): it is
 //! built here.
 use crate::components::{m1n1_inputs, tool_inputs, TOOLS};
-use crate::kernel::KERNEL_PRODUCER;
+use crate::kernel::producer;
 use crate::platform::{descriptor, patches};
 use crate::{json, recipes, Build, RELEASES};
 use orchard_cache::component::Key;
@@ -54,7 +54,7 @@ pub fn source_inputs(build: &Build, platform: &str) -> Result<Value> {
         "platform": platform,
         "build": described.build_fields(false),
         "recipes": recipes::object(root, &paths)?,
-        "producer": KERNEL_PRODUCER,
+        "producer": producer(root)?,
     }))
 }
 
@@ -340,7 +340,9 @@ pub fn extract(archive: &Path, prefix: &str, into: &Path) -> Result<()> {
             std::io::copy(&mut (&mut tar).take(padded), &mut std::io::sink())?;
             continue;
         };
-        if relative.split('/').any(|part| part == "..") || !matches!(kind, b'0' | 0 | b'5') {
+        let inside =
+            !Path::new(&relative).is_absolute() && relative.split('/').all(|part| part != "..");
+        if !inside || !matches!(kind, b'0' | 0 | b'5') {
             return Err(bad(&format!("unexpected member {name}")));
         }
         found = true;
@@ -405,6 +407,21 @@ mod tests {
         );
         gz.write_all(&tar).unwrap();
         gz.finish().unwrap();
+    }
+
+    #[test]
+    fn nothing_is_written_outside_the_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("a.tar.gz");
+        let outside = dir.path().join("outside");
+        let absolute = format!("components/kernel/{}", outside.display());
+        for name in [absolute.as_str(), "components/kernel/../../outside"] {
+            tarball(&archive, &[(name, b"x", 0o644)], None);
+            let into = dir.path().join("into/deep");
+            let error = extract(&archive, "components/kernel/", &into).unwrap_err();
+            assert_eq!(error.code, Code::Format, "{name}");
+            assert!(!outside.exists(), "{name}");
+        }
     }
 
     #[test]

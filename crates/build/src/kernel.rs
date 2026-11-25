@@ -27,6 +27,30 @@ use std::path::{Path, PathBuf};
 /// under keys made with it.
 pub const KERNEL_PRODUCER: u32 = 3; // 3: strip module debug sections from staged outputs
 
+/// The producers' version in the data's recipes, which are updated apart
+/// from this tool: `KERNEL_PRODUCER` in orchard's `src/orchard/build.py`.
+/// Recipes newer than the tool are refused, since it would key and layer
+/// what they make the old way.
+pub fn producer(root: &Path) -> Result<u32> {
+    let Ok(text) = std::fs::read_to_string(root.join("src/orchard/build.py")) else {
+        return Ok(KERNEL_PRODUCER);
+    };
+    let version = text
+        .lines()
+        .find_map(|line| line.strip_prefix("KERNEL_PRODUCER = "))
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|number| number.parse().ok())
+        .unwrap_or(KERNEL_PRODUCER);
+    if version > KERNEL_PRODUCER {
+        return Err(Error::new(
+            Code::Unsupported,
+            format!("these recipes make kernels of version {version}; this orchard2 knows up to {KERNEL_PRODUCER}"),
+        )
+        .hint("update orchard2"));
+    }
+    Ok(version)
+}
+
 /// A developer kernel tree's build output, inside the tree.
 pub const OUT: &str = ".orchard-out";
 
@@ -74,7 +98,10 @@ pub fn check_tree(build: &Build, device: &str, tree: &Path) -> Result<PathBuf> {
     }
     let exclude = git_path(&tree, "info/exclude")?;
     let line = format!("/{OUT}/");
-    let text = std::fs::read_to_string(&exclude).unwrap_or_default();
+    let text = match std::fs::read_to_string(&exclude) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        read => read.context(exclude.display())?,
+    };
     if !text.lines().any(|l| l == line) {
         if let Some(parent) = exclude.parent() {
             std::fs::create_dir_all(parent).context(parent.display())?;
@@ -182,7 +209,14 @@ pub fn source_tree(build: &Build, device: &str) -> Result<String> {
             "kernel patches changed with local edits in the kernel tree; refusing to discard edits \
              or select an unrelated cached kernel",
         )
-        .hint(format!("commit or remove the edits in {}", source.display())));
+        .hint(format!(
+            "save the edits in {} elsewhere (git diff) and undo them, or build a kernel tree of your own with --kernel-tree",
+            source.display()
+        )));
+    }
+    if marker.is_some() && current == declared && baseline.is_none_or(|b| b.trim() != declared) {
+        // An earlier build stopped between writing the two marks.
+        write_text(&work.join("prepared-tree"), &format!("{declared}\n"))?;
     }
     Ok(current)
 }
@@ -266,6 +300,13 @@ fn prepare_source(build: &Build, device: &str) -> Result<(PathBuf, PathBuf)> {
             }
         }
         std::fs::write(&marker, &expected).context(marker.display())?;
+        write_text(&baseline, &format!("{declared}\n"))?;
+    }
+    if baseline.exists()
+        && read_text(&baseline)?.trim() != declared
+        && working_tree(&source, true)? == declared
+    {
+        // An earlier build stopped between writing the two marks.
         write_text(&baseline, &format!("{declared}\n"))?;
     }
     Ok((source, work.join("output")))
@@ -608,7 +649,7 @@ pub fn base_inputs(build: &Build, device: &str, tree: Option<&Path>) -> Result<s
             "source": "kernel-tree",
             "build": described.build_fields(true),
             "recipes": recipes::object(root, &toolchain)?,
-            "producer": KERNEL_PRODUCER,
+            "producer": producer(root)?,
             "tree": working_tree(tree, false)?,
             "mode": mode(),
         }),
@@ -616,7 +657,7 @@ pub fn base_inputs(build: &Build, device: &str, tree: Option<&Path>) -> Result<s
             "platform": described.platform,
             "build": described.build_fields(false),
             "recipes": recipes::object(root, &[described.config.as_str(), toolchain[0], toolchain[1]])?,
-            "producer": KERNEL_PRODUCER,
+            "producer": producer(root)?,
             "tree": source_tree(build, device)?,
             "mode": mode(),
         }),
@@ -631,7 +672,7 @@ pub fn device_inputs(build: &Build, device: &str, base_key: &str) -> Result<serd
         "base": base_key,
         "platform": platform,
         "dtb": dtb,
-        "producer": KERNEL_PRODUCER,
+        "producer": producer(&build.root)?,
         "recipes": recipes::object(&build.root, &[&format!("kernel/modules/{device}")])?,
     }))
 }
@@ -821,6 +862,27 @@ for source in sources:
         let text = std::fs::read_to_string(root.join("kernel/ran")).unwrap_or_default();
         std::fs::write(root.join("kernel/ran"), "").unwrap();
         text.lines().map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn recipes_newer_than_the_tool_are_refused() {
+        let data = tempfile::tempdir().unwrap();
+        assert_eq!(producer(data.path()).unwrap(), KERNEL_PRODUCER);
+        let script = data.path().join("src/orchard/build.py");
+        std::fs::create_dir_all(script.parent().unwrap()).unwrap();
+        let write = |n: u32| {
+            std::fs::write(
+                &script,
+                format!("import os\nKERNEL_PRODUCER = {n}  # why\n"),
+            )
+            .unwrap()
+        };
+        write(KERNEL_PRODUCER);
+        assert_eq!(producer(data.path()).unwrap(), KERNEL_PRODUCER);
+        write(2);
+        assert_eq!(producer(data.path()).unwrap(), 2);
+        write(KERNEL_PRODUCER + 1);
+        assert_eq!(producer(data.path()).unwrap_err().code, Code::Unsupported);
     }
 
     #[test]

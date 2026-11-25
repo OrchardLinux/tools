@@ -27,6 +27,37 @@ use orchard_cache::{Code, Context, Error, Result};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static INTERRUPTS: AtomicUsize = AtomicUsize::new(0);
+
+extern "C" fn on_interrupt(_: libc::c_int) {
+    if INTERRUPTS.fetch_add(1, Ordering::SeqCst) >= 1 {
+        // SAFETY: _exit is async-signal-safe.
+        unsafe { libc::_exit(130) };
+    }
+}
+
+/// The first Ctrl-C ends the running producer, which the terminal signals
+/// too, and the build returns and removes what it staged; the second ends
+/// the process.
+pub fn catch_interrupts() {
+    // SAFETY: installs a handler that only uses async-signal-safe calls.
+    unsafe {
+        libc::signal(
+            libc::SIGINT,
+            on_interrupt as *const () as libc::sighandler_t,
+        );
+    }
+}
+
+/// An error once the person interrupted the build.
+pub(crate) fn interrupted() -> Result<()> {
+    match INTERRUPTS.load(Ordering::SeqCst) {
+        0 => Ok(()),
+        _ => Err(Error::new(Code::Build, "interrupted")),
+    }
+}
 
 /// Where orchard publishes its builds.
 pub const RELEASES: &str = "https://github.com/OrchardLinux/orchard/releases/download";
@@ -95,6 +126,7 @@ impl<'a> Build<'a> {
             .iter()
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
+        interrupted()?;
         self.say(format!("+ {}", shown.join(" ")));
         self.explain.command(&shown);
         let mut command = Command::new(&argv[0]);
@@ -110,6 +142,7 @@ impl<'a> Build<'a> {
         let status = to_stderr(&mut command)
             .status()
             .map_err(|e| Error::new(Code::NotFound, e.to_string()).context(&shown[0]))?;
+        interrupted()?;
         if !status.success() {
             let error = Error::new(Code::Build, format!("{} failed ({status})", shown[0]));
             return Err(match container_hint() {
@@ -244,6 +277,7 @@ pub(crate) fn output(command: &mut Command) -> Result<Vec<u8>> {
         .stdin(std::process::Stdio::null())
         .output()
         .map_err(|e| Error::new(Code::NotFound, e.to_string()).context(&program))?;
+    interrupted()?;
     if !output.status.success() {
         let args: Vec<String> = command
             .get_args()
@@ -315,9 +349,8 @@ pub(crate) fn copy_file(from: &Path, to: &Path) -> Result<()> {
     let modified = std::fs::metadata(from)
         .and_then(|m| m.modified())
         .context(from.display())?;
-    std::fs::File::options()
-        .write(true)
-        .open(to)
+    // Opened for reading: the copy is read-only when the original is.
+    std::fs::File::open(to)
         .and_then(|f| f.set_modified(modified))
         .context(to.display())
 }
