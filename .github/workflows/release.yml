@@ -74,7 +74,17 @@ jobs:
           rustup toolchain install 1.98.0 --profile minimal
           rustup target add x86_64-apple-darwin --toolchain 1.98.0
 
+      # orchard's board data: a test reads every board's firmware recipe, so a
+      # step orchard gains and the installer lacks fails here, not at a tester.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: OrchardLinux/orchard
+          path: orchard-data
+          persist-credentials: false
+
       - name: Test
+        env:
+          ORCHARD_TEST_DATA: ${{ github.workspace }}/orchard-data
         run: cargo test --workspace
 
       - name: Build (Apple Silicon and Intel)
@@ -131,7 +141,17 @@ jobs:
             libfontconfig-dev libfreetype-dev libasound2-dev libssl-dev
           rustup toolchain install 1.98.0 --profile minimal
 
+      # orchard's board data: a test reads every board's firmware recipe, so a
+      # step orchard gains and the installer lacks fails here, not at a tester.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: OrchardLinux/orchard
+          path: orchard-data
+          persist-credentials: false
+
       - name: Test
+        env:
+          ORCHARD_TEST_DATA: ${{ github.workspace }}/orchard-data
         run: cargo test --workspace
 
       - name: Build

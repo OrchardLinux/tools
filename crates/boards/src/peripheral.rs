@@ -623,16 +623,19 @@ mod tests {
     }
 
     /// Every board of an orchard checkout, where `ORCHARD_TEST_DATA` names
-    /// one: its peripheral recipe parses, and every GPU firmware output has
-    /// steps this version runs.
+    /// one: its peripheral recipe is read, with every input form in it, and
+    /// every output's steps, with their parameters and kexts, are ones this
+    /// version runs. Nothing a board's data asks for may be left out
+    /// without a word: when orchard gains a step, this fails until it is
+    /// here too. CI runs it against orchard's main branch.
     #[test]
-    fn every_board_of_an_orchard_checkout_gets_its_gpu_firmware() {
+    fn every_board_of_an_orchard_checkout_gets_all_its_firmware() {
         let Ok(dir) = std::env::var("ORCHARD_TEST_DATA") else {
             eprintln!("ORCHARD_TEST_DATA is not set; no orchard checkout to read");
             return;
         };
         let catalog = Catalog::open(Path::new(&dir)).unwrap();
-        let mut failed = Vec::new();
+        let (mut failed, mut read) = (Vec::new(), 0);
         for name in catalog.boards().unwrap() {
             let board = catalog.board(&name).unwrap();
             let recipe = match board.recipe(crate::catalog::Kind::Peripheral) {
@@ -643,16 +646,17 @@ mod tests {
                     continue;
                 }
             };
+            read += 1;
             match Plan::new(&recipe) {
                 Ok(plan) => failed.extend(
                     plan.unsupported
                         .iter()
-                        .filter(|(dest, _)| dest.starts_with("lib/firmware/apple/gfx-"))
                         .map(|(dest, step)| format!("{name}: {dest} needs {step}")),
                 ),
                 Err(e) => failed.push(format!("{name}: {e}")),
             }
         }
+        assert!(read > 0, "{dir} has no board with a firmware recipe");
         assert!(failed.is_empty(), "\n{}", failed.join("\n"));
     }
 
