@@ -709,7 +709,7 @@ pub fn overlay(installer: &Installer, cx: &mut Context<Installer>) -> Option<Any
         }
         crate::DialogKind::Quit => quit_dialog(&installer.flow.state, &focus, cx),
         crate::DialogKind::QuitBlocked => quit_blocked_dialog(&installer.flow.state, &focus, cx),
-        crate::DialogKind::Download => download_dialog(installer, &focus, cx),
+        crate::DialogKind::Download => download_dialog(installer.download_shown.clone()?, &focus, cx),
     };
     let dialog = with_default_on_enter(dialog.track_focus(&root), cx).relative().top(px((1. - shown) * 8.));
     let mut scrim = scrim().opacity(shown).child(dialog);
@@ -1086,14 +1086,17 @@ fn quit_dialog(state: &State, focus: &gpui::FocusHandle, cx: &mut Context<Instal
 }
 
 /// The first asset that failed for good: why, and the reason.
-fn failed_download(installer: &Installer) -> Option<(orchard_flow::assets::Asset, orchard_flow::Cause, String)> {
+pub fn failed_download(installer: &Installer) -> Option<(orchard_flow::assets::Asset, orchard_flow::Cause, String)> {
     installer.flow.assets.failed().map(|(a, cause, why)| (a, cause, why.to_owned()))
 }
 
 /// An asset failed for good (draft copy): what, why, and try again. Only a
 /// network failure is called a download problem.
-fn download_dialog(installer: &Installer, focus: &gpui::FocusHandle, cx: &mut Context<Installer>) -> Div {
-    let (asset, cause, why) = failed_download(installer).expect("a failed download");
+fn download_dialog(
+    (asset, cause, why): (orchard_flow::assets::Asset, orchard_flow::Cause, String),
+    focus: &gpui::FocusHandle,
+    cx: &mut Context<Installer>,
+) -> Div {
     let what = match asset {
         orchard_flow::assets::Asset::RootImage => format!("{} itself", orchard_flow::system_name()),
         orchard_flow::assets::Asset::Palera1n => orchard_flow::for_device("palera1n, which starts your iPad").to_owned(),

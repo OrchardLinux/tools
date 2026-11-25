@@ -294,6 +294,9 @@ pub struct Installer {
     pub erase_shown: Option<(orchard_flow::Layout, bool)>,
     /// The split's erase dialog's content, likewise.
     pub split_erase_shown: Option<(orchard_flow::Layout, bool)>,
+    /// The failed asset's dialog's content, likewise: "Try again" clears the
+    /// failure while the dialog still fades out.
+    pub download_shown: Option<(orchard_flow::assets::Asset, orchard_flow::Cause, String)>,
     /// When the last frame was drawn (ORCHARD_TIMING).
     last_frame: Instant,
     /// The install's stopwatch: from Install to the device's "done".
@@ -733,6 +736,9 @@ impl Installer {
                 if let orchard_flow::State::ChooseSplit { layout, approved, .. } = &self.flow.state {
                     self.split_erase_shown = Some((layout.clone(), *approved));
                 }
+                if let Some(failed) = screens::failed_download(self) {
+                    self.download_shown = Some(failed);
+                }
             }
             None => self.dialog_fade.set(0.),
         }
@@ -1021,6 +1027,7 @@ pub fn run(app: Kind) {
                     install_took: None,
                     erase_shown: None,
                     split_erase_shown: None,
+                    download_shown: None,
                     quitting: None,
                     companion_lost_at: None,
                 }
