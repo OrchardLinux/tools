@@ -28,18 +28,24 @@ Until then:
   becomes a session: one lock holder, one remembered state, the same
   guarantees for every command. Do not grow a second continuity mechanism
   in the runtime before that.
-- **The app has no screen for a device in use.** The runtime lists it
-  among the other devices with "in use by another orchard2" in place of its
-  mode; the command line words that case, the windows show their "more than
-  one device" screen, whose title and hint are wrong for it. The wording is
-  Henrik's to decide.
+- **A device in use has words, not a screen of its own.** The flow gives
+  the title and the hint (`Flow::in_use`), and the windows show them on the
+  "more than one device" screen's layout. Not looked at in a window yet.
 - **`--via`, `--entry`, `--chain`, `--from`** belong to the boot commands.
   `install` and `launch` take none; `ORCHARD_ENTRY` is their only switch.
 - **The boot paths' data** (`boot-paths.toml`, `boot.json` schema 2) is
   only on orchard's `boot-paths` branch, and the catalog is being
   rethought. Do not build on its present shape.
 - **gaster has no pinned release** (`crates/device/src/entry.rs`), so every
-  path through it, and `run`, stops as unsupported.
+  path through it, and `run`, stops as unsupported. There is nothing to pin
+  yet: OrchardLinux/gaster's tag `orchard-worker-v0.1.0` has no release,
+  because its build never got a macOS arm64 runner (run 45233948167; the
+  other three hosts built). Rerun it, publish, then pin the four files by
+  size and SHA-256.
+- **The USB session files' old place.** `build` reads `usb-session` and
+  `usb-identity` from `boot/session/` in the data and still falls back to
+  `src/orchard/` (`crates/build/src/ram.rs`). Drop the fallback once a
+  nightly has them in `boot/session/`.
 
 ## Not run on a device yet
 

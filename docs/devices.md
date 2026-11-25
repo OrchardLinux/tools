@@ -93,9 +93,9 @@ orchard2 session -- sh -c '
   for a device once it is in DFU mode, which is where their work on it
   starts, and keep it until they are done with it, through every mode it
   goes through. A window that is only open holds nothing. A device in DFU
-  mode that other work holds is left to it: they show it as in use and go
-  on when it is free. They wait where the boot commands fail, because a
-  person is watching.
+  mode that other work holds is left to it: they say "This device is in
+  use", name the program that works on it, and go on when it is free.
+  They wait where the boot commands fail, because a person is watching.
 
 What a session also keeps, the device's identity and a state USB cannot
 show, `install` and `launch` do not share with other commands yet

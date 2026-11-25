@@ -73,10 +73,6 @@ pub fn layout(product: &str) -> (Model, Sequence) {
     (Model::IpadHome, Sequence::HomePower)
 }
 
-/// What a device that other work holds is listed with, in place of its mode
-/// (`Other::mode`), followed by who holds it where that is known.
-pub const IN_USE: &str = orchard_cache::lock::IN_USE;
-
 /// The one device a run is for, named by the person: its ECID, the USB port
 /// it is at, or both. Every other device is one too many.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

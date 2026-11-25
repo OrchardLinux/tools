@@ -398,9 +398,39 @@ pub struct Other {
     pub name: String,
     /// What it runs: dfu, recovery, ios, pongo, m1n1, linux.
     pub mode: String,
+    /// Other work holds it (its lock): the program, such as `orchard2
+    /// load`, or nothing where that is not known. None: nobody does.
+    pub held_by: Option<String>,
+}
+
+/// What the screen says when nothing is connected but devices that other
+/// work holds: there is nothing to unplug, only to wait for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InUse {
+    pub title: &'static str,
+    pub hint: String,
 }
 
 impl Flow {
+    /// The words for devices in use, when that is all there is: the run
+    /// works on none, and every device connected is held by other work.
+    pub fn in_use(&self) -> Option<InUse> {
+        if self.state.working().is_some() || self.others.is_empty() || self.others.iter().any(|o| o.held_by.is_none()) {
+            return None;
+        }
+        let one = self.others.len() == 1;
+        let mut programs: Vec<&str> = self.others.iter().filter_map(|o| o.held_by.as_deref()).filter(|p| !p.is_empty()).collect();
+        programs.dedup();
+        let who = match programs.as_slice() {
+            [program] => (*program).to_owned(),
+            _ => "Another Orchard program".to_owned(),
+        };
+        Some(InUse {
+            title: if one { "This device is in use" } else { "These devices are in use" },
+            hint: format!("{who} is working on {}. This goes on when it has finished.", if one { "it" } else { "them" }),
+        })
+    }
+
     /// Whether the app refuses to go on because other Apple devices are on
     /// USB: from waiting for DFU mode up to the install system (the install
     /// itself runs over its own connection), or in the launcher up to the

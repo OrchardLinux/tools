@@ -360,8 +360,10 @@ impl<O: Observer> Driver<O> {
                             // A device other work holds says so in place of its mode.
                             for (device, holder) in &in_use {
                                 let name = listed_devices(&catalog, &watcher, std::slice::from_ref(device), None).pop().map(|o| o.name);
-                                if let Some(other) = name.and_then(|name| others.iter_mut().find(|o| o.name == name && !o.mode.starts_with(crate::IN_USE))) {
-                                    other.mode = [crate::IN_USE, holder.as_str()].join(" ").trim_end().to_owned();
+                                if let Some(other) = name.and_then(|name| others.iter_mut().find(|o| o.name == name && o.held_by.is_none())) {
+                                    // "(pid 12: orchard2 load)": the program.
+                                    let program = holder.trim_matches(|c| c == '(' || c == ')').split_once(": ").map_or("", |(_, program)| program);
+                                    other.held_by = Some(program.to_owned());
                                 }
                             }
                             if others != others_told {
@@ -451,7 +453,7 @@ fn listed_devices(
                 orchard_usb::Mode::Normal => "ios",
                 mode => mode.as_str(),
             };
-            orchard_flow::Other { name, mode: mode.into() }
+            orchard_flow::Other { name, mode: mode.into(), held_by: None }
         })
         .collect()
 }

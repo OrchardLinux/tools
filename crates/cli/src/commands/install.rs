@@ -673,24 +673,24 @@ impl Shared {
                 let absent = self.named && flow.state.device().is_none();
                 // Nothing but devices that other work holds: this run waits
                 // for that to finish.
-                let in_use = flow.state.device().is_none() && flow.others.iter().all(|o| o.mode.starts_with(orchard_runtime::IN_USE));
-                let action = match (in_use, absent) {
+                let in_use = flow.in_use();
+                let action = match (in_use.is_some(), absent) {
                     (true, _) => "wait-for-device",
                     (false, true) => "connect-named",
                     (false, false) => "disconnect-others",
                 };
                 out.event(json!({"event": "needs", "action": action, "devices": devices}));
-                out.warn(match (in_use, absent) {
-                    (true, _) => "The device is in use",
-                    (false, true) => "The device you named is not connected",
-                    (false, false) => orchard_flow::SEVERAL_TITLE,
+                out.warn(match (&in_use, absent) {
+                    (Some(said), _) => said.title,
+                    (None, true) => "The device you named is not connected",
+                    (None, false) => orchard_flow::SEVERAL_TITLE,
                 });
                 for other in &flow.others {
                     out.sub(format!("{} · {}", other.name, other.mode));
                 }
-                if in_use {
-                    out.sub("This goes on when that has finished.");
-                    out.term.live_restart(vec![s("Waiting for the device to be free", SUB)]);
+                if let Some(said) = &in_use {
+                    out.sub(said.hint.clone());
+                    out.term.live_restart(vec![s("Waiting for it to be free", SUB)]);
                 } else if absent {
                     out.sub("Connect the one --ecid or --location names; orchard2 devices lists what is there.");
                     out.term.live_restart(vec![s("Waiting for the named device", SUB)]);

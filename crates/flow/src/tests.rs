@@ -863,7 +863,7 @@ fn the_no_home_button_tab_draws_the_iphone_beside_the_ipad_until_a_device_is_kno
 }
 
 fn iphone() -> Other {
-    Other { name: "iPhone".into(), mode: "ios".into() }
+    Other { name: "iPhone".into(), mode: "ios".into(), held_by: None }
 }
 
 #[test]
@@ -871,7 +871,7 @@ fn another_device_holds_the_start_until_it_is_gone() {
     let app = App::Installer;
     let mut flow = Flow::new();
     flow.state = State::DfuAgain { device: ipad6(), why: Again::Install, seen: None };
-    let (flow, _) = step(app, flow, Event::Others(vec![Other { name: "iPad (6th generation)".into(), mode: "dfu".into() }, iphone()]));
+    let (flow, _) = step(app, flow, Event::Others(vec![Other { name: "iPad (6th generation)".into(), mode: "dfu".into(), held_by: None }, iphone()]));
     assert!(flow.refusing());
     assert_eq!(view_flow(app, &flow).1, ScreenKind::SeveralInDfu);
     // The iPad arrives in DFU: the install system's start waits.
@@ -970,4 +970,21 @@ fn a_device_whose_work_is_over_is_free_for_other_work() {
     let found = State::Found { device: device.clone(), confirm_skip: false };
     assert_eq!(found.working(), Some(&device));
     assert!(State::start().working().is_none());
+}
+
+#[test]
+fn a_device_other_work_holds_is_waited_for_not_unplugged() {
+    let held = |by: &str| Other { name: "iPad".into(), mode: "dfu".into(), held_by: Some(by.into()) };
+    let with = |others: Vec<Other>| step(App::Launcher, Flow::new(), Event::Others(others)).0;
+    let flow = with(vec![held("orchard2 load")]);
+    assert!(flow.refusing());
+    let said = flow.in_use().unwrap();
+    assert_eq!(said.title, "This device is in use");
+    assert_eq!(said.hint, "orchard2 load is working on it. This goes on when it has finished.");
+    // Who holds it is not always known.
+    assert!(with(vec![held("")]).in_use().unwrap().hint.starts_with("Another Orchard program is working on it."));
+    assert_eq!(with(vec![held("a"), held("b")]).in_use().unwrap().title, "These devices are in use");
+    // With a device that nobody holds beside it, it is "more than one device".
+    assert_eq!(with(vec![held("orchard2 load"), iphone()]).in_use(), None);
+    assert_eq!(with(vec![]).in_use(), None);
 }
