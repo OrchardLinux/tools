@@ -289,6 +289,8 @@ fn apply(source: &Path, delta: &[u8], check: bool) -> Result<()> {
         command.arg("--check");
     }
     let _running = crate::Running::new();
+    // Not started once the build is ending: a patch cut short leaves the tree half changed.
+    crate::interrupted()?;
     let mut child = command
         .arg("-")
         .stdin(std::process::Stdio::piped())
