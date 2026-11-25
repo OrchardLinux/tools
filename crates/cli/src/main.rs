@@ -19,8 +19,8 @@ fn main() -> ExitCode {
     }
     // Install and launch stream their own output and exit codes.
     match &cli.command {
-        args::Command::Install(a) => return commands::install::install(cli.global.json, a),
-        args::Command::Launch(a) => return commands::install::launch(cli.global.json, a),
+        args::Command::Install(a) => return commands::install::install(&cli.global, a),
+        args::Command::Launch(a) => return commands::install::launch(&cli.global, a),
         _ => {}
     }
     let result = match cli.command {

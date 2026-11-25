@@ -114,6 +114,13 @@ fn parse(text: &str, kind: &str) -> Result<toml::Table> {
     Ok(doc)
 }
 
+/// Whether a document is a release's own manifest, which can be given in
+/// place of the index that pins one.
+pub fn is_release(text: &str) -> bool {
+    toml::from_str::<toml::Table>(text)
+        .is_ok_and(|doc| doc.get("kind").and_then(toml::Value::as_str) == Some("orchard.install"))
+}
+
 /// The release manifest the index pins; `base` is where the index came from.
 pub fn parse_index(text: &str, base: &str) -> Result<Receipt> {
     receipt(table(&parse(text, "orchard.index")?, "release")?, base)
@@ -197,6 +204,7 @@ mod tests {
     fn index_pins_the_release_manifest() {
         let text = format!("\"schema\" = 2\n\"kind\" = \"orchard.index\"\n[release]\n{}", r("release.toml"));
         assert_eq!(parse_index(&text, "https://x/").unwrap().url, "https://example/release.toml");
+        assert!(!is_release(&text) && is_release(&release()) && !is_release("not toml ["));
     }
 
     #[test]

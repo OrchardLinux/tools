@@ -400,10 +400,16 @@ impl Executor {
             }
         };
         let text = String::from_utf8(index).map_err(|_| Error::new(Code::Format, "index is not UTF-8"))?;
-        let manifest = release::parse_index(&text, release::base_of(&self.index))?;
-        let bytes = get(&manifest)?;
-        let text = String::from_utf8(bytes).map_err(|_| Error::new(Code::Format, "release is not UTF-8"))?;
-        let rel = release::parse_release(&text, release::base_of(&manifest.url))?;
+        // A release's manifest given itself is read as it is; an index pins
+        // the one to read.
+        let rel = if release::is_release(&text) {
+            release::parse_release(&text, release::base_of(&self.index))?
+        } else {
+            let manifest = release::parse_index(&text, release::base_of(&self.index))?;
+            let bytes = get(&manifest)?;
+            let text = String::from_utf8(bytes).map_err(|_| Error::new(Code::Format, "release is not UTF-8"))?;
+            release::parse_release(&text, release::base_of(&manifest.url))?
+        };
         *slot = Some(rel.clone());
         Ok(rel)
     }

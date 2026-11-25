@@ -5,6 +5,7 @@
 //! without a terminal nothing is asked and a missing answer ends the run
 //! (exit 5) naming the flag. With --json each step is one JSON object per line
 //! on stdout; the words for people go to the terminal.
+use crate::args::Global;
 use super::term::{bar, gradient, s, Span, Term, BLUE, FG, GREEN, MUTED, RED, SUB, TITLE, TRACK, YELLOW};
 use orchard_flow::{Again, App, Event, Flow, Layout, Link, Sequence, State, MIN_OMARCHY_GB};
 use orchard_runtime::driver::{self, Observer, Options};
@@ -31,8 +32,9 @@ enum Exit {
 
 #[derive(clap::Args)]
 pub struct InstallArgs {
-    /// The distribution: a name (omarchy-a), its release index URL or a local
-    /// index.toml; in a distribution checkout the default is its last build
+    /// The distribution: a name (omarchy-a), the URL of its release index or
+    /// of one release's manifest, or such a file; in a distribution checkout
+    /// the default is its last build
     pub source: Option<String>,
     /// The release index to install from (instead of SOURCE)
     #[arg(long)]
@@ -346,10 +348,15 @@ impl Observer for Relay {
     fn quit(&mut self) {}
 }
 
-fn start(app: App, index: Option<String>, demo: bool) -> Result<(driver::Handle, Receiver<Flow>), String> {
+fn start(app: App, global: &Global, index: Option<String>, demo: bool) -> Result<(driver::Handle, Receiver<Flow>), String> {
     let (tx, rx) = mpsc::channel();
     let mut options = Options::new(app);
     options.index = index;
+    // The board data and cache the person names, as every other command.
+    options.data = global.data.clone();
+    if let Some(cache) = &global.cache {
+        options.cache = cache.clone();
+    }
     options.live = true;
     let started = if demo { driver::start_demo(options, Relay(tx)) } else { driver::start(options, Relay(tx)) };
     started.map(|h| (h, rx)).map_err(|e| e.to_string())
@@ -594,8 +601,8 @@ impl Shared {
     }
 }
 
-pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
-    let mut out = Out { term: Term::new(args.log.as_deref()), json };
+pub fn install(global: &Global, args: &InstallArgs) -> ExitCode {
+    let mut out = Out { term: Term::new(args.log.as_deref()), json: global.json };
     let given = args.index.as_deref().or(args.source.as_deref()).map(index_for);
     let Some(index) = given.or_else(last_build) else {
         out.fail("Which system? orchard2 install omarchy-a (or --index URL)");
@@ -625,7 +632,7 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
     }
     catch_interrupts();
     out.term.live_restart(vec![s("Reading the release", SUB)]);
-    let (handle, rx) = match start(App::Installer, Some(index), args.demo) {
+    let (handle, rx) = match start(App::Installer, global, Some(index), args.demo) {
         Ok(h) => h,
         Err(e) => {
             out.fail(format!("Couldn't start: {e}"));
@@ -1007,10 +1014,10 @@ fn secret_pair(out: &mut Out, label: &str, again: &str, flag: &str, given: Optio
     }
 }
 
-pub fn launch(json: bool, args: &LaunchArgs) -> ExitCode {
-    let mut out = Out { term: Term::new(args.log.as_deref()), json };
+pub fn launch(global: &Global, args: &LaunchArgs) -> ExitCode {
+    let mut out = Out { term: Term::new(args.log.as_deref()), json: global.json };
     catch_interrupts();
-    let (handle, rx) = match start(App::Launcher, None, args.demo) {
+    let (handle, rx) = match start(App::Launcher, global, None, args.demo) {
         Ok(h) => h,
         Err(e) => {
             out.fail(format!("Couldn't start: {e}"));
