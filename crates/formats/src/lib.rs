@@ -25,6 +25,7 @@ pub mod lzss;
 pub mod m1n1;
 pub mod macho;
 pub mod osserialize;
+pub mod sgx;
 pub mod tar;
 pub mod trx;
 pub mod udif;

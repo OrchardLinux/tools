@@ -7,8 +7,8 @@ use crate::firmware_build::{write, Written};
 use orchard_cache::store::sha256;
 use orchard_cache::{Code, Context, Error, Result};
 use orchard_formats::kernelcache::{self, Kernelcache};
-use orchard_formats::z2fw::{self, Gen1, Profile};
-use orchard_formats::{aop, bluetool, im4p, trx};
+use orchard_formats::z2fw::{self, Gen1, Profile, N1};
+use orchard_formats::{aop, bluetool, im4p, sgx, trx};
 use std::collections::HashMap;
 use std::path::{Component, Path};
 
@@ -23,6 +23,15 @@ const PLACEHOLDER_MAC: &str = "02:00:00:00:00:00";
 enum Step {
     Copy,
     BluetoolHcd,
+    /// A regulatory table at its address in BlueTool.
+    BluetoolRegulatory {
+        address: u64,
+        size: u64,
+    },
+    /// The SGX543 firmware container, for this kernel build.
+    Sgx {
+        build: String,
+    },
     TrxAddNvram {
         nvram: String,
     },
@@ -60,6 +69,9 @@ enum Touch {
         calibration_address: u64,
         calibration_size: u64,
     },
+    /// The N1 controller's one packet, or its list of packets.
+    Z2PacketN1(N1),
+    Z2PacketsN1(N1),
     Packets {
         packet: String,
     },
@@ -203,6 +215,11 @@ fn run(
             Step::BluetoolHcd => {
                 pinned(output, bluetool::hcd_streams(&data), "Bluetooth firmware")?
             }
+            Step::BluetoolRegulatory { address, size } => {
+                bluetool::regulatory(&data, *address, *size)?.to_vec()
+            }
+            // A 32-bit kernel, decoded: the input's own business.
+            Step::Sgx { build } => sgx::extract(&data, build)?,
             Step::TrxAddNvram { nvram } => {
                 trx::add_nvram(&data, &inputs.get(nvram, MAX_FILE)?.bytes, PLACEHOLDER_MAC)?
             }
@@ -230,6 +247,8 @@ fn touch(data: &[u8], profile: &str, kind: &Touch) -> Result<Vec<u8>> {
             calibration_address,
             calibration_size,
         } => z2fw::from_z2_packet(&mtprops()?, *calibration_address, *calibration_size)?,
+        Touch::Z2PacketN1(board) => z2fw::from_z2_packet_n1(&mtprops()?, board)?,
+        Touch::Z2PacketsN1(board) => z2fw::from_z2_packets_n1(&mtprops()?, board)?,
         Touch::Packets { packet } => z2fw::from_packets(&mtprops()?, packet)?,
         Touch::Gen1 {
             packet,
@@ -338,6 +357,28 @@ fn parse(raw: &catalog::Step, recipe: &Recipe) -> Result<Option<Step>> {
             })?,
             &["calibration_address", "calibration_size", "profile"],
         ),
+        "z2fw-from-z2-packet@2" | "z2fw-from-z2-packet@3" => {
+            let board = N1 {
+                calibration_address: int("calibration_address")?,
+                calibration_size: int("calibration_size")?,
+                prox_address: int("prox_address")?,
+                prox_size: int("prox_size")?,
+            };
+            let kind = match raw.name.ends_with("@2") {
+                true => Touch::Z2PacketN1(board),
+                false => Touch::Z2PacketsN1(board),
+            };
+            (
+                touch(kind)?,
+                &[
+                    "calibration_address",
+                    "calibration_size",
+                    "profile",
+                    "prox_address",
+                    "prox_size",
+                ],
+            )
+        }
         "z2fw-from-mtprops@2" => (
             touch(Touch::Packets {
                 packet: string("packet")?,
@@ -377,6 +418,19 @@ fn parse(raw: &catalog::Step, recipe: &Recipe) -> Result<Option<Step>> {
         "hidspi-from-mtfw@1" => (touch(Touch::Hidspi)?, &["profile"]),
         "copy@1" => (Step::Copy, &[]),
         "bluetool-hcd@1" => (Step::BluetoolHcd, &[]),
+        "bluetool-regulatory@1" => (
+            Step::BluetoolRegulatory {
+                address: int("address")?,
+                size: int("size")?,
+            },
+            &["address", "size"],
+        ),
+        "sgx543-from-kernelcache@1" => (
+            Step::Sgx {
+                build: string("build")?,
+            },
+            &["build"],
+        ),
         "im4p-payload@1" => (Step::Im4pPayload, &[]),
         "smartio-from-kernelcache@1" => (
             Step::Smartio {

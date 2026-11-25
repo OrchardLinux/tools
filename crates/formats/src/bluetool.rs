@@ -1,6 +1,8 @@
 //! Bluetooth firmware embedded in Apple's BlueTool binary: HCD command
 //! streams of Write RAM records ending with Launch RAM.
 
+use crate::{macho, Error, Result};
+
 const WRITE_RAM: u16 = 0xfc4c;
 const LAUNCH_RAM: u16 = 0xfc4e;
 
@@ -20,6 +22,27 @@ pub fn hcd_streams(data: &[u8]) -> Vec<&[u8]> {
         }
     }
     out
+}
+
+/// A regulatory table BlueTool sends as one command: `size` bytes at the
+/// virtual address `address`, which a board's recipe records from its native
+/// registration. Only bytes the file holds, in the one segment that maps
+/// the whole range, are taken; the recipe pins their hash.
+pub fn regulatory(data: &[u8], address: u64, size: u64) -> Result<&[u8]> {
+    if !(1..=255).contains(&size) {
+        return Err(Error("a regulatory table is one command: 1 to 255 bytes"));
+    }
+    let header = macho::parse(data, 0)?;
+    let mut mapping = header
+        .segments
+        .iter()
+        .filter(|s| s.vmaddr <= address && address + size <= s.vmaddr.saturating_add(s.filesize));
+    let (Some(segment), None) = (mapping.next(), mapping.next()) else {
+        return Err(Error("regulatory range does not map to one file-backed segment"));
+    };
+    let offset = segment.fileoff + (address - segment.vmaddr);
+    data.get(offset as usize..(offset + size) as usize)
+        .ok_or(Error("regulatory table extends past the file"))
 }
 
 fn stream_end(data: &[u8], start: usize) -> usize {

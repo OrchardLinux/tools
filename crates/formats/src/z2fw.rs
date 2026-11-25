@@ -78,6 +78,30 @@ impl Profile {
             .and_then(Value::as_data)
             .ok_or(Error("touch profile has no constructed firmware"))
     }
+
+    /// "Constructed Firmware" as a list of two or more packets.
+    fn firmware_list(&self) -> Result<Vec<&[u8]>> {
+        let packets: Option<Vec<&[u8]>> = self
+            .profile
+            .get("Constructed Firmware")
+            .and_then(Value::as_array)
+            .map(|items| items.iter().map(Value::as_data).collect())
+            .unwrap_or(None);
+        packets
+            .filter(|packets| packets.len() >= 2)
+            .ok_or(Error("touch profile has no list of constructed firmware packets"))
+    }
+}
+
+/// Whether `packet` is one complete, prefixed Z2 boot packet that loads at
+/// address 0: its length, header checksum and payload checksum hold.
+fn valid_z2_packet(packet: &[u8]) -> bool {
+    packet.len() >= 20
+        && packet.starts_with(PACKET_PREFIX)
+        && usize::from(be16(&packet[4..6])) * 4 + 16 == packet.len()
+        && from_xe32(&packet[6..10]) == 0
+        && sum(&packet[4..10]) == u32::from(be16(&packet[10..12]))
+        && sum(&packet[12..packet.len() - 4]) == from_xe32(&packet[packet.len() - 4..])
 }
 
 /// `z2fw-from-mtprops@1`: one preconstructed HBPP packet with a config.
@@ -156,14 +180,7 @@ pub fn from_z2_packet(
         return Err(Error("touch profile has no preconstructed Z2 packet"));
     }
     let packet = p.firmware()?;
-    let halfword32 = |d: &[u8]| u32::from_le_bytes([d[1], d[0], d[3], d[2]]);
-    let valid = packet.len() >= 20
-        && packet.starts_with(PACKET_PREFIX)
-        && usize::from(be16(&packet[4..6])) * 4 + 16 == packet.len()
-        && halfword32(&packet[6..10]) == 0
-        && sum(&packet[4..10]) == u32::from(be16(&packet[10..12]))
-        && sum(&packet[12..packet.len() - 4]) == halfword32(&packet[packet.len() - 4..]);
-    if !valid {
+    if !valid_z2_packet(packet) {
         return Err(Error("bad Z2 boot packet"));
     }
     // SPI mode 0 (CPHA and CPOL bits in the valid mask); the driver fills the rest.
@@ -179,6 +196,116 @@ pub fn from_z2_packet(
         calibration,
         (SEND, packet.to_vec()),
     ]))
+}
+
+/// Where an N1 controller's unit data goes: the calibration and the
+/// proximity calibration, each an address and a size in the controller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct N1 {
+    pub calibration_address: u64,
+    pub calibration_size: u64,
+    pub prox_address: u64,
+    pub prox_size: u64,
+}
+
+/// `z2fw-from-z2-packet@2`: the N1 controller's one legacy Z2 packet, with
+/// a zeroed proximity initialization and the unit's calibration before it.
+/// The native driver owns reset, readiness, register calibration and
+/// execute: the file holds no INIT, register-write or execute command.
+pub fn from_z2_packet_n1(p: &Profile, board: &N1) -> Result<Vec<u8>> {
+    let packet = n1_profile(p)?.firmware()?;
+    if !valid_z2_packet(packet) {
+        return Err(Error("bad Z2 boot packet"));
+    }
+    n1_container(&[packet], board)
+}
+
+/// `z2fw-from-z2-packet@3`: the same for a profile whose constructed
+/// firmware is a list of packets (iPhone 6s Plus). The first loads at 0, the
+/// others at their own addresses; all are sent in order.
+pub fn from_z2_packets_n1(p: &Profile, board: &N1) -> Result<Vec<u8>> {
+    let packets = n1_profile(p)?.firmware_list()?;
+    if !valid_z2_packet(packets[0]) {
+        return Err(Error("bad Z2 boot packet"));
+    }
+    n1_container(&packets, board)
+}
+
+/// An N1 profile: preconstructed Z2 packets and no firmware config, which
+/// this layout would not apply.
+fn n1_profile(p: &Profile) -> Result<&Profile> {
+    if p.profile.get("Firmware Config").is_some() {
+        return Err(Error("N1 packet with an unsupported firmware config"));
+    }
+    if p.packet_type() != Some("Z2") {
+        return Err(Error("touch profile has no preconstructed Z2 packet"));
+    }
+    Ok(p)
+}
+
+/// CONFIG (HBPP 0x103), the zeroed proximity initialization, the unit's
+/// calibration, then each firmware packet as it is. Unlike HBPP 0x104, a
+/// packet's word count includes every payload word.
+fn n1_container(packets: &[&[u8]], board: &N1) -> Result<Vec<u8>> {
+    const HBPP: u32 = 0x103;
+    let loads: Vec<(u64, Vec<u8>)> = packets
+        .iter()
+        .map(|packet| decode_blob(packet, HBPP))
+        .collect::<Result<_>>()?;
+    // Both ranges are checked together, for overlap and address overflow.
+    let mut providers = Vec::new();
+    calibration_record(
+        "prox-calibration",
+        &Value::Integer(board.prox_address),
+        &Value::Integer(board.prox_size),
+        &mut providers,
+    )?;
+    let calibration = calibration_record(
+        "multi-touch-calibration",
+        &Value::Integer(board.calibration_address),
+        &Value::Integer(board.calibration_size),
+        &mut providers,
+    )?;
+    let (prox_address, prox_size) = (providers[0].1, providers[0].2);
+    if providers.iter().any(|&(_, address, maximum)| address % 4 != 0 || maximum % 4 != 0) {
+        return Err(Error("N1 calibration ranges must be word aligned"));
+    }
+    let overlap = |a: u64, a_len: u64, b: u64, b_len: u64| a < b + b_len && b < a + a_len;
+    for (address, firmware) in &loads {
+        let held = providers
+            .iter()
+            .any(|&(_, a, m)| overlap(a, m.div_ceil(4) * 4, *address, firmware.len() as u64));
+        if held {
+            return Err(Error("N1 calibration overlaps the firmware load range"));
+        }
+    }
+    for (i, (address, firmware)) in loads.iter().enumerate() {
+        let other = loads[i + 1..]
+            .iter()
+            .any(|(b, second)| overlap(*address, firmware.len() as u64, *b, second.len() as u64));
+        if other {
+            return Err(Error("N1 firmware packets overlap"));
+        }
+    }
+    // The legacy length field is 16 bits, in words: never wrapped.
+    let words = u16::try_from(prox_size / 4)
+        .map_err(|_| Error("N1 proximity initialization is too large"))?;
+    let mut header = words.to_be_bytes().to_vec();
+    header.extend(xe32(prox_address as u32));
+    let mut prox = PACKET_PREFIX.to_vec();
+    prox.extend(&header);
+    prox.extend((sum(&header) as u16).to_be_bytes());
+    prox.extend(vec![0u8; prox_size as usize + 4]);
+    if decode_blob(&prox, HBPP)? != (prox_address, vec![0u8; prox_size as usize]) {
+        return Err(Error("N1 proximity initialization does not read back"));
+    }
+    // SPI mode 0 and the HBPP version (bits in the valid mask, then the value).
+    let mut config = [0u32; 11];
+    config[0] = 1 << 3 | 1 << 4 | 1 << 11;
+    config[10] = HBPP;
+    let mut records = vec![(CONFIG, le32s(&config)), (SEND, prox), calibration];
+    records.extend(packets.iter().map(|packet| (SEND, packet.to_vec())));
+    Ok(container(&records))
 }
 
 /// `z2fw-from-mtprops@2`: an array of preconstructed packets (makez2fw's
