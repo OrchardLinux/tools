@@ -142,6 +142,7 @@ pub fn build(build: &Build, root: &Path, distro: &Release, request: &Request) ->
     command
         .args(&argv[1..])
         .current_dir(root)
+        .env("PATH", build.path())
         .env("ORCHARD_PYTHON", &build.python)
         .env("ORCHARD_CHECKOUT", &build.root)
         .env("ORCHARD_CACHE_DIR", build.cache.root())
@@ -181,8 +182,9 @@ pub fn build(build: &Build, root: &Path, distro: &Release, request: &Request) ->
             "#!/bin/sh\n# What orchard build ran for this release (--explain prints it); the build script\n\
              # runs orchard's producers itself, from the data ORCHARD_CHECKOUT names; how each component was\n\
              # got (built, reused, or downloaded from a nightly) is in the inputs document, under \"produced\".\n\
-             set -eu\ncd {}\nunset ORCHARD_DATA\n{shown}ORCHARD_CACHE={} ORCHARD_CHECKOUT={} ORCHARD_TOOL={} {}\n",
+             set -eu\ncd {}\nunset ORCHARD_DATA\nPATH={}:$PATH\nexport PATH\n{shown}ORCHARD_CACHE={} ORCHARD_CHECKOUT={} ORCHARD_TOOL={} {}\n",
             quote(&root.to_string_lossy()),
+            quote(&build.python.parent().unwrap_or(Path::new("/")).to_string_lossy()),
             quote(&build.cache.root().to_string_lossy()),
             quote(&build.root.to_string_lossy()),
             quote(&tool.to_string_lossy()),
@@ -468,7 +470,7 @@ mod tests {
     /// A build entry that writes a release of `name` and records what it
     /// was given.
     const ENTRY: &str = r#"
-import hashlib, os, pathlib, sys
+import hashlib, os, pathlib, shutil, sys
 args = sys.argv[1:]
 version, out = args[args.index('--version') + 1], pathlib.Path(args[args.index('--output') + 1])
 if os.environ.get('FAIL'):
@@ -480,7 +482,8 @@ def pin(name, data):
 manifest = 'schema = 2\nkind = "orchard.install"\ndistro = "NAME"\nversion = "%s"\nroot = %s\n' % (version, pin('root', b'r'))
 (out / 'index.toml').write_text('schema = 2\nkind = "orchard.index"\ndistro = "NAME"\nrelease = %s\n'
                                 % pin('release.toml', manifest.encode()))
-given = [os.environ['ORCHARD_CHECKOUT'], os.environ['ORCHARD_TOOL'], os.environ.get('ORCHARD_KERNEL_TREE', '-'), ' '.join(args[4:])]
+given = [os.environ['ORCHARD_CHECKOUT'], os.environ['ORCHARD_TOOL'], os.environ.get('ORCHARD_KERNEL_TREE', '-'), ' '.join(args[4:]),
+         shutil.which('python3')]
 (out / 'given').write_text('\n'.join(given))
 "#;
 
@@ -516,8 +519,13 @@ given = [os.environ['ORCHARD_CHECKOUT'], os.environ['ORCHARD_TOOL'], os.environ.
         assert!(Path::new(given[1]).is_file());
         assert_eq!(
             &given[2..],
-            ["/trees/linux", "--platform small --platform wide"]
+            ["/trees/linux", "--platform small --platform wide", given[4]]
         );
+        // The scripts' python3 is the producers', where it comes with one.
+        let python3 = build.python.with_file_name("python3");
+        if python3.is_file() {
+            assert_eq!(given[4], python3.to_string_lossy());
+        }
         let commands = std::fs::read_to_string(&built.commands).unwrap();
         assert!(
             commands.contains("ORCHARD_KERNEL_TREE=/trees/linux ORCHARD_CACHE="),

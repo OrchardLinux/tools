@@ -178,6 +178,20 @@ impl<'a> Build<'a> {
         self.root.join("producers").join(name)
     }
 
+    /// PATH for producers and build entries: their scripts run `python3`,
+    /// and the system's can be older than 3.11.
+    pub(crate) fn path(&self) -> OsString {
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        match self.python.parent() {
+            Some(bin) if bin.join("python3").is_file() => {
+                let mut all = vec![bin.to_owned()];
+                all.extend(std::env::split_paths(&path).filter(|dir| dir != bin));
+                std::env::join_paths(all).unwrap_or(path)
+            }
+            _ => path,
+        }
+    }
+
     /// Runs a producer and records it. Its output goes to the terminal as
     /// it comes.
     pub fn command<S: AsRef<OsStr>>(&self, argv: &[S], env: &[(&str, &OsStr)]) -> Result<()> {
@@ -196,7 +210,7 @@ impl<'a> Build<'a> {
         ];
         given.extend_from_slice(env);
         let mut command = Command::new(&argv[0]);
-        command.args(&argv[1..]);
+        command.args(&argv[1..]).env("PATH", self.path());
         let mut recorded = inherited();
         for (name, value) in given {
             command.env(name, value);
