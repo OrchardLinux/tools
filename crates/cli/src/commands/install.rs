@@ -671,12 +671,27 @@ impl Shared {
                 // With a device named (--ecid, --location) and not there,
                 // what is connected is only not it.
                 let absent = self.named && flow.state.device().is_none();
-                out.event(json!({"event": "needs", "action": if absent { "connect-named" } else { "disconnect-others" }, "devices": devices}));
-                out.warn(if absent { "The device you named is not connected" } else { orchard_flow::SEVERAL_TITLE });
+                // Nothing but devices that other work holds: this run waits
+                // for that to finish.
+                let in_use = flow.state.device().is_none() && flow.others.iter().all(|o| o.mode.starts_with(orchard_runtime::IN_USE));
+                let action = match (in_use, absent) {
+                    (true, _) => "wait-for-device",
+                    (false, true) => "connect-named",
+                    (false, false) => "disconnect-others",
+                };
+                out.event(json!({"event": "needs", "action": action, "devices": devices}));
+                out.warn(match (in_use, absent) {
+                    (true, _) => "The device is in use",
+                    (false, true) => "The device you named is not connected",
+                    (false, false) => orchard_flow::SEVERAL_TITLE,
+                });
                 for other in &flow.others {
                     out.sub(format!("{} · {}", other.name, other.mode));
                 }
-                if absent {
+                if in_use {
+                    out.sub("This goes on when that has finished.");
+                    out.term.live_restart(vec![s("Waiting for the device to be free", SUB)]);
+                } else if absent {
                     out.sub("Connect the one --ecid or --location names; orchard2 devices lists what is there.");
                     out.term.live_restart(vec![s("Waiting for the named device", SUB)]);
                 } else {

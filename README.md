@@ -30,6 +30,7 @@ aarch64).
 | `crates/build` | `build`: the component cache and orchard's producers |
 | `crates/device`, `crates/cli` | The command line |
 | `docs` | What `orchard2` does, command by command |
+| `TODO.md` | What is decided but not done |
 | `companion` | The iPad app that splits the storage, with its helper |
 | `packaging` | Release builds, stamping (`stamp.py`) and `install.sh` |
 | `vendor` | Patched or pinned third-party code (see each `PATCHED.md`) |

@@ -68,6 +68,8 @@ orchard2 --json install NAME --yes --no-ssh \
   one is. `--ecid` or `--location` names the one a run is for; then no other
   is found or started, but two connected still stop it
   ([devices.md](devices.md#one-device-for-install-and-launch)).
+- **Another orchard2 works on the device**: it is shown as in use, and the
+  run goes on when that has finished ([devices.md](devices.md#session)).
 - **A start that fails** asks for DFU mode again and tries again.
 - `--wait SECONDS` ends the run with exit status 3 when no device shows up
   in DFU mode in that time; 0, the default, waits for ever.

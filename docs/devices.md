@@ -88,5 +88,15 @@ orchard2 session -- sh -c '
 - **The lock** is per USB location (`/tmp/orchard2-locks/`). While a device
   is locked, another `orchard2` that wants it fails at once with `locked`
   (exit status 12) and says which process holds it. The boot commands,
-  the low-level commands and `run` take the lock for as long as they run;
-  `install` and `launch` do not take it yet.
+  the low-level commands and `run` take the lock for as long as they run.
+- `install`, `launch`, the installer and the launcher take the same lock
+  for a device once it is in DFU mode, which is where their work on it
+  starts, and keep it until they are done with it, through every mode it
+  goes through. A window that is only open holds nothing. A device in DFU
+  mode that other work holds is left to it: they show it as in use and go
+  on when it is free. They wait where the boot commands fail, because a
+  person is watching.
+
+What a session also keeps, the device's identity and a state USB cannot
+show, `install` and `launch` do not share with other commands yet
+([TODO.md](../TODO.md)).

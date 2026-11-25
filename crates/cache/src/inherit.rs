@@ -5,8 +5,8 @@
 //! holders (a lock, or content no other user can reach) is then shared by
 //! the whole session and gone with its last process.
 #[cfg(not(unix))]
-use orchard_cache::Code;
-use orchard_cache::{Error, Result};
+use crate::Code;
+use crate::{Error, Result};
 use std::fs::{File, Metadata};
 use std::process::Command;
 
@@ -42,7 +42,7 @@ pub fn take(var: &str, is_it: impl FnOnce(&Metadata) -> bool) -> Option<File> {
 }
 
 #[cfg(unix)]
-pub(crate) fn adopt(fd: i32, is_it: impl FnOnce(&Metadata) -> bool) -> Option<File> {
+pub fn adopt(fd: i32, is_it: impl FnOnce(&Metadata) -> bool) -> Option<File> {
     use std::mem::ManuallyDrop;
     use std::os::fd::FromRawFd;
     // SAFETY: the number comes from the environment, so it may be any
@@ -57,6 +57,6 @@ pub(crate) fn adopt(fd: i32, is_it: impl FnOnce(&Metadata) -> bool) -> Option<Fi
 }
 
 #[cfg(not(unix))]
-pub(crate) fn adopt(_fd: i32, _is_it: impl FnOnce(&Metadata) -> bool) -> Option<File> {
+pub fn adopt(_fd: i32, _is_it: impl FnOnce(&Metadata) -> bool) -> Option<File> {
     None
 }

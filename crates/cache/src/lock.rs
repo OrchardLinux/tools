@@ -1,4 +1,5 @@
-//! One piece of work on a device at a time.
+//! One piece of work on a device at a time: the boot commands' sessions
+//! and the installer's and launcher's runs all take this lock.
 //!
 //! The lock is a file named after the device's USB location, which stays
 //! the same while the device changes modes. The operating system releases
@@ -10,7 +11,7 @@
 //! relies on: only a note saying who has the device, for the message to
 //! whoever is refused.
 use crate::inherit;
-use orchard_cache::{Code, Context, Error, Result};
+use crate::{Code, Context, Error, Result};
 use std::fs::{self, File, TryLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -168,6 +169,16 @@ fn same_file(_open: &fs::Metadata, _path: &Path) -> bool {
     false
 }
 
+/// How a device that other work holds is described, in the refusal and
+/// where it is listed; who holds it follows where that is known.
+pub const IN_USE: &str = "in use by another orchard2";
+
+/// Who holds the device a refusal is about, as its note names them:
+/// `(pid 12: orchard2 load)`, or nothing.
+pub fn holder(refusal: &Error) -> &str {
+    refusal.message.split_once(IN_USE).map_or("", |(_, who)| who.trim())
+}
+
 fn in_use(location: &str, mut file: &File) -> Error {
     // The note is anyone's to write, so only a short, plain one is shown.
     let mut note = String::new();
@@ -181,7 +192,7 @@ fn in_use(location: &str, mut file: &File) -> Error {
     };
     Error::new(
         Code::Locked,
-        format!("the device at {location} is in use by another orchard2{holder}"),
+        format!("the device at {location} is {IN_USE}{holder}"),
     )
     .hint("wait for it to finish, or stop it")
 }
@@ -240,6 +251,7 @@ mod tests {
 
         let refused = Lock::acquire_in(dir.path(), "0x100000").unwrap_err();
         assert!(refused.message.ends_with(&format!("({note})")));
+        assert_eq!(holder(&refused), format!("({note})"));
 
         drop(held);
         assert_eq!(fs::read_to_string(&path).unwrap(), "");
@@ -252,6 +264,7 @@ mod tests {
         fs::write(dir.path().join("0x100000.lock"), "x\x1b[2J\nsecret=1").unwrap();
         let refused = Lock::acquire_in(dir.path(), "0x100000").unwrap_err();
         assert!(refused.message.ends_with("another orchard2"));
+        assert_eq!(holder(&refused), "");
     }
 
     #[test]

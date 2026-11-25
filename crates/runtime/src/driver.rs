@@ -246,6 +246,8 @@ impl<O: Observer> Driver<O> {
         let mut next_poll = Instant::now();
         // Where the device named for this run (Options::only) was last seen.
         let mut named_at: Option<String> = None;
+        // The devices this run holds, so that no other work touches them.
+        let mut held = crate::held::Held::default();
         loop {
             let kind = wait_key(&flow);
             if kind != waiting.0 {
@@ -319,13 +321,35 @@ impl<O: Observer> Driver<O> {
                                 && self.only.as_ref().is_some_and(|only| only.ecid.is_some())
                                 && watcher.ecid(d).is_none()
                         };
-                        let unnamed: Vec<_> = unnamed.into_iter().filter(|d| orchard_usb::apple_device(d) && !asked(d)).collect();
+                        let mut unnamed: Vec<_> = unnamed.into_iter().filter(|d| orchard_usb::apple_device(d) && !asked(d)).collect();
+                        // One piece of work on a device at a time: a device in
+                        // DFU mode is taken before the flow hears of it, and one
+                        // that other work holds is left to it.
+                        let working_at = flow.state.device().and_then(|d| watcher.location(&d.id)).map(str::to_owned);
+                        let in_dfu: Vec<&str> = named.iter().filter(|d| d.mode == orchard_usb::Mode::Dfu).map(|d| d.location.as_str()).collect();
+                        let look = held.look(&in_dfu, working_at.as_deref());
+                        // A device the flow took up as it found it running.
+                        let adopted = working_at.as_deref().and_then(|port| held.adopt(port));
+                        for problem in look.problems.iter().chain(adopted.iter()) {
+                            self.observer.problem(problem);
+                        }
+                        let (named, taken): (Vec<_>, Vec<_>) = named
+                            .into_iter()
+                            .partition(|d| !(d.mode == orchard_usb::Mode::Dfu && look.in_use.iter().any(|(port, _)| *port == d.location)));
+                        let in_use: Vec<(orchard_usb::Device, String)> = taken
+                            .into_iter()
+                            .map(|d| {
+                                let holder = look.in_use.iter().find(|(port, _)| *port == d.location).map(|(_, who)| who.clone()).unwrap_or_default();
+                                (d, holder)
+                            })
+                            .collect();
+                        unnamed.extend(in_use.iter().map(|(d, _)| d.clone()));
                         let seen_events = watcher.see(&catalog, &named);
                         // Other Apple devices besides the one being worked on:
                         // neither app goes on until they're gone.
                         {
                             let target = flow.state.device().map(|d| d.id.clone());
-                            let others = if target.is_none() && !unnamed.is_empty() {
+                            let mut others = if target.is_none() && !unnamed.is_empty() {
                                 // Only devices that were not named are there.
                                 listed_devices(&catalog, &watcher, &unnamed, None)
                             } else if watcher.others(&devices, target.as_ref()).is_empty() {
@@ -333,6 +357,13 @@ impl<O: Observer> Driver<O> {
                             } else {
                                 listed_devices(&catalog, &watcher, &devices, flow.state.device())
                             };
+                            // A device other work holds says so in place of its mode.
+                            for (device, holder) in &in_use {
+                                let name = listed_devices(&catalog, &watcher, std::slice::from_ref(device), None).pop().map(|o| o.name);
+                                if let Some(other) = name.and_then(|name| others.iter_mut().find(|o| o.name == name && !o.mode.starts_with(crate::IN_USE))) {
+                                    other.mode = [crate::IN_USE, holder.as_str()].join(" ").trim_end().to_owned();
+                                }
+                            }
                             if others != others_told {
                                 others_told = others.clone();
                                 flow = self.feed(flow, Event::Others(others));

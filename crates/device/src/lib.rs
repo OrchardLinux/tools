@@ -8,10 +8,10 @@ pub mod entry;
 #[cfg(test)]
 mod fixture;
 pub mod host;
-mod inherit;
+use orchard_cache::inherit;
 pub mod keys;
 pub mod load;
-pub mod lock;
+pub use orchard_cache::lock;
 pub mod methods;
 pub mod prep;
 pub mod select;

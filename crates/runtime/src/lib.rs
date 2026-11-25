@@ -22,6 +22,7 @@ pub mod lockdown;
 pub mod overlay;
 pub mod records;
 pub mod usb_access;
+mod held;
 pub mod usbmux;
 pub mod replug;
 pub mod release;
@@ -71,6 +72,10 @@ pub fn layout(product: &str) -> (Model, Sequence) {
     }
     (Model::IpadHome, Sequence::HomePower)
 }
+
+/// What a device that other work holds is listed with, in place of its mode
+/// (`Other::mode`), followed by who holds it where that is known.
+pub const IN_USE: &str = orchard_cache::lock::IN_USE;
 
 /// The one device a run is for, named by the person: its ECID, the USB port
 /// it is at, or both. Every other device is one too many.
@@ -222,6 +227,11 @@ impl Watcher {
         let product = told.product.as_deref()?;
         let udid = usb.identity.udid.as_deref()?;
         catalog.board_for_product(product).ok().map(|board| describe(catalog, &board, &format!("udid-{udid}")))
+    }
+
+    /// Where a device was last seen on USB.
+    pub fn location(&self, id: &DeviceId) -> Option<&str> {
+        self.locations.get(id).map(String::as_str)
     }
 
     /// A listed device's ECID: from the boot ROM or iBoot, or what it said
