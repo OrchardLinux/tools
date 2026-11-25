@@ -16,21 +16,24 @@ it is for, each with what it does there:
 ```
 This computer
 
-  To build
-  ✓ Python      runs orchard's recipes                  python3.14
-  ✓ git         fetches the kernel's source
-  ! Podman      the recipes compile in its containers   its VM is stopped
-                orchard2 setup podman                   podman machine start
-  ✓ Free space  a build needs room to finish            32 GB
+  For building
+    ✓ Python       python3.14
+    ✓ git
+    ! Podman       its VM is stopped
+                   The recipes compile in its containers.
+                   orchard2 setup podman
+    ✓ Free space   33 GB
 
-  To sign in over SSH
-  ✓ ssh-keygen  makes this computer's key
+  For signing in over SSH
+    ✓ ssh-keygen
 
-! 1 missing  the blue command gets it
+1 thing to get:  orchard2 setup podman
 ```
 
-`✓` is there. `!` is missing and orchard2 can get it: the line below is the
-command, and what it runs. `✕` is for you to do, and says what. In `--json`
+What is there takes one line. What is not says what is wrong, why it is
+needed, and the command that gets it: `!` when orchard2 can, `✕` when only
+you can. The last line is one command for everything orchard2 can get.
+In `--json`
 these are the states `ready`, `missing` and `yours`.
 
 | Name | Is | Needed for |
