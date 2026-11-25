@@ -71,7 +71,7 @@ and with `--json` these events, one object per line with an `event` field:
 | Event | Carries |
 | --- | --- |
 | `release` | `name`, `version` |
-| `state` | `state`: `waiting-for-dfu`, `found`, `unsupported`, `several-in-dfu`, `usb-access-needed`, `waiting-for-ipados`, `choose-split`, `splitting`, `split-done`, `dfu-again`, `create-account`, `confirm-erase`, `not-prepared`, `installing`, `install-failed`, `starting`, `choose-system`, `nothing-installed` |
+| `state` | `state`: `waiting-for-dfu`, `found`, `unsupported`, `several-in-dfu`, `usb-access-needed`, `waiting-for-ipados`, `choose-split`, `splitting`, `split-done`, `dfu-again`, `create-account`, `confirm-erase`, `not-prepared`, `installing`, `install-failed`, `starting`, `launching`, `choose-system`, `nothing-installed` |
 | `needs` | `action`: `dfu` (`device`, `mode`, `steps`, `wait_s`), `input` (`flag`), `disconnect-others`, `connect-named` and `wait-for-device` (`devices`), `replug` |
 | `approved` | `by`: the option that answered |
 | `split` | the storage: total, iPadOS and what it uses, the suggested, smallest and largest size, the partitions after iPadOS |

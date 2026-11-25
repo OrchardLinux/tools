@@ -229,6 +229,9 @@ pub enum State {
     InstallFailed { device: Device },
     Starting { device: Device, title: String },
     // Launcher
+    /// The user pressed Start: palera1n, Pongo and m1n1 start the device and
+    /// read what's installed.
+    Launching { device: Device },
     ChooseSystem { device: Device, entries: Vec<Entry>, selected: usize },
     NothingInstalled { device: Device },
 }
@@ -466,6 +469,7 @@ impl Flow {
                     | NotPrepared { .. }
                     | InstallFailed { .. }
                     | CreateAccount { env: None, .. }
+                    | Launching { .. }
                     | ChooseSystem { .. }
                     | NothingInstalled { .. }
             )
@@ -476,7 +480,7 @@ impl Flow {
     fn starting(&self, app: App) -> bool {
         match app {
             App::Installer => matches!(self.state, State::WaitingForIpados { .. } | State::CreateAccount { env: None, .. }),
-            App::Launcher => matches!(self.state, State::Found { .. }),
+            App::Launcher => matches!(self.state, State::Launching { .. }),
         }
     }
 
@@ -630,9 +634,9 @@ fn step_inner(app: App, mut flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
             return (flow, out);
         }
         Event::EntriesListed(entries)
-            if flow.ask_entry && entries.len() == 1 && matches!(flow.state, State::Found { .. }) =>
+            if flow.ask_entry && entries.len() == 1 && matches!(flow.state, State::Launching { .. }) =>
         {
-            if let State::Found { device, .. } = flow.state.clone() {
+            if let State::Launching { device } = flow.state.clone() {
                 flow.state = State::ChooseSystem { device, entries, selected: 0 };
             }
             return (flow, out);
@@ -670,10 +674,10 @@ fn step_inner(app: App, mut flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
         }
         Event::AccountNeeded if matches!(flow.state, State::WaitingForDfu { .. }) => flow.resuming = true,
         // A start that didn't work: its reason shows on DFU mode again (both
-        // apps; the launcher's start runs from Found until m1n1 took the entry).
+        // apps; the launcher's start runs from Launching until m1n1 took the entry).
         Event::ChainFailed(ref reason)
             if matches!(flow.state, State::WaitingForIpados { .. } | State::CreateAccount { env: None, .. })
-                || (app == App::Launcher && matches!(flow.state, State::Found { .. } | State::Starting { .. })) =>
+                || (app == App::Launcher && matches!(flow.state, State::Launching { .. } | State::Starting { .. })) =>
         {
             flow.start_problem = Some(reason.clone());
         }
@@ -768,7 +772,8 @@ fn step_inner(app: App, mut flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
         flow.resuming = false;
     }
     // palera1n's state belongs to the boot under way: the screens it runs behind.
-    let booting_screen = matches!(flow.state, State::WaitingForIpados { .. } | State::CreateAccount { env: None, .. });
+    let booting_screen =
+        matches!(flow.state, State::WaitingForIpados { .. } | State::CreateAccount { env: None, .. } | State::Launching { .. });
     if !booting_screen {
         flow.boot_stalled = false;
     }
@@ -781,7 +786,8 @@ fn step_inner(app: App, mut flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
     if !matches!(flow.state, State::DfuAgain { .. }) {
         flow.start_problem = None;
     }
-    if !(booting_screen || matches!(flow.state, State::Found { .. })) {
+    if !booting_screen {
+        // palera1n's attempts and log belong to the start under way.
         flow.start_attempt = 0;
         flow.start_log.clear();
     }
@@ -873,6 +879,7 @@ impl State {
             | Installing { device, .. }
             | InstallFailed { device }
             | Starting { device, .. }
+            | Launching { device }
             | ChooseSystem { device, .. }
             | NothingInstalled { device } => Some(device),
         }
@@ -894,7 +901,7 @@ pub fn update(app: App, state: State, event: Event) -> (State, Vec<Effect>) {
         // ---- Connect ----
         (S::WaitingForDfu { seen, leaving, .. }, E::SelectTab(tab)) => (S::WaitingForDfu { tab, seen, leaving }, none()),
         (S::WaitingForDfu { mut seen, tab, .. }, E::Attached { device, mode }) => match mode {
-            UsbMode::Dfu => found(app, device),
+            UsbMode::Dfu => found(device),
             _ => {
                 seen.retain(|s| s.device.id != device.id);
                 let tab = if seen.is_empty() { device.sequence } else { tab };
@@ -984,16 +991,15 @@ pub fn update(app: App, state: State, event: Event) -> (State, Vec<Effect>) {
             devices.retain(|d| d.id != id);
             match devices.len() {
                 0 => (S::start(), none()),
-                1 => found(app, devices.remove(0)),
+                1 => found(devices.remove(0)),
                 _ => (S::SeveralInDfu { devices }, none()),
             }
         }
-        // The launcher's Found runs the chain (palera1n, Pongo, m1n1), which drops
-        // the device off USB a few times: only the chain's own result moves on.
-        (state @ S::Found { .. }, E::Detached { .. }) if app == App::Launcher => (state, none()),
         (S::Found { device, .. } | S::Unsupported { device }, E::Detached { id }) if device.id == id => {
             (S::start(), none())
         }
+        // The launcher starts the device only when asked to (L.1a's Start).
+        (S::Found { device, .. }, E::Continue) if app == App::Launcher => launch(device),
         (S::Found { device, .. }, E::Continue) => {
             let id = device.id.clone();
             (S::WaitingForIpados { device, slow: false }, vec![Effect::BootIpadosWithOverlay(id)])
@@ -1009,7 +1015,7 @@ pub fn update(app: App, state: State, event: Event) -> (State, Vec<Effect>) {
         }
         // The iPad left the temporary iPadOS for DFU (e.g. restarted into it):
         // its companion is gone, so start from Found again.
-        (S::ChooseSplit { device: d, .. }, E::Attached { device, mode: UsbMode::Dfu }) if d.id == device.id => found(app, device),
+        (S::ChooseSplit { device: d, .. }, E::Attached { device, mode: UsbMode::Dfu }) if d.id == device.id => found(device),
         (S::ChooseSplit { device, layout, approved, .. }, E::SetOmarchySize(gb)) => {
             let omarchy_gb = gb.min(layout.max_omarchy_gb());
             (S::ChooseSplit { device, layout, omarchy_gb, approved }, none())
@@ -1064,9 +1070,10 @@ pub fn update(app: App, state: State, event: Event) -> (State, Vec<Effect>) {
         }
 
         // ---- DFU again ----
-        // The launcher's route after DFU mode: start m1n1 and list the systems.
+        // The launcher's route after a start that didn't work: again, as the
+        // installer does (Start was pressed for this device).
         (S::DfuAgain { device: d, .. }, E::Attached { device, mode: UsbMode::Dfu }) if app == App::Launcher && d.id == device.id => {
-            found(app, device)
+            launch(device)
         }
         (S::DfuAgain { device: d, why, .. }, E::Attached { device, mode: UsbMode::Dfu }) if d.id == device.id => {
             match why {
@@ -1175,7 +1182,10 @@ pub fn update(app: App, state: State, event: Event) -> (State, Vec<Effect>) {
         (S::InstallFailed { device }, E::Retry) => (S::DfuAgain { device, why: Again::Retry, seen: None }, none()),
 
         // ---- Launcher ----
-        (S::Found { device, .. }, E::EntriesListed(entries)) => match entries.len() {
+        // Detaches while launching change nothing: the chain (palera1n, Pongo,
+        // m1n1) drops the device off USB a few times, and only its own result
+        // moves on.
+        (S::Launching { device }, E::EntriesListed(entries)) => match entries.len() {
             0 => (S::NothingInstalled { device }, none()),
             1 => {
                 let entry = &entries[0];
@@ -1217,7 +1227,7 @@ pub fn update(app: App, state: State, event: Event) -> (State, Vec<Effect>) {
             (S::DfuAgain { device, why: Again::Retry, seen: None }, none())
         }
         // The launcher's start (palera1n, Pongo, m1n1, the entry) failed: the same.
-        (S::Found { device, .. } | S::Starting { device, .. }, E::ChainFailed(_)) if app == App::Launcher => {
+        (S::Launching { device } | S::Starting { device, .. }, E::ChainFailed(_)) if app == App::Launcher => {
             (S::DfuAgain { device, why: Again::Retry, seen: None }, none())
         }
         (S::DfuAgain { device: d, why, .. }, E::Attached { device, mode }) if d.id == device.id => {
@@ -1236,17 +1246,17 @@ pub fn update(app: App, state: State, event: Event) -> (State, Vec<Effect>) {
 }
 
 /// A device just entered DFU while the app waited for it.
-fn found(app: App, device: Device) -> (State, Vec<Effect>) {
+fn found(device: Device) -> (State, Vec<Effect>) {
     if device.support == Support::Unsupported {
         return (State::Unsupported { device }, Vec::new());
     }
-    match app {
-        App::Installer => (State::Found { device, confirm_skip: false }, Vec::new()),
-        App::Launcher => {
-            let id = device.id.clone();
-            (State::Found { device, confirm_skip: false }, vec![Effect::ListEntries(id)])
-        }
-    }
+    (State::Found { device, confirm_skip: false }, Vec::new())
+}
+
+/// The launcher starts the device in DFU mode: m1n1, then what's installed.
+fn launch(device: Device) -> (State, Vec<Effect>) {
+    let id = device.id.clone();
+    (State::Launching { device }, vec![Effect::ListEntries(id)])
 }
 
 /// The device is in DFU and the storage is (believed to be) split: boot the

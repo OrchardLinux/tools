@@ -1117,7 +1117,7 @@ pub fn install(global: &Global, args: &InstallArgs) -> ExitCode {
                 }
                 return finish(&mut out, Exit::Done, "done", "");
             }
-            State::ChooseSystem { .. } | State::NothingInstalled { .. } => {}
+            State::Launching { .. } | State::ChooseSystem { .. } | State::NothingInstalled { .. } => {}
         }
     }
 }
@@ -1224,9 +1224,11 @@ pub fn launch(global: &Global, args: &LaunchArgs) -> ExitCode {
                 if first {
                     out.term.live(None);
                     out.ok(format!("{} in DFU mode", device.name));
+                    // Running the command is the go-ahead; the window asks.
+                    send(Event::Continue);
                 }
-                shared.starting(&mut out, &flow, first);
             }
+            State::Launching { .. } => shared.starting(&mut out, &flow, first),
             State::DfuAgain { device, why, .. } if first => shared.dfu_again(&mut out, &flow, device, *why, "", args.wait),
             State::ChooseSystem { entries, selected, .. } if !chosen => {
                 out.term.live(None);

@@ -366,15 +366,44 @@ fn entry(id: &str, title: &str, default: bool) -> Entry {
     Entry { id: id.into(), title: title.into(), kernel: "6.12.4".into(), default }
 }
 
+/// The launcher with the iPad found and Start pressed.
+fn launching() -> State {
+    run(App::Launcher, State::start(), vec![dfu(ipad6()), Event::Continue]).0
+}
+
 #[test]
-fn launcher_lists_entries_when_the_device_is_found() {
-    let (_, e) = update(App::Launcher, State::start(), dfu(ipad6()));
+fn launcher_starts_the_device_only_when_asked() {
+    let (s, e) = update(App::Launcher, State::start(), dfu(ipad6()));
+    assert!(matches!(s, State::Found { .. }) && e.is_empty(), "{e:?}");
+    let (d, k) = view(App::Launcher, &s);
+    assert_eq!((d.glyph, k), (Glyph::Check, ScreenKind::Found));
+    // Seen again, and unplugged: still nothing started.
+    let (s, e) = update(App::Launcher, s, dfu(ipad6()));
+    assert!(matches!(s, State::Found { .. }) && e.is_empty(), "{e:?}");
+    let (gone, e) = update(App::Launcher, s.clone(), Event::Detached { id: ipad6().id });
+    assert!(matches!(gone, State::WaitingForDfu { .. }) && e.is_empty());
+    // Start.
+    let (s, e) = update(App::Launcher, s, Event::Continue);
     assert_eq!(e, vec![Effect::ListEntries(ipad6().id)]);
+    let (d, k) = view(App::Launcher, &s);
+    assert_eq!((d.glyph, k), (Glyph::Spinner, ScreenKind::Launching));
+    // A second press changes nothing.
+    let (s, e) = update(App::Launcher, s, Event::Continue);
+    assert!(matches!(s, State::Launching { .. }) && e.is_empty(), "{e:?}");
+}
+
+#[test]
+fn the_replug_dialog_stays_while_the_launcher_starts_the_device() {
+    let mut flow = Flow::new();
+    flow.state = launching();
+    let (flow, _) = step(App::Launcher, flow, Event::BootStalled);
+    let (flow, _) = step(App::Launcher, flow, Event::Detached { id: ipad6().id });
+    assert!(flow.boot_stalled);
 }
 
 #[test]
 fn launcher_starts_a_single_entry_immediately() {
-    let s = update(App::Launcher, State::start(), dfu(ipad6())).0;
+    let s = launching();
     let (s, e) = update(App::Launcher, s, Event::EntriesListed(vec![entry("omarchy-a-6.12.4", "Omarchy A", true)]));
     assert!(matches!(s, State::Starting { ref title, .. } if title == "Omarchy A"));
     assert_eq!(e, vec![Effect::BootEntry("omarchy-a-6.12.4".into())]);
@@ -384,6 +413,7 @@ fn launcher_starts_a_single_entry_immediately() {
 fn launcher_asked_to_ask_starts_no_single_entry_by_itself() {
     let (flow, _) = step(App::Launcher, Flow::new(), Event::AskEntry);
     let (flow, _) = step(App::Launcher, flow, dfu(ipad6()));
+    let (flow, _) = step(App::Launcher, flow, Event::Continue);
     let (flow, e) = step(App::Launcher, flow, Event::EntriesListed(vec![entry("a", "Omarchy A", true)]));
     assert!(matches!(flow.state, State::ChooseSystem { ref entries, selected: 0, .. } if entries.len() == 1));
     assert!(e.is_empty());
@@ -394,7 +424,7 @@ fn launcher_asked_to_ask_starts_no_single_entry_by_itself() {
 
 #[test]
 fn launcher_lets_the_user_choose_between_several_entries() {
-    let s = update(App::Launcher, State::start(), dfu(ipad6())).0;
+    let s = launching();
     let entries = vec![entry("a", "Omarchy A", false), entry("b", "Omarchy A", true), entry("c", "Minimal Linux", false)];
     let (s, _) = update(App::Launcher, s, Event::EntriesListed(entries));
     assert!(matches!(s, State::ChooseSystem { selected: 1, .. }), "the default is preselected");
@@ -408,9 +438,9 @@ fn launcher_keeps_looking_while_the_chain_drops_the_device_off_usb() {
     // As on the iPad 6 (2026-11-23): palera1n's exploit re-enumerates the
     // device a few times while the chain runs. The screen stays, and the
     // chain is not started again.
-    let s = update(App::Launcher, State::start(), dfu(ipad6())).0;
+    let s = launching();
     let (s, e) = run(App::Launcher, s, vec![Event::Detached { id: ipad6().id }, dfu(ipad6()), Event::Detached { id: ipad6().id }, dfu(ipad6())]);
-    assert!(matches!(s, State::Found { .. }), "still looking, not back to Start your device");
+    assert!(matches!(s, State::Launching { .. }), "still looking, not back to Start your device");
     assert!(!e.iter().any(|e| matches!(e, Effect::ListEntries(_))), "the chain runs once");
     let (s, _) = update(App::Launcher, s, Event::EntriesListed(vec![entry("a", "Omarchy A", true)]));
     assert!(matches!(s, State::Starting { .. }));
@@ -418,7 +448,7 @@ fn launcher_keeps_looking_while_the_chain_drops_the_device_off_usb() {
 
 #[test]
 fn launcher_with_nothing_installed_says_so() {
-    let s = update(App::Launcher, State::start(), dfu(ipad6())).0;
+    let s = launching();
     let (s, _) = update(App::Launcher, s, Event::EntriesListed(vec![]));
     assert_eq!(kind(App::Launcher, &s), ScreenKind::NothingInstalled);
 }
@@ -933,11 +963,22 @@ fn the_launcher_holds_its_start_too_and_lets_go_once_the_system_starts() {
     let (flow, _) = step(app, Flow::new(), Event::Others(vec![iphone(), iphone()]));
     assert!(flow.refusing());
     assert_eq!(view_flow(app, &flow).1, ScreenKind::SeveralInDfu);
-    // The iPad in DFU: m1n1 isn't started yet.
-    let (flow, effects) = step(app, flow, dfu(ipad6()));
-    assert!(!effects.iter().any(|e| matches!(e, Effect::ListEntries(_))), "{effects:?}");
-    // Choosing waits as well.
+    // The iPad in DFU: Start doesn't go through, also not afterwards by itself.
+    let (flow, _) = step(app, flow, dfu(ipad6()));
+    let (flow, effects) = step(app, flow, Event::Continue);
+    assert!(effects.is_empty() && matches!(flow.state, State::Found { .. }), "{effects:?}");
     let (flow, effects) = step(app, flow, Event::Others(Vec::new()));
+    assert!(!effects.iter().any(|e| matches!(e, Effect::ListEntries(_))), "{effects:?}");
+    // Starting again after a failure (no press) is held until they're gone.
+    let mut again = flow.clone();
+    again.state = State::DfuAgain { device: ipad6(), why: Again::Retry, seen: None };
+    let (again, _) = step(app, again, Event::Others(vec![iphone(), iphone()]));
+    let (again, effects) = step(app, again, dfu(ipad6()));
+    assert!(!effects.iter().any(|e| matches!(e, Effect::ListEntries(_))), "{effects:?}");
+    let (_, effects) = step(app, again, Event::Others(Vec::new()));
+    assert!(effects.iter().any(|e| matches!(e, Effect::ListEntries(_))), "{effects:?}");
+    // Start; then choosing waits as well.
+    let (flow, effects) = step(app, flow, Event::Continue);
     assert!(effects.iter().any(|e| matches!(e, Effect::ListEntries(_))), "{effects:?}");
     let entries = vec![
         Entry { id: "a".into(), title: "A".into(), kernel: "6.1".into(), default: true },
@@ -958,7 +999,8 @@ fn the_launcher_holds_its_start_too_and_lets_go_once_the_system_starts() {
 #[test]
 fn the_launchers_failed_start_is_the_installers() {
     let app = App::Launcher;
-    let (flow, effects) = step(app, Flow::new(), dfu(ipad6()));
+    let (flow, _) = step(app, Flow::new(), dfu(ipad6()));
+    let (flow, effects) = step(app, flow, Event::Continue);
     assert!(matches!(effects[..], [Effect::ListEntries(_)]), "{effects:?}");
     let (flow, _) = step(app, flow, Event::StartAttempt(2));
     let (flow, _) = step(app, flow, Event::ChainFailed("palera1n: Unable to perform checkm8".into()));
@@ -967,7 +1009,7 @@ fn the_launchers_failed_start_is_the_installers() {
     assert_eq!(flow.start_problem.as_deref(), Some("palera1n: Unable to perform checkm8"));
     // Back in DFU mode: the launcher's route again (m1n1, the systems).
     let (flow, effects) = step(app, flow, dfu(ipad6()));
-    assert!(matches!(flow.state, State::Found { .. }) && matches!(effects[..], [Effect::ListEntries(_)]), "{effects:?}");
+    assert!(matches!(flow.state, State::Launching { .. }) && matches!(effects[..], [Effect::ListEntries(_)]), "{effects:?}");
     // m1n1 failing to start the entry goes the same way.
     let mut flow = flow;
     flow.state = State::Starting { device: ipad6(), title: "A".into() };

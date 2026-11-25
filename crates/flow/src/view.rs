@@ -72,6 +72,7 @@ pub enum ScreenKind {
     Installing,
     InstallFailed,
     Starting,
+    Launching,
     ChooseSystem,
     NothingInstalled,
 }
@@ -119,8 +120,6 @@ pub fn view(app: App, state: &State) -> (DeviceView, ScreenKind) {
         S::SeveralInDfu { .. } => (off(Model::IpadHome), ScreenKind::SeveralInDfu),
         S::Unsupported { .. } => (DeviceView { glyph: G::Sad, ..off(m) }, ScreenKind::Unsupported),
         // Experimental support is a badge, not a different drawing.
-        // The launcher starts it right away: a spinner, not a check.
-        S::Found { .. } if app == App::Launcher => (lit(m, G::Spinner), ScreenKind::Found),
         S::Found { confirm_skip, .. } => {
             let kind = if *confirm_skip { ScreenKind::SkipConfirmation } else { ScreenKind::Found };
             (lit(m, G::Check), kind)
@@ -170,6 +169,7 @@ pub fn view(app: App, state: &State) -> (DeviceView, ScreenKind) {
         // The launcher is neutral: no distro's wordmark, a check.
         S::Starting { .. } if app == App::Launcher => (lit(m, G::Check), ScreenKind::Starting),
         S::Starting { .. } => (lit(m, G::Wordmark), ScreenKind::Starting),
+        S::Launching { .. } => (lit(m, G::Spinner), ScreenKind::Launching),
         S::ChooseSystem { .. } => (lit(m, G::None), ScreenKind::ChooseSystem),
         S::NothingInstalled { .. } => (off(m), ScreenKind::NothingInstalled),
     }

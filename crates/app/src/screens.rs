@@ -560,6 +560,11 @@ pub fn title(text: impl Into<SharedString>) -> Div {
     div().text_size(px(24.)).font_weight(FontWeight::SEMIBOLD).text_color(c(TITLE)).child(text.into())
 }
 
+/// The device's model on its own line (the launcher's screens).
+fn model_name(device: &Device) -> Div {
+    div().text_size(px(15.)).text_color(c(SUBTITLE)).child(device.name.clone())
+}
+
 fn model_line(device: &Device, label: &'static str, color: u32) -> Div {
     div()
         .flex()
@@ -923,13 +928,22 @@ impl gpui::Render for Tip {
     }
 }
 
-/// The launcher's own screens (L.2–L.5); L.1 is the DFU screen above.
+/// The launcher's own screens (L.1a–L.5); L.1 is the DFU screen above.
 fn launcher_column(installer: &mut Installer, cx: &mut Context<Installer>) -> Option<AnyElement> {
     let state = installer.flow.state.clone();
     Some(match &state {
-        // palera1n, Pongo and m1n1 start it and read what's installed (draft
-        // copy, as the installer's 2.1a): the replug dialog can come up here.
-        State::Found { device, .. } => column()
+        // L.1a: nothing is sent to the device before Start.
+        State::Found { device, .. } => {
+            let name = kind(device).0;
+            column()
+                .child(div().flex().flex_col().gap(px(12.)).w_full().child(title(format!("Found your {name}"))).child(model_name(device)))
+                .child(div().w(px(342.)).child(paragraph(format!("Orchard starts the system installed on your {name}. If there is more than one, you choose."))))
+                .child(div().flex().flex_row().child(primary("start", "Start", 18., 9., Event::Continue, cx)))
+                .into_any_element()
+        }
+        // L.1b: palera1n, Pongo and m1n1 start it and read what's installed
+        // (as the installer's 2.1a): the replug dialog can come up here.
+        State::Launching { device } => column()
             .child(title(format!("Starting your {}", kind(device).0)))
             .children(crate::install_screens::attempt_line(installer.flow.start_attempt))
             .child(crate::details::details(installer, cx))
@@ -1006,8 +1020,8 @@ fn choose_system(device: &Device, entries: &[orchard_flow::Entry], selected: usi
         list = list.child(row);
     }
     column()
-        .child(div().flex().flex_col().gap(px(12.)).w_full().child(title(format!("Found your {}", kind(device).0))).child(model_line(device, "supported", BLUE)))
-        .child(div().w_full().flex().flex_col().gap(px(10.)).child(div().text_size(px(15.)).font_weight(FontWeight::SEMIBOLD).text_color(c(TITLE)).child("Choose a system")).child(list))
+        .child(div().flex().flex_col().gap(px(12.)).w_full().child(title("Choose a system")).child(model_name(device)))
+        .child(list)
         .child(div().flex().flex_row().child(primary("start", "Start", 18., 9., Event::Continue, cx)))
 }
 
