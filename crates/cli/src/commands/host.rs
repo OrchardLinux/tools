@@ -14,6 +14,8 @@ use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use super::term::{s, Span, BLUE, FG, GREEN, MUTED, RED, SUB, TITLE, YELLOW};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum State {
@@ -47,33 +49,120 @@ pub struct Doctor {
     done: Vec<String>,
 }
 
+/// How a check reads to a person: under which purpose it stands, what it
+/// is called, and what it does there.
+fn words(name: &str) -> (&'static str, &'static str, &'static str) {
+    match name {
+        "usb" => ("To work on a device", "USB access", "lets your account open the device"),
+        "python" => ("To build", "Python", "runs orchard's recipes"),
+        "git" => ("To build", "git", "fetches the kernel's source"),
+        "podman" => ("To build", "Podman", "the recipes compile in its containers"),
+        "disk" => ("To build", "Free space", "a build needs room to finish"),
+        "ssh" => ("To sign in over SSH", "ssh-keygen", "makes this computer's key"),
+        _ => ("Other", "", ""),
+    }
+}
+
+/// The purposes, in the order they are shown.
+const PURPOSES: [&str; 3] = ["To work on a device", "To build", "To sign in over SSH"];
+
+impl Check {
+    /// What was found, in a word or two, for a check that is ready.
+    fn found(&self) -> String {
+        match self.name {
+            "python" => Path::new(&self.detail).file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
+            "disk" => self.detail.split(" free").next().unwrap_or("").to_owned(),
+            _ => String::new(),
+        }
+    }
+}
+
+impl Doctor {
+    /// The report in the installer's look: a mark and a line per check under
+    /// what it is for, and under a check that is not ready what is wrong and
+    /// the command that gets it.
+    fn lines(&self) -> Vec<Vec<Span>> {
+        let mut lines: Vec<Vec<Span>> = Vec::new();
+        for line in &self.done {
+            lines.push(vec![s("✓ ", GREEN), s(line.clone(), FG)]);
+        }
+        if !self.done.is_empty() {
+            lines.push(Vec::new());
+        }
+        lines.push(vec![s("This computer", TITLE)]);
+        for purpose in PURPOSES {
+            let of: Vec<&Check> = self.checks.iter().filter(|c| words(c.name).0 == purpose).collect();
+            if of.is_empty() {
+                continue;
+            }
+            lines.push(Vec::new());
+            lines.push(vec![s(format!("  {purpose}"), SUB)]);
+            for check in of {
+                let (_, label, role) = words(check.name);
+                let (mark, color) = match check.state {
+                    State::Ready => ("✓", GREEN),
+                    State::Missing => ("!", YELLOW),
+                    State::Yours => ("✕", RED),
+                };
+                let name_color = if check.state == State::Ready { FG } else { color };
+                let mut line = vec![s(format!("  {mark} "), color), s(format!("{label:<12}"), name_color), s(format!("{role:<40}"), MUTED)];
+                match check.state {
+                    State::Ready => line.push(s(check.found(), SUB)),
+                    _ => line.push(s(check.detail.clone(), color)),
+                }
+                lines.push(line);
+                if let Some(setup) = &check.setup {
+                    // "orchard2 setup NAME  (what it runs)".
+                    let (command, runs) = setup.split_once("  (").unwrap_or((setup, ""));
+                    lines.push(vec![s(format!("    {:<12}", ""), MUTED), s(format!("{command:<40}"), BLUE), s(runs.trim_end_matches(')').to_owned(), MUTED)]);
+                }
+            }
+        }
+        lines.push(Vec::new());
+        let open = |state| self.checks.iter().filter(|c| c.state == state).count();
+        let (missing, yours) = (open(State::Missing), open(State::Yours));
+        lines.push(match (missing, yours) {
+            (0, 0) => vec![s("✓ ", GREEN), s("Everything is there", FG)],
+            (missing, 0) => vec![s("! ", YELLOW), s(format!("{missing} missing"), YELLOW), s("  the blue command gets it", MUTED)],
+            (0, yours) => vec![s("✕ ", RED), s(format!("{yours} for you to do"), RED)],
+            (missing, yours) => vec![
+                s("! ", YELLOW),
+                s(format!("{missing} missing"), YELLOW),
+                s(format!(" · {yours} for you to do"), RED),
+                s("  the blue command gets what is missing", MUTED),
+            ],
+        });
+        lines
+    }
+}
+
+/// Lines as text, in the terminal's colours when it is one.
+fn paint(lines: &[Vec<Span>], color: bool) -> String {
+    let mut text = String::new();
+    for line in lines {
+        let mut row = String::new();
+        for (part, rgb) in line {
+            match color && !part.is_empty() {
+                true => {
+                    let _ = write!(row, "\x1b[38;2;{};{};{}m{part}", rgb >> 16, (rgb >> 8) & 0xff, rgb & 0xff);
+                }
+                false => row.push_str(part),
+            }
+        }
+        if color && !line.is_empty() {
+            row.push_str("\x1b[0m");
+        }
+        text.push_str(row.trim_end());
+        text.push('\n');
+    }
+    text
+}
+
 impl Report for Doctor {
     fn human(&self) -> Vec<u8> {
-        let mut text = String::new();
-        for line in &self.done {
-            let _ = writeln!(text, "{line}");
-        }
-        for check in &self.checks {
-            let state = match check.state {
-                State::Ready => "ready",
-                State::Missing => "missing",
-                State::Yours => "yours",
-            };
-            let _ = writeln!(text, "{state:<8} {:<8} {}", check.name, check.detail);
-            let _ = writeln!(text, "{:<17} for {}", "", check.needed_for);
-            if let Some(setup) = &check.setup {
-                let _ = writeln!(text, "{:<17} get it: {setup}", "");
-            }
-        }
-        let _ = writeln!(
-            text,
-            "{}",
-            match self.ready {
-                true => "Nothing is missing.",
-                false => "\"missing\": orchard2 setup NAME gets it. \"yours\": only you can.",
-            }
-        );
-        text.into_bytes()
+        use std::io::IsTerminal;
+        let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
+        paint(&self.lines(), color).into_bytes()
     }
 }
 
@@ -327,7 +416,9 @@ mod tests {
             assert!(!check.needed_for.is_empty() && !check.detail.is_empty(), "{}", check.name);
             assert_eq!(check.state == State::Missing, check.setup.is_some(), "{}", check.name);
         }
-        let text = String::from_utf8(Doctor { ready: false, checks: found, done: vec!["ran: x".into()] }.human()).unwrap();
-        assert!(text.starts_with("ran: x\n") && text.contains(" for build, inputs: "), "{text}");
+        let text = paint(&Doctor { ready: false, checks: found, done: vec!["ran: x".into()] }.lines(), false);
+        assert!(text.starts_with("✓ ran: x\n\nThis computer\n"), "{text}");
+        assert!(text.contains("\n  To build\n") && text.contains("Python      runs orchard's recipes"), "{text}");
+        assert!(!text.contains('\x1b'), "{text}");
     }
 }

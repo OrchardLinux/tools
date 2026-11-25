@@ -10,9 +10,28 @@ the computer is little, and `doctor` lists it with what each is for.
 orchard2 doctor
 ```
 
-changes nothing. For each thing it says `ready`, `missing` (orchard2 can
-get it) or `yours` (only you can), what was found, which commands need it
-and for what, and for a missing one the command that gets it.
+changes nothing. It lists what orchard2 takes from the computer under what
+it is for, each with what it does there:
+
+```
+This computer
+
+  To build
+  ✓ Python      runs orchard's recipes                  python3.14
+  ✓ git         fetches the kernel's source
+  ! Podman      the recipes compile in its containers   its VM is stopped
+                orchard2 setup podman                   podman machine start
+  ✓ Free space  a build needs room to finish            32 GB
+
+  To sign in over SSH
+  ✓ ssh-keygen  makes this computer's key
+
+! 1 missing  the blue command gets it
+```
+
+`✓` is there. `!` is missing and orchard2 can get it: the line below is the
+command, and what it runs. `✕` is for you to do, and says what. In `--json`
+these are the states `ready`, `missing` and `yours`.
 
 | Name | Is | Needed for |
 | --- | --- | --- |
