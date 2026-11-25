@@ -46,7 +46,7 @@ m1n1's proxy. Numbers are decimal or `0x` hex.
 | `m1n1 call OPERATION [ARGS…]` | runs one proxy operation with up to six arguments and prints its result |
 | `m1n1 read ADDRESS SIZE` | writes device memory to stdout (`--json`: address, size, SHA-256) |
 | `m1n1 write ADDRESS FILE` | writes a file into device memory |
-| `m1n1 pack FILE --kernel K --dtb D… [--initramfs I] [--bootargs "…"] [--logo L] -o OUT` | packs m1n1 and what it is to boot into one image; needs no device |
+| `m1n1 pack FILE --kernel K --dtb D… [--initramfs I] [--bootargs "…"] [--logo L] -o OUT` (`--out`) | packs m1n1 and what it is to boot into one image; needs no device |
 
 A command that the device cannot confirm (it is gone once the code runs)
 reports `unconfirmed` instead of `acknowledged`.

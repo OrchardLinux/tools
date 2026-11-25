@@ -164,3 +164,9 @@ is an older, single-purpose command: it boots Linux in RAM on a J71b (iPad
 6) through gaster and a patched iBoot, then uploads the kernel through
 m1n1's proxy. It knows no other board or chain, has no `--plan`, and needs
 gaster. `load` is the general way.
+
+`--bootargs "…"` is the kernel's command line, `--firmware` adds the
+board's peripheral firmware to the initramfs, `--m1n1 FILE` uses a local
+m1n1 instead of the published one, `--keys FILE` and `--im4m FILE` replace
+the firmware keys and the manifest, and `--timeout SECONDS` (300) bounds
+the device work.
