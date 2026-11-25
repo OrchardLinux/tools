@@ -3,7 +3,7 @@
 //! Each is taken finished where orchard publishes it for this state, and
 //! otherwise built by its recipe and kept in the cache.
 use crate::platform::descriptor;
-use crate::{invalid, json, kernel, published, recipes, Build, RELEASES};
+use crate::{copy_file, invalid, json, kernel, published, recipes, Build, RELEASES};
 use orchard_cache::component::Key;
 use orchard_cache::{Code, Context, Error, Result};
 use std::ffi::OsStr;
@@ -232,15 +232,19 @@ pub fn build_m1n1(build: &Build) -> Result<PathBuf> {
         &mut |stage| {
             // One tree per patch set: a changed series starts a fresh tree
             // instead of resuming one the recipe would refuse. Crates are shared.
-            let work = build.cache.recipe_work("m1n1", &key_of(build, &inputs)?)?;
+            let key = key_of(build, &inputs)?;
+            let work = build.cache.recipe_work("m1n1", &key)?;
             let (output, cargo) = (
                 stage.join("m1n1.bin"),
                 build.cache.work().join(".cargo-m1n1"),
             );
-            let (builder, patch) = (
-                root.join("boot/m1n1/build"),
-                root.join("boot/quiet/m1n1.patch"),
-            );
+            let builder = root.join("boot/m1n1/build");
+            // The recipe records this patch by its path and resumes only with
+            // the same one: every checkout with these inputs uses one copy.
+            let patches = build.cache.work().join(".m1n1-patches").join(&key);
+            std::fs::create_dir_all(&patches).context(patches.display())?;
+            let patch = patches.join("m1n1.patch");
+            copy_file(&root.join("boot/quiet/m1n1.patch"), &patch)?;
             // Quiet, as CI builds it: black, no m1n1 logo, until m1n1 paints the system's splash.
             let mut argv: Vec<&OsStr> = vec![
                 builder.as_os_str(),
@@ -256,10 +260,12 @@ pub fn build_m1n1(build: &Build) -> Result<PathBuf> {
                 "--extra-cflags".as_ref(),
                 "-DQUIET_BOOT".as_ref(),
             ];
-            if work.join("applied-patches").exists() {
+            let applied = std::fs::read_to_string(work.join("applied-patches"));
+            if applied.is_ok_and(|text| text.contains(&*patch.to_string_lossy())) {
                 argv.push("--resume".as_ref());
             } else if work.exists() {
-                // An earlier attempt stopped before its patches were applied.
+                // An earlier attempt stopped before its patches were applied,
+                // or named the patch in a checkout.
                 std::fs::remove_dir_all(&work).context(work.display())?;
             }
             build.command(&argv, &[])
