@@ -14,7 +14,9 @@ pub const COMMANDS: &str = "commands.json";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
-    Run(Vec<String>),
+    /// A command, and the variables the build set for it or that it
+    /// reads from the build's own environment.
+    Run(Vec<String>, Vec<(String, String)>),
     Note(String),
 }
 
@@ -34,8 +36,8 @@ impl Explain {
         self.build.borrow_mut().push(step);
     }
 
-    pub fn command(&self, argv: &[String]) {
-        self.add(Step::Run(argv.to_vec()));
+    pub fn command(&self, argv: &[String], env: &[(String, String)]) {
+        self.add(Step::Run(argv.to_vec(), env.to_vec()));
     }
 
     pub fn note(&self, text: impl Into<String>) {
@@ -103,23 +105,40 @@ impl Explain {
 
 fn rewrite(step: &Step, old: &str, new: &str) -> Step {
     match step {
-        Step::Run(argv) => Step::Run(argv.iter().map(|a| a.replace(old, new)).collect()),
+        Step::Run(argv, env) => Step::Run(
+            argv.iter().map(|a| a.replace(old, new)).collect(),
+            env.iter()
+                .map(|(name, value)| (name.clone(), value.replace(old, new)))
+                .collect(),
+        ),
         Step::Note(text) => Step::Note(text.replace(old, new)),
     }
 }
 
 fn to_json(step: &Step) -> Value {
     match step {
-        Step::Run(argv) => json!({ "run": argv }),
+        Step::Run(argv, env) if env.is_empty() => json!({ "run": argv }),
+        Step::Run(argv, env) => {
+            let env: serde_json::Map<String, Value> = env
+                .iter()
+                .map(|(name, value)| (name.clone(), json!(value)))
+                .collect();
+            json!({ "run": argv, "env": env })
+        }
         Step::Note(text) => json!({ "note": text }),
     }
 }
 
 fn from_json(value: &Value) -> Option<Step> {
     if let Some(argv) = value.get("run").and_then(Value::as_array) {
+        let env = value.get("env").and_then(Value::as_object);
         return Some(Step::Run(
             argv.iter()
                 .filter_map(|a| a.as_str().map(str::to_owned))
+                .collect(),
+            env.into_iter()
+                .flatten()
+                .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_owned())))
                 .collect(),
         ));
     }
@@ -138,7 +157,9 @@ pub fn script(steps: &[Step], title: &str, python: &Path) -> String {
         format!("# {title}"),
         "# What the build ran, in order (orchard build writes this; --explain prints it)."
             .to_owned(),
-        "# Every line runs by path, without the orchard tool.".to_owned(),
+        "# Every line runs by path, without the orchard tool, with the variables the build"
+            .to_owned(),
+        "# gave it; a line that fails ends the script.".to_owned(),
         "# Paths are as they were: temporary directories are gone after the build.".to_owned(),
         format!("PYTHON=${{PYTHON:-python3}}  # the build ran {python}"),
         "set -eu".to_owned(),
@@ -147,17 +168,16 @@ pub fn script(steps: &[Step], title: &str, python: &Path) -> String {
     for step in steps {
         match step {
             Step::Note(text) => lines.extend(text.lines().map(|line| format!("# {line}"))),
-            Step::Run(argv) => {
-                let words: Vec<String> = argv
+            Step::Run(argv, env) => {
+                let word = |a: &String| match *a == python {
+                    true => "\"$PYTHON\"".to_owned(),
+                    false => quote(a),
+                };
+                let mut words: Vec<String> = env
                     .iter()
-                    .map(|a| {
-                        if *a == python {
-                            "\"$PYTHON\"".to_owned()
-                        } else {
-                            quote(a)
-                        }
-                    })
+                    .map(|(name, value)| format!("{name}={}", word(value)))
                     .collect();
+                words.extend(argv.iter().map(word));
                 lines.push(words.join(" "));
             }
         }
@@ -191,7 +211,13 @@ mod tests {
         first.note("before");
         first
             .producing(&stage, || {
-                first.command(&run(&["make", "-o", &stage.join("out").to_string_lossy()]));
+                first.command(
+                    &run(&["make", "-o", &stage.join("out").to_string_lossy()]),
+                    &[(
+                        "WORK".to_owned(),
+                        stage.join("w").to_string_lossy().into_owned(),
+                    )],
+                );
                 Ok(())
             })
             .unwrap();
@@ -211,7 +237,13 @@ mod tests {
         assert!(matches!(&steps[0], Step::Note(n) if n.contains("reused from the cache")));
         assert_eq!(
             steps[1],
-            Step::Run(run(&["make", "-o", &entry.join("out").to_string_lossy()]))
+            Step::Run(
+                run(&["make", "-o", &entry.join("out").to_string_lossy()]),
+                vec![(
+                    "WORK".to_owned(),
+                    entry.join("w").to_string_lossy().into_owned()
+                )]
+            )
         );
     }
 
@@ -220,7 +252,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let explain = Explain::default();
         let failed: Result<()> = explain.producing(dir.path(), || {
-            explain.command(&run(&["false"]));
+            explain.command(&run(&["false"]), &[]);
             Err(orchard_cache::Error::new(
                 orchard_cache::Code::Build,
                 "failed",
@@ -233,12 +265,23 @@ mod tests {
     fn the_script_names_python_and_quotes_words() {
         let steps = [
             Step::Note("two\nlines".into()),
-            Step::Run(run(&["/usr/bin/python3.14", "a b", "it's", "--x=1"])),
+            Step::Run(
+                run(&["/usr/bin/python3.14", "a b", "it's", "--x=1"]),
+                vec![
+                    (
+                        "ORCHARD_PYTHON".to_owned(),
+                        "/usr/bin/python3.14".to_owned(),
+                    ),
+                    ("WORK".to_owned(), "/w d".to_owned()),
+                ],
+            ),
         ];
         let text = script(&steps, "orchard build x", Path::new("/usr/bin/python3.14"));
         assert!(text.contains("# two\n# lines\n"), "{text}");
         assert!(
-            text.ends_with("\"$PYTHON\" 'a b' 'it'\"'\"'s' --x=1\n"),
+            text.ends_with(
+                "ORCHARD_PYTHON=\"$PYTHON\" WORK='/w d' \"$PYTHON\" 'a b' 'it'\"'\"'s' --x=1\n"
+            ),
             "{text}"
         );
     }

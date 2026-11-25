@@ -189,9 +189,11 @@ pub fn build(build: &Build, root: &Path, distro: &Release, request: &Request) ->
             words.join(" ")
         ),
     )?;
+    let running = crate::Running::new();
     let status = crate::to_stderr(&mut command)
         .status()
         .map_err(|e| Error::new(Code::NotFound, e.to_string()).context(&argv[0]))?;
+    drop(running);
     crate::interrupted()?;
     let shown_entry = entry.strip_prefix(root).unwrap_or(entry).display();
     if !status.success() {

@@ -6,6 +6,7 @@
 //! orchard data directory. This crate decides what is needed, computes the
 //! keys, prepares kernel sources, runs the producers and records what ran.
 pub mod components;
+pub mod contract;
 pub mod distro;
 pub mod explain;
 pub mod inputs;
@@ -26,21 +27,43 @@ use orchard_cache::store::Store;
 use orchard_cache::{Code, Context, Error, Result};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 static INTERRUPTS: AtomicUsize = AtomicUsize::new(0);
+/// Commands of the build that run now.
+static RUNNING: AtomicUsize = AtomicUsize::new(0);
 
 extern "C" fn on_interrupt(_: libc::c_int) {
-    if INTERRUPTS.fetch_add(1, Ordering::SeqCst) >= 1 {
+    let waits = RUNNING.load(Ordering::SeqCst) > 0;
+    if INTERRUPTS.fetch_add(1, Ordering::SeqCst) >= 1 || !waits {
         // SAFETY: _exit is async-signal-safe.
         unsafe { libc::_exit(130) };
     }
 }
 
+/// While it lives, Ctrl-C is the running command's to act on first.
+pub(crate) struct Running;
+
+impl Running {
+    pub(crate) fn new() -> Running {
+        RUNNING.fetch_add(1, Ordering::SeqCst);
+        Running
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        RUNNING.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 /// The first Ctrl-C ends the running producer, which the terminal signals
 /// too, and the build returns and removes what it staged; the second ends
-/// the process.
+/// the process. With no command running (a download, a copy, waiting for
+/// another build) the first ends the process: nothing would act on it
+/// otherwise, and what the build staged goes with the next build.
 pub fn catch_interrupts() {
     // SAFETY: installs a handler that only uses async-signal-safe calls.
     unsafe {
@@ -70,6 +93,8 @@ pub struct Build<'a> {
     pub store: &'a Store,
     /// The Python the producers run with.
     pub python: PathBuf,
+    /// What the recipes state about themselves.
+    pub contract: contract::Contract,
     /// Tells the person what the build does now.
     pub say: &'a dyn Fn(&str),
     pub explain: Explain,
@@ -86,10 +111,11 @@ impl<'a> Build<'a> {
         }
         let cache_root = store.dir().canonicalize().context(store.dir().display())?;
         Ok(Build {
-            root,
             cache: Components::open(&cache_root)?,
             store,
             python: python()?,
+            contract: contract::read(&root)?,
+            root,
             say,
             explain: Explain::default(),
         })
@@ -99,23 +125,9 @@ impl<'a> Build<'a> {
         (self.say)(text.as_ref());
     }
 
-    /// A producer of orchard's, by the name of its file. Producers moved out
-    /// of orchard's Python package into `producers/`; data from before that
-    /// has them at their old place.
+    /// A producer of orchard's, by the name of its file.
     pub fn producer(&self, name: &str) -> PathBuf {
-        self.root.join(self.producer_path(name))
-    }
-
-    /// The same, relative to the data directory, as key inputs name it.
-    pub fn producer_path(&self, name: &str) -> String {
-        let new = format!("producers/{name}");
-        if self.root.join(&new).is_file() {
-            return new;
-        }
-        match name {
-            "buildenv.py" => "src/orchard/buildenv.py".into(),
-            _ => format!("src/orchard/image/{name}"),
-        }
+        self.root.join(contract::producer_path(&self.root, name))
     }
 
     /// Runs a producer and records it. Its output goes to the terminal as
@@ -128,20 +140,27 @@ impl<'a> Build<'a> {
             .collect();
         interrupted()?;
         self.say(format!("+ {}", shown.join(" ")));
-        self.explain.command(&shown);
-        let mut command = Command::new(&argv[0]);
         // The recipes keep their compiler cache and kernel trees in the
         // cache they are told about.
-        command
-            .args(&argv[1..])
-            .env("ORCHARD_PYTHON", &self.python)
-            .env("ORCHARD_CACHE_DIR", self.cache.root());
-        for (name, value) in env {
+        let mut given: Vec<(&str, &OsStr)> = vec![
+            ("ORCHARD_PYTHON", self.python.as_os_str()),
+            ("ORCHARD_CACHE_DIR", self.cache.root().as_os_str()),
+        ];
+        given.extend_from_slice(env);
+        let mut command = Command::new(&argv[0]);
+        command.args(&argv[1..]);
+        let mut recorded = inherited();
+        for (name, value) in given {
             command.env(name, value);
+            recorded.retain(|(known, _)| known != name);
+            recorded.push((name.to_owned(), value.to_string_lossy().into_owned()));
         }
+        self.explain.command(&shown, &recorded);
+        let running = Running::new();
         let status = to_stderr(&mut command)
             .status()
             .map_err(|e| Error::new(Code::NotFound, e.to_string()).context(&shown[0]))?;
+        drop(running);
         interrupted()?;
         if !status.success() {
             let error = Error::new(Code::Build, format!("{} failed ({status})", shown[0]));
@@ -201,25 +220,66 @@ fn container_hint() -> Option<&'static str> {
     if std::env::var("ORCHARD_BUILD_NATIVE").is_ok_and(|v| v == "1") {
         return None;
     }
-    let podman = |args: &[&str]| {
-        Command::new("podman")
-            .args(args)
-            .stdin(std::process::Stdio::null())
-            .output()
-    };
-    let Ok(version) = podman(&["--version"]) else {
-        return Some("the recipes build in Podman containers, and podman is not installed");
+    let podman = |args: &[&str]| within(Command::new("podman").args(args), PODMAN_ANSWERS);
+    let version = match podman(&["--version"]) {
+        Ok(Some(version)) => version,
+        Ok(None) => return Some(NO_ANSWER),
+        Err(_) => {
+            return Some("the recipes build in Podman containers, and podman is not installed")
+        }
     };
     if !version.status.success() {
         return Some("the recipes build in Podman containers, and podman does not run");
     }
     if cfg!(target_os = "macos") {
-        let state = podman(&["machine", "inspect", "--format", "{{.State}}"]).ok()?;
+        let Some(state) = podman(&["machine", "inspect", "--format", "{{.State}}"]).ok()? else {
+            return Some(NO_ANSWER);
+        };
         if String::from_utf8_lossy(&state.stdout).trim() != "running" {
             return Some("the Podman VM is not running: podman machine start");
         }
     }
     None
+}
+
+/// How long Podman gets to say what state it is in.
+pub(crate) const PODMAN_ANSWERS: Duration = Duration::from_secs(20);
+const NO_ANSWER: &str = "podman does not answer; its VM may hang: podman machine stop, then start";
+
+/// Runs a command that is asked something, for at most `limit`: its output,
+/// or `None` when it was ended for not finishing. For commands that print
+/// little; a build's producers run as long as they need.
+pub(crate) fn within(command: &mut Command, limit: Duration) -> std::io::Result<Option<Output>> {
+    use std::process::Stdio;
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let end = Instant::now() + limit;
+    while child.try_wait()?.is_none() {
+        if Instant::now() >= end {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(None);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    child.wait_with_output().map(Some)
+}
+
+/// The variables of this process that producers read and that change what
+/// they do, as a build's record names them.
+fn inherited() -> Vec<(String, String)> {
+    let mut found: Vec<(String, String)> = std::env::vars_os()
+        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
+        .filter(|(name, _)| {
+            name.starts_with("ORCHARD_BUILD_")
+                || ["ORCHARD_KERNEL_JOBS", "ORCHARD_CCACHE"].contains(&name.as_str())
+        })
+        .collect();
+    found.sort();
+    found
 }
 
 /// The Python that runs the producers: `ORCHARD_PYTHON`, else the newest
@@ -273,10 +333,12 @@ pub fn python() -> Result<PathBuf> {
 /// Runs a command for its output; the error carries what it wrote to stderr.
 pub(crate) fn output(command: &mut Command) -> Result<Vec<u8>> {
     let program = command.get_program().to_string_lossy().into_owned();
+    let running = Running::new();
     let output = command
         .stdin(std::process::Stdio::null())
         .output()
         .map_err(|e| Error::new(Code::NotFound, e.to_string()).context(&program))?;
+    drop(running);
     interrupted()?;
     if !output.status.success() {
         let args: Vec<String> = command
@@ -353,4 +415,25 @@ pub(crate) fn copy_file(from: &Path, to: &Path) -> Result<()> {
     std::fs::File::open(to)
         .and_then(|f| f.set_modified(modified))
         .context(to.display())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_command_that_does_not_answer_is_ended() {
+        let started = Instant::now();
+        let hung = within(Command::new("sleep").arg("30"), Duration::from_millis(200)).unwrap();
+        assert!(hung.is_none() && started.elapsed() < Duration::from_secs(10));
+        let answered = within(Command::new("echo").arg("running"), Duration::from_secs(10))
+            .unwrap()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&answered.stdout).trim(), "running");
+        assert!(within(
+            &mut Command::new("no-such-program-here"),
+            Duration::from_secs(1)
+        )
+        .is_err());
+    }
 }

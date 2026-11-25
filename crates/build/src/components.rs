@@ -23,39 +23,6 @@ pub const TOOLS: [&str; 10] = [
     "tune2fs",
 ];
 
-/// What Pongo is built from.
-const PONGO_RECIPE: [&str; 2] = ["boot/quiet/build-pongo.py", "boot/quiet/pongo.patch"];
-
-/// What orchard's m1n1 (the quiet one every device boots) is built from.
-pub fn m1n1_inputs(build: &Build) -> Vec<String> {
-    vec![
-        "boot/m1n1".into(),
-        "boot/quiet/m1n1.patch".into(),
-        build.producer_path("buildenv.py"),
-    ]
-}
-
-/// What the static tools are built from; the rest of the recovery
-/// directory is recovery runtime and does not change them.
-pub fn tool_inputs(build: &Build) -> Vec<String> {
-    let mut inputs: Vec<String> = [
-        "build-tools",
-        "build-tools-in-container",
-        "Containerfile",
-        "Containerfile.arm",
-        "install-toolchain",
-        "upstream.lock",
-        "check-tools.py",
-        "orchard-write.c",
-        "orchard-install-usb.c",
-    ]
-    .iter()
-    .map(|name| format!("boot/initramfs/recovery/{name}"))
-    .collect();
-    inputs.push(build.producer_path("buildenv.py"));
-    inputs
-}
-
 fn key_of(build: &Build, inputs: &[String]) -> Result<String> {
     let paths: Vec<&str> = inputs.iter().map(String::as_str).collect();
     recipes::key(&build.root, &paths, recipes::IGNORE)
@@ -72,7 +39,7 @@ fn build_tools(build: &Build, architecture: &str) -> Result<PathBuf> {
             )))
         }
     };
-    let mut key = key_of(build, &tool_inputs(build))?;
+    let mut key = key_of(build, &build.contract.tools)?;
     if architecture != "arm64" {
         key = json::sha256(format!("{key}:{architecture}").as_bytes());
     }
@@ -145,7 +112,7 @@ fn released_pongo(build: &Build) -> Option<Released> {
         )
         .ok()?;
         let mut unchanged = vec!["diff", "--quiet", &tag, "--"];
-        unchanged.extend(PONGO_RECIPE);
+        unchanged.extend(build.contract.pongo.iter().map(String::as_str));
         if !crate::sources::git_ok(root, &unchanged) {
             return None;
         }
@@ -187,8 +154,7 @@ pub fn pongo(build: &Build) -> Result<PathBuf> {
         )?;
         return Ok(entry.join("pongo.bin"));
     }
-    let recipe: Vec<String> = PONGO_RECIPE.iter().map(|p| (*p).to_owned()).collect();
-    let key = key_of(build, &recipe)?;
+    let key = key_of(build, &build.contract.pongo)?;
     let entry = build.component(
         "pongo",
         &mut || Ok(Key::plain(&key)),
@@ -225,7 +191,7 @@ pub fn build_m1n1(build: &Build) -> Result<PathBuf> {
         )
         .hint("supply --loader FILE"));
     }
-    let inputs = m1n1_inputs(build);
+    let inputs = build.contract.m1n1.clone();
     let entry = build.component(
         "m1n1",
         &mut || Ok(Key::plain(key_of(build, &inputs)?)),
@@ -296,16 +262,12 @@ pub fn cascadia_profile(root: &Path, board: &str) -> Result<PathBuf> {
 pub fn cascadia_loader(build: &Build, board: &str) -> Result<PathBuf> {
     let root = &build.root;
     let profile = cascadia_profile(root, board)?;
-    let inputs = vec![
-        "boot/cascadia".to_owned(),
-        build.producer_path("cascadia.py"),
-        profile
+    let inputs = build.contract.cascadia(
+        &profile
             .strip_prefix(root)
             .unwrap_or(&profile)
-            .to_string_lossy()
-            .into_owned(),
-        build.producer_path("buildenv.py"),
-    ];
+            .to_string_lossy(),
+    );
     let entry = build.component(
         &format!("loader-cascadia-{board}"),
         &mut || Ok(Key::plain(key_of(build, &inputs)?)),
@@ -382,7 +344,11 @@ pub fn prepare(build: &Build, device: &str, given: &Given) -> Result<Components>
     let loader = match (&given.loader, cascadia) {
         (Some(loader), _) => absolute(loader)?,
         (None, true) => cascadia_loader(build, device)?,
-        (None, false) => build_m1n1(build)?,
+        // The nightly's when it was built from these recipes.
+        (None, false) => match published::m1n1(build)? {
+            Some(loader) => loader,
+            None => build_m1n1(build)?,
+        },
     };
     Ok(Components {
         kernel,

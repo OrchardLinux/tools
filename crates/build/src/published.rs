@@ -11,8 +11,7 @@
 //! asset, checks it and uses it. Any other key, no network, or
 //! `ORCHARD_PUBLISHED=off` (`ORCHARD_KERNEL=local` for kernels only): it is
 //! built here.
-use crate::components::{m1n1_inputs, tool_inputs, TOOLS};
-use crate::kernel::producer;
+use crate::components::TOOLS;
 use crate::platform::{descriptor, patches};
 use crate::{json, recipes, Build, RELEASES};
 use orchard_cache::component::Key;
@@ -54,7 +53,7 @@ pub fn source_inputs(build: &Build, platform: &str) -> Result<Value> {
         "platform": platform,
         "build": described.build_fields(false),
         "recipes": recipes::object(root, &paths)?,
-        "producer": producer(root)?,
+        "producer": build.contract.kernel_producer,
     }))
 }
 
@@ -70,7 +69,10 @@ pub fn shared_keys(build: &Build) -> Result<(String, String)> {
             &json!({ "recipes": recipes::object(&build.root, &paths)? }),
         ))
     };
-    Ok((key(m1n1_inputs(build))?, key(tool_inputs(build))?))
+    Ok((
+        key(build.contract.m1n1.clone())?,
+        key(build.contract.tools.clone())?,
+    ))
 }
 
 /// `component-keys.json` for `platforms`, as CI publishes it.

@@ -436,14 +436,16 @@ pub fn trim_vm(say: &dyn Fn(&str)) {
     if !cfg!(target_os = "macos") {
         return;
     }
-    let podman = |args: &[&str]| {
-        std::process::Command::new("podman")
-            .args(args)
-            .stdin(std::process::Stdio::null())
-            .output()
+    let podman = |args: &[&str], limit| {
+        crate::within(std::process::Command::new("podman").args(args), limit)
     };
-    let Ok(state) = podman(&["machine", "inspect", "--format", "{{.State}}"]) else {
-        return;
+    let state = match podman(
+        &["machine", "inspect", "--format", "{{.State}}"],
+        crate::PODMAN_ANSWERS,
+    ) {
+        Ok(Some(state)) => state,
+        Ok(None) => return say("Podman does not answer; nothing trimmed"),
+        Err(_) => return,
     };
     if !state.status.success() || String::from_utf8_lossy(&state.stdout).trim() != "running" {
         say("The Podman VM is not running; nothing to trim");
@@ -453,8 +455,12 @@ pub fn trim_vm(say: &dyn Fn(&str)) {
         .map(PathBuf::from)
         .unwrap_or_default();
     let before = free_space(&home).unwrap_or(0);
-    match podman(&["machine", "ssh", "sudo", "fstrim", "-a"]) {
-        Ok(trimmed) if trimmed.status.success() => {
+    // A trim of a large disk takes a while, a hung VM forever.
+    match podman(
+        &["machine", "ssh", "sudo", "fstrim", "-a"],
+        std::time::Duration::from_secs(300),
+    ) {
+        Ok(Some(trimmed)) if trimmed.status.success() => {
             let given = free_space(&home).unwrap_or(0).saturating_sub(before);
             say(&format!(
                 "Trimmed the Podman VM: {} given back to macOS",

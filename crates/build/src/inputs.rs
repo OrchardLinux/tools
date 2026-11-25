@@ -6,8 +6,9 @@
 //!
 //! With 32-bit platforms the document is that root's: `"architecture":
 //! "arm"`, ARMv7 tools, and per platform the Cascadia loader of each board
-//! that has one instead of m1n1 and Pongo. One document is one root
-//! architecture.
+//! that has one. Its m1n1 and Pongo are not for its boards: a release's
+//! installer carries them for every device, and takes them from here
+//! instead of building its own. One document is one root architecture.
 use crate::components::{self, cascadia_loader, cascadia_profile, TOOLS};
 use crate::{invalid, kernel, platform, published, snapshot, sources, Build};
 use orchard_cache::{Code, Context, Error, Result};
@@ -185,11 +186,6 @@ fn resolve_armv7(build: &Build, selected: &[String], request: &Request) -> Resul
     if let Some(stray) = request.kernels.keys().find(|name| !selected.contains(name)) {
         return Err(invalid(format!("unselected platform {stray}")));
     }
-    if request.m1n1.is_some() || request.pongo.is_some() {
-        return Err(invalid(
-            "ARMv7 platforms take no m1n1 or Pongo: their boards start the Cascadia loader",
-        ));
-    }
     let mut boards = BTreeMap::new();
     for name in selected {
         boards.insert(name.clone(), platform::boards(root, name)?);
@@ -211,6 +207,26 @@ fn resolve_armv7(build: &Build, selected: &[String], request: &Request) -> Resul
             components::tools(build, first)?
         }
     };
+    // For the release's installer, which starts every device.
+    let m1n1 = match &request.m1n1 {
+        Some(given) => given.clone(),
+        None => match published::m1n1(build)? {
+            Some(found) => found,
+            None => components::build_m1n1(build)?,
+        },
+    };
+    let pongo = match &request.pongo {
+        Some(given) => given.clone(),
+        None => components::pongo(build)?,
+    };
+    for path in [&m1n1, &pongo] {
+        if !path.is_file() {
+            return Err(Error::new(
+                Code::NotFound,
+                format!("missing component {}", path.display()),
+            ));
+        }
+    }
     let mut platforms = Map::new();
     for name in selected {
         let mut loaders = Map::new();
@@ -238,7 +254,7 @@ fn resolve_armv7(build: &Build, selected: &[String], request: &Request) -> Resul
         "orchard": revision(root),
         "architecture": "arm",
         "platforms": platforms,
-        "shared": {"tools": tool_paths(&tools)?},
+        "shared": {"m1n1": absolute(&m1n1)?, "pongo": absolute(&pongo)?, "tools": tool_paths(&tools)?},
         "produced": build.explain.to_json(),
     }))
 }

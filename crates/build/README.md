@@ -13,15 +13,21 @@ nothing itself, so a payload's format is its producer's.
   update`. The nightly's source is the state its published components were
   built from, so a build from it finds them by key.
 - **Projects**: `orchard.toml` says what a directory builds (`[payload]` or
-  `[release]`), never for which board. A developer's choices are arguments
+  `[release]`), never for which board; a directory with only the older
+  `payload.toml` or `distro.toml` is refused. A developer's choices are arguments
   or `orchard.local.toml`: device, platform, kernel tree, packages. Without
   them the board attached in DFU or Pongo mode picks the platform.
 - **Components** are directories at `components/NAME/KEY` in the cache,
   never written after they are made. The key is the SHA-256 of the inputs
   that decide the content, written as orchard's Python writes JSON:
-  orchard's CI publishes nightly components under keys computed that way,
-  and a build takes the nightly's kernel, m1n1 or tools when its own key is
-  the same (`ORCHARD_PUBLISHED=off` builds instead). Every file of an entry
+  orchard's CI publishes nightly components under keys computed that way.
+  A build takes the nightly's m1n1 and static tools when its own key is the
+  same, and `inputs` also the nightly's kernel bundle; a payload's kernel is
+  always built here, from the editable tree (`ORCHARD_PUBLISHED=off` builds
+  everything here). Which files make up a key is the recipes' to say:
+  `producers/contract.toml` in the data lists them, with the version of the
+  kernel producers, and data that states more than this tool knows is
+  refused. Every file of an entry
   is recorded with its hash and checked before each use. Identical files
   are stored once, as hard links.
 - **A miss says why**: entries keep their inputs (`key-inputs.json`), and a
@@ -53,7 +59,11 @@ nothing itself, so a payload's format is its producer's.
   never the newest of each.
 - **Output**: producers print to stderr; the result is one document on
   stdout. A failed producer gives the error code `build`, with a hint when
-  Podman is missing or its VM is not running.
+  Podman is missing, does not answer or its VM is not running. The record
+  of what ran names each command with the variables the build gave it.
+- **Ctrl-C** ends the running producer, and the build removes what it
+  staged; a second one, or one while no producer runs, ends the build at
+  once, and the next build removes what was left.
 - **Python**: the producers need 3.11: `ORCHARD_PYTHON`, else the newest
   `python3.N` on PATH.
 - **The USB session** (`transport`, on by default): a payload gets orchard's

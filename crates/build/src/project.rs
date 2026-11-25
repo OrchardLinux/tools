@@ -89,6 +89,19 @@ fn unknown(path: &Path, table: &toml::Table, allowed: &[&str]) -> Result<()> {
 pub fn read(directory: &Path) -> Result<Project> {
     let path = directory.join(NAME);
     if !path.is_file() {
+        // Settings in a file nothing reads would be lost without a word.
+        if let Some(old) = ["payload.toml", "distro.toml"]
+            .iter()
+            .find(|old| directory.join(old).is_file())
+        {
+            return Err(invalid(format!(
+                "{} is a project file from before {NAME}, which orchard2 reads instead",
+                directory.join(old).display()
+            ))
+            .hint(format!(
+                "write its settings as {NAME} (name = \"...\", then [payload] or [release]) and remove {old}"
+            )));
+        }
         return Ok(Project::Payload(Payload::default()));
     }
     let file = load(&path)?;
@@ -507,6 +520,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(NAME), text).unwrap();
         dir
+    }
+
+    #[test]
+    fn a_project_file_from_before_is_refused_not_ignored() {
+        for old in ["payload.toml", "distro.toml"] {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(dir.path().join(old), "modules = true\n").unwrap();
+            let error = read(dir.path()).unwrap_err();
+            assert_eq!(error.code, Code::InvalidInput);
+            assert!(error.message.contains(old), "{}", error.message);
+            // With the project file there, the old one is only a leftover.
+            std::fs::write(dir.path().join(NAME), "name = \"x\"\n").unwrap();
+            read(dir.path()).unwrap();
+        }
     }
 
     #[test]

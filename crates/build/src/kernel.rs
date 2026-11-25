@@ -19,38 +19,6 @@ use serde_json::json;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-/// The version of the kernel producers: `kernel/build`,
-/// `kernel/build-modules`, `kernel/stage-modules.py`, `kernel/series.py`,
-/// the build environment and the layering here. Their text is not part of
-/// the key, so a refactor rebuilds nothing; raise this when a change alters
-/// what they produce. It has to be orchard's number: CI publishes kernels
-/// under keys made with it.
-pub const KERNEL_PRODUCER: u32 = 3; // 3: strip module debug sections from staged outputs
-
-/// The producers' version in the data's recipes, which are updated apart
-/// from this tool: `KERNEL_PRODUCER` in orchard's `src/orchard/build.py`.
-/// Recipes newer than the tool are refused, since it would key and layer
-/// what they make the old way.
-pub fn producer(root: &Path) -> Result<u32> {
-    let Ok(text) = std::fs::read_to_string(root.join("src/orchard/build.py")) else {
-        return Ok(KERNEL_PRODUCER);
-    };
-    let version = text
-        .lines()
-        .find_map(|line| line.strip_prefix("KERNEL_PRODUCER = "))
-        .and_then(|rest| rest.split_whitespace().next())
-        .and_then(|number| number.parse().ok())
-        .unwrap_or(KERNEL_PRODUCER);
-    if version > KERNEL_PRODUCER {
-        return Err(Error::new(
-            Code::Unsupported,
-            format!("these recipes make kernels of version {version}; this orchard2 knows up to {KERNEL_PRODUCER}"),
-        )
-        .hint("update orchard2"));
-    }
-    Ok(version)
-}
-
 /// A developer kernel tree's build output, inside the tree.
 pub const OUT: &str = ".orchard-out";
 
@@ -649,7 +617,7 @@ pub fn base_inputs(build: &Build, device: &str, tree: Option<&Path>) -> Result<s
             "source": "kernel-tree",
             "build": described.build_fields(true),
             "recipes": recipes::object(root, &toolchain)?,
-            "producer": producer(root)?,
+            "producer": build.contract.kernel_producer,
             "tree": working_tree(tree, false)?,
             "mode": mode(),
         }),
@@ -657,7 +625,7 @@ pub fn base_inputs(build: &Build, device: &str, tree: Option<&Path>) -> Result<s
             "platform": described.platform,
             "build": described.build_fields(false),
             "recipes": recipes::object(root, &[described.config.as_str(), toolchain[0], toolchain[1]])?,
-            "producer": producer(root)?,
+            "producer": build.contract.kernel_producer,
             "tree": source_tree(build, device)?,
             "mode": mode(),
         }),
@@ -672,7 +640,7 @@ pub fn device_inputs(build: &Build, device: &str, base_key: &str) -> Result<serd
         "base": base_key,
         "platform": platform,
         "dtb": dtb,
-        "producer": producer(&build.root)?,
+        "producer": build.contract.kernel_producer,
         "recipes": recipes::object(&build.root, &[&format!("kernel/modules/{device}")])?,
     }))
 }
@@ -862,27 +830,6 @@ for source in sources:
         let text = std::fs::read_to_string(root.join("kernel/ran")).unwrap_or_default();
         std::fs::write(root.join("kernel/ran"), "").unwrap();
         text.lines().map(str::to_owned).collect()
-    }
-
-    #[test]
-    fn recipes_newer_than_the_tool_are_refused() {
-        let data = tempfile::tempdir().unwrap();
-        assert_eq!(producer(data.path()).unwrap(), KERNEL_PRODUCER);
-        let script = data.path().join("src/orchard/build.py");
-        std::fs::create_dir_all(script.parent().unwrap()).unwrap();
-        let write = |n: u32| {
-            std::fs::write(
-                &script,
-                format!("import os\nKERNEL_PRODUCER = {n}  # why\n"),
-            )
-            .unwrap()
-        };
-        write(KERNEL_PRODUCER);
-        assert_eq!(producer(data.path()).unwrap(), KERNEL_PRODUCER);
-        write(2);
-        assert_eq!(producer(data.path()).unwrap(), 2);
-        write(KERNEL_PRODUCER + 1);
-        assert_eq!(producer(data.path()).unwrap_err().code, Code::Unsupported);
     }
 
     #[test]
