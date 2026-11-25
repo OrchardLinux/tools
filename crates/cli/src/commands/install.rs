@@ -7,7 +7,7 @@
 //! on stdout; the words for people go to the terminal.
 use crate::args::Global;
 use super::term::{bar, gradient, s, Span, Term, BLUE, FG, GREEN, MUTED, RED, SUB, TITLE, TRACK, YELLOW};
-use orchard_flow::{Again, App, Event, Flow, Layout, Link, Sequence, State, MIN_OMARCHY_GB};
+use orchard_flow::{Again, App, Event, Flow, Layout, Link, Seen, Sequence, State, UsbMode, MIN_OMARCHY_GB};
 use orchard_runtime::driver::{self, Observer, Options};
 use serde_json::{json, Value};
 use std::io::BufRead;
@@ -390,12 +390,52 @@ struct Waiting {
     since: Instant,
     shown: bool,
     sequence: Option<Sequence>,
+    /// The connected device, and its mode, whose own steps are showing.
+    seen: Option<(String, UsbMode)>,
 }
 
 impl Waiting {
     fn new() -> Waiting {
-        Waiting { since: Instant::now(), shown: false, sequence: None }
+        Waiting { since: Instant::now(), shown: false, sequence: None, seen: None }
     }
+}
+
+/// A device is connected, but in another mode than DFU (the app's 1.2): its
+/// name, the mode it is in, and the steps for its own buttons.
+fn wrong_mode(out: &mut Out, seen: &Seen, wait: u64) {
+    use orchard_flow::Model;
+    let kind = match seen.device.model {
+        Model::IpadHome | Model::IpadNoHome => "iPad",
+        Model::IphoneHome | Model::IphoneNoHome => "iPhone",
+    };
+    let mode = match seen.mode {
+        UsbMode::Recovery => "recovery mode",
+        UsbMode::Normal => "normal mode",
+        UsbMode::Install => "install mode",
+        _ => "another mode",
+    };
+    // It is on the cable already: the steps start at its buttons.
+    let list = &steps(seen.device.sequence)[1..];
+    out.event(json!({"event": "needs", "action": "dfu", "device": seen.device.name, "mode": mode, "steps": list.iter().map(|(p, d)| format!("{}{}", plain(p), if d.is_empty() { String::new() } else { format!(" ({d})") })).collect::<Vec<_>>(), "wait_s": wait}));
+    out.term.live(None);
+    out.term.blank();
+    out.heading(format!("Put your {kind} in DFU mode"), None);
+    out.term.line(vec![s(format!("  {}  ", seen.device.name), SUB), s(mode, YELLOW)]);
+    for (i, (parts, duration)) in list.iter().enumerate() {
+        let width: usize = parts.iter().map(|(t, _)| t.chars().count()).sum();
+        let mut l = vec![s(format!("  {}  ", i + 1), MUTED)];
+        l.extend(parts.iter().cloned());
+        if !duration.is_empty() {
+            l.push(s(format!("{}{duration}", " ".repeat(48usize.saturating_sub(width))), MUTED));
+        }
+        out.term.line(l);
+    }
+    out.term.blank();
+    if out.term.tty {
+        out.term.line(vec![s("  Having trouble? Press ", MUTED), s("t", BLUE), s(" for tips", MUTED)]);
+    }
+    out.term.live_restart(vec![s("Waiting for it in DFU mode", SUB)]);
+    out.term.keys(true);
 }
 
 /// Keys while waiting (T.1): n and 7 show other buttons' steps, t the tips.
@@ -456,6 +496,8 @@ struct Shared {
     /// The exploit's attempt and palera1n's stage last shown.
     attempt_said: u32,
     stage_said: Option<&'static str>,
+    /// --wait, for what is asked of the person.
+    wait: u64,
 }
 
 enum Next {
@@ -467,8 +509,8 @@ enum Next {
 }
 
 impl Shared {
-    fn new(app: App) -> Shared {
-        Shared { app, last: String::new(), waiting: Waiting::new(), stalled: false, others_said: Vec::new(), attempt_said: 1, stage_said: None }
+    fn new(app: App, wait: u64) -> Shared {
+        Shared { app, last: String::new(), waiting: Waiting::new(), stalled: false, others_said: Vec::new(), attempt_said: 1, stage_said: None, wait }
     }
 
     /// "Unplug the ones you don't want to install on." and the launcher's own.
@@ -534,7 +576,7 @@ impl Shared {
         self.attempt_said = 1;
         self.stage_said = None;
         dfu_block(out, &title, Some(&sub), device.sequence, Some(&device.name), wait);
-        self.waiting = Waiting { since: Instant::now(), shown: true, sequence: Some(device.sequence) };
+        self.waiting = Waiting { since: Instant::now(), shown: true, sequence: Some(device.sequence), seen: None };
     }
 
     fn see(&mut self, out: &mut Out, flow: &Flow) -> Next {
@@ -582,7 +624,22 @@ impl Shared {
             self.stalled = false;
         }
         match &flow.state {
-            State::WaitingForDfu { .. } if first => self.waiting = Waiting::new(),
+            State::WaitingForDfu { seen, .. } => {
+                if first {
+                    self.waiting = Waiting::new();
+                }
+                // A device that is connected in another mode gets its own
+                // steps, once per device and mode.
+                if let Some(seen) = seen.last() {
+                    let now = (seen.device.id.0.clone(), seen.mode);
+                    if self.waiting.seen.as_ref() != Some(&now) {
+                        self.waiting.seen = Some(now);
+                        self.waiting.shown = true;
+                        self.waiting.sequence = Some(seen.device.sequence);
+                        wrong_mode(out, seen, self.wait);
+                    }
+                }
+            }
             State::Unsupported { device } => {
                 out.term.live(None);
                 out.fail(format!("This {} isn't supported yet", device.name));
@@ -655,7 +712,7 @@ pub fn install(global: &Global, args: &InstallArgs) -> ExitCode {
     let send = |e: Event| {
         let _ = handle.events.send(e);
     };
-    let mut shared = Shared::new(App::Installer);
+    let mut shared = Shared::new(App::Installer, args.wait);
     let mut found = false;
     let mut split_done = false;
     let mut erase_done = false;
@@ -1033,7 +1090,7 @@ pub fn launch(global: &Global, args: &LaunchArgs) -> ExitCode {
         // starts only the entry it names.
         send(Event::AskEntry);
     }
-    let mut shared = Shared::new(App::Launcher);
+    let mut shared = Shared::new(App::Launcher, args.wait);
     let mut chosen = false;
     loop {
         out.term.tick();
