@@ -34,6 +34,11 @@ pub fn dim_while_running(header: Div, run: &Run) -> Div {
 /// The note above the steps, if any: the last attempt came back in recovery
 /// mode (R.5i), or why the installer couldn't reach the device.
 pub fn note(run: &Run) -> Option<Div> {
+    if run.phase == Phase::Waiting {
+        return Some(div().w_full().text_size(px(13.)).line_height(px(19.)).text_color(c(AMBER)).child(orchard_flow::for_device(
+            "That didn't work. Let go of all buttons. Your iPad is restarting, which can take up to a minute.",
+        )));
+    }
     let Phase::Ready { again, problem } = &run.phase else { return None };
     let text = match problem {
         Some(why) => {
@@ -168,6 +173,7 @@ pub fn glow(run: &Run) -> Option<crate::guide::Look> {
         Phase::GetReady => (0., 0.),
         Phase::Hold | Phase::Restarted => (1., 1.),
         Phase::LetGo => (1., 0.),
+        Phase::Waiting => (0., 0.),
     };
     // Slots: Home, Power, Volume Up, Volume Down (guide::levels).
     let mut levels = [0.; 4];

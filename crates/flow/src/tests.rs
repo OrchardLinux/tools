@@ -1135,7 +1135,17 @@ fn a_run_that_starts_ipados_instead_leaves_the_run() {
 
 #[test]
 fn a_run_that_shows_nothing_for_long_ends() {
+    // Home is held for LET_GO only; then no buttons while the installer waits.
     let s = run(App::Installer, restarted(), vec![Event::Timeout, Event::Timeout]).0;
+    assert_eq!(phase(&s), Some(recovery::Phase::Waiting));
+    assert_eq!(crate::timer(&s), Some(("recovery-waiting", recovery::WAITING)));
+    assert_eq!(recovery::LET_GO, std::time::Duration::from_secs(12));
+    // Back in recovery while waiting: R.5.
+    let (back, _) = update(App::Installer, s.clone(), recovery(ipad6()));
+    assert_eq!(phase(&back), Some(recovery::Phase::Ready { again: true, problem: None }));
+    // Late DFU mode still counts.
+    assert!(matches!(update(App::Installer, s.clone(), dfu(ipad6())).0, State::Found { .. }));
+    let (s, _) = update(App::Installer, s, Event::Timeout);
     assert_eq!(phase(&s), None);
     // Still gone: the DFU steps again, after the usual grace for a device that left.
     let (s, _) = update(App::Installer, s, Event::Timeout);

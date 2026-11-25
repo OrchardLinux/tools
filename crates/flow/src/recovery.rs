@@ -8,8 +8,11 @@
 //!
 //! Measured once, on an iPad 6 (J71b), by the recovery-dfu session: the
 //! restart 2 s into the hold, both held 2 s more, DFU about 8 s after the
-//! restart. A failed run comes back as recovery or iPadOS, after up to about
-//! 40 s of silence.
+//! restart (6 s after Power was let go). Holding Home much longer is wrong:
+//! Home held with a cable attached is itself the way into recovery. So the
+//! hold ends after LET_GO; then the user lets go, and the installer waits,
+//! with no buttons held, for what comes back: recovery or iPadOS, after up
+//! to about 40 s of silence.
 use crate::{Device, Effect, Event, Sequence, UsbMode};
 use std::time::Duration;
 
@@ -28,13 +31,18 @@ pub enum Phase {
     Restarted,
     /// Power let go, Home held until DFU mode shows (step 4).
     LetGo,
+    /// DFU mode didn't show while Home was held: the user lets go, and the
+    /// installer waits for the device to come back (recovery or iPadOS).
+    Waiting,
 }
 
 pub const GET_READY: Duration = Duration::from_secs(3);
 pub const HOLD: Duration = Duration::from_secs(2);
 pub const RESTARTED: Duration = Duration::from_secs(2);
-/// A failed run can stay silent for about 40 s before it shows again.
-pub const LET_GO: Duration = Duration::from_secs(45);
+/// Home alone: DFU showed 6 s after Power was let go; twice that.
+pub const LET_GO: Duration = Duration::from_secs(12);
+/// No buttons: a failed run can stay silent for about 40 s before it shows.
+pub const WAITING: Duration = Duration::from_secs(40);
 
 impl Phase {
     pub fn ready() -> Phase {
@@ -50,12 +58,13 @@ impl Phase {
             Phase::Hold => Some(("recovery-hold", HOLD)),
             Phase::Restarted => Some(("recovery-restarted", RESTARTED)),
             Phase::LetGo => Some(("recovery-let-go", LET_GO)),
+            Phase::Waiting => Some(("recovery-waiting", WAITING)),
         }
     }
 
     /// Whether the device is expected off USB now (the restart went out).
     pub fn restarting(&self) -> bool {
-        matches!(self, Phase::Restarted | Phase::LetGo)
+        matches!(self, Phase::Restarted | Phase::LetGo | Phase::Waiting)
     }
 
     /// Whether a run is under way (Start was clicked).
@@ -70,6 +79,7 @@ impl Phase {
             Phase::GetReady => Some(1),
             Phase::Hold | Phase::Restarted => Some(2),
             Phase::LetGo => Some(3),
+            Phase::Waiting => None,
         }
     }
 }
@@ -117,8 +127,10 @@ pub fn next(phase: Phase, device: &Device, event: &Event) -> Next {
         (Phase::GetReady, Event::Timeout) => Next::Run(Phase::Hold, none()),
         (Phase::Hold, Event::Timeout) => Next::Run(Phase::Restarted, vec![Effect::RestartFromRecovery(id.clone())]),
         (Phase::Restarted, Event::Timeout) => Next::Run(Phase::LetGo, none()),
+        // No DFU mode while Home was held: let go, and wait for the device.
+        (Phase::LetGo, Event::Timeout) => Next::Run(Phase::Waiting, none()),
         // Nothing showed for long: whatever comes now is not the run's.
-        (Phase::LetGo, Event::Timeout) => Next::Over,
+        (Phase::Waiting, Event::Timeout) => Next::Over,
         // The installer couldn't talk to it: the steps again, with why.
         (Phase::GetReady | Phase::Hold | Phase::Restarted, Event::RecoveryFailed(why)) => {
             Next::Run(Phase::Ready { again: false, problem: Some(why.clone()) }, none())
