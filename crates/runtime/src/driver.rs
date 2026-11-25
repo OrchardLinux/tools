@@ -176,6 +176,8 @@ impl<O: Observer> Driver<O> {
                     | Effect::RestartStream
                     | Effect::ListEntries(_)
                     | Effect::BootEntry(_)
+                    | Effect::PrepareRecovery(_)
+                    | Effect::RestartFromRecovery(_)
             );
             if acts_on_device && !self.live {
                 self.observer.problem(&format!("not live: skipped {effect:?} (run with --live to act on the device)"));
@@ -209,6 +211,8 @@ impl<O: Observer> Driver<O> {
                 Effect::BootEntry(id) => drop(self.launcher_jobs.send(crate::launcher::Job::Boot(id))),
                 Effect::StartSplit { omarchy_gb } => drop(self.companion_jobs.send(CompanionJob::Split { omarchy_gb })),
                 Effect::RefreshLayout => drop(self.companion_jobs.send(CompanionJob::Refresh)),
+                Effect::PrepareRecovery(id) => crate::recovery_mode::spawn(id, false, self.events.clone()),
+                Effect::RestartFromRecovery(id) => crate::recovery_mode::spawn(id, true, self.events.clone()),
                 Effect::BootInstallEnv(_) | Effect::BootIpadosWithOverlay(_) => {
                     self.executor.run(&effect, next.state.device())
                 }
@@ -242,9 +246,10 @@ impl<O: Observer> Driver<O> {
         if usb_access::needed() {
             flow = self.feed(flow, Event::UsbAccessDenied);
         }
-        // When the current wait began, for its timeout: a new state, or a
-        // timeout starting to apply within one (the grace period on 1.2).
-        let wait_key = |flow: &Flow| (std::mem::discriminant(&flow.state), orchard_flow::timeout(&flow.state).is_some());
+        // When the current wait began, for its timeout: a new state, or a new
+        // timer within one (the grace period on 1.2, each phase of the
+        // guided run from recovery mode).
+        let wait_key = |flow: &Flow| (std::mem::discriminant(&flow.state), orchard_flow::timer(&flow.state).map(|(name, _)| name));
         let mut waiting = (wait_key(&flow), Instant::now(), false);
         let mut next_poll = Instant::now();
         // Where the device named for this run (Options::only) was last seen.
@@ -328,8 +333,12 @@ impl<O: Observer> Driver<O> {
                         // One piece of work on a device at a time: a device in
                         // DFU mode is taken before the flow hears of it, and one
                         // that other work holds is left to it.
-                        let working_at = flow.state.working().and_then(|d| watcher.location(&d.id)).map(str::to_owned);
-                        let in_dfu: Vec<&str> = named.iter().filter(|d| d.mode == orchard_usb::Mode::Dfu).map(|d| d.location.as_str()).collect();
+                        // The guided run from recovery mode sends the device
+                        // commands there: it is taken from then on too.
+                        let run_at = flow.state.recovery().filter(|r| r.phase.running()).and_then(|r| watcher.location(&r.device.id)).map(str::to_owned);
+                        let working_at = flow.state.working().and_then(|d| watcher.location(&d.id)).map(str::to_owned).or(run_at.clone());
+                        let mut in_dfu: Vec<&str> = named.iter().filter(|d| d.mode == orchard_usb::Mode::Dfu).map(|d| d.location.as_str()).collect();
+                        in_dfu.extend(run_at.as_deref().filter(|port| named.iter().any(|d| d.location == *port)));
                         let look = held.look(&in_dfu, working_at.as_deref());
                         // A device the flow took up as it found it running.
                         let adopted = working_at.as_deref().and_then(|port| held.adopt(port));

@@ -156,7 +156,7 @@ const GUIDE_DARKEN: f32 = 0.72;
 
 /// The countdown circle of a guided step: a faint disc, filled clockwise
 /// from the top as `progress` (0…1) goes, in `color`.
-fn countdown(progress: f32, color: gpui::Hsla) -> impl IntoElement {
+pub(crate) fn countdown(progress: f32, color: gpui::Hsla) -> impl IntoElement {
     let size = 16.;
     gpui::canvas(
         |_, _, _| (),
@@ -462,6 +462,11 @@ pub fn connected_steps(sequence: Sequence) -> &'static [Step] {
 
 /// 1.2: a device is connected, but in another mode than DFU.
 fn wrong_mode(seen: &Seen, rows: f32, cx: &mut Context<Installer>) -> Div {
+    column().child(mode_header(seen)).child(steps(connected_steps(seen.device.sequence), rows)).child(trouble_link(cx))
+}
+
+/// 1.2's header: "Put your iPad in DFU mode", the model and its mode.
+fn mode_header(seen: &Seen) -> Div {
     let kind = match seen.device.model {
         Model::IpadHome | Model::IpadNoHome => "iPad",
         Model::IphoneHome | Model::IphoneNoHome => "iPhone",
@@ -496,7 +501,7 @@ fn wrong_mode(seen: &Seen, rows: f32, cx: &mut Context<Installer>) -> Div {
                 .child(div().text_size(px(15.)).text_color(c(SUBTITLE)).child(seen.device.name.clone()))
                 .child(badge),
         );
-    column().child(header).child(steps(connected_steps(seen.device.sequence), rows)).child(trouble_link(cx))
+    header
 }
 
 /// A filled blue button: the way forward.
@@ -858,6 +863,12 @@ pub fn text_column(installer: &mut Installer, kind: ScreenKind, cx: &mut Context
         return screen;
     }
     match (&installer.flow.state, kind) {
+        // In recovery mode: the guided run into DFU mode (R.1i–R.5i).
+        (State::WaitingForDfu { recovery: Some(run), .. }, _) => {
+            let run = run.clone();
+            let header = crate::recovery_screen::dim_while_running(mode_header(&Seen { device: run.device.clone(), mode: UsbMode::Recovery }), &run);
+            column().child(header).children(crate::recovery_screen::body(installer, &run, cx)).into_any_element()
+        }
         (State::WaitingForDfu { seen, leaving, .. }, ScreenKind::WrongMode) if !seen.is_empty() || leaving.is_some() => {
             // While it drops off for DFU, the screen stays as it was.
             let seen = seen.last().or(leaving.as_ref()).unwrap().clone();

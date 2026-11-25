@@ -51,8 +51,14 @@ pub fn run(app: App, mut observer: impl Observer, input: Receiver<Event>, _event
     // The opening: plugged in running iPadOS, then the DFU combination.
     // ORCHARD_DEMO_UNPLUGGED=1: nothing is connected at first, to see the
     // steps for a device nobody has seen yet.
+    // ORCHARD_DEMO_RECOVERY=1: plugged in in recovery mode, for the guided
+    // run into DFU mode; =again: its first attempt comes back in recovery.
+    let recovery = std::env::var("ORCHARD_DEMO_RECOVERY").ok();
+    let mut recovery_fails = recovery.as_deref() == Some("again");
     if std::env::var_os("ORCHARD_DEMO_UNPLUGGED").is_some() {
         due.push((at(9.), attached(UsbMode::Dfu)));
+    } else if recovery.is_some() {
+        due.push((at(1.5), attached(UsbMode::Recovery)));
     } else {
         due.push((at(1.5), attached(UsbMode::Normal)));
         due.push((at(4.), Event::Detached { id: ipad().id }));
@@ -64,6 +70,13 @@ pub fn run(app: App, mut observer: impl Observer, input: Receiver<Event>, _event
         for effect in effects {
             observer.effect(&effect);
             match effect {
+                // The run's restart: off USB, then DFU mode after about as
+                // long as on the iPad 6 (or recovery again).
+                Effect::RestartFromRecovery(_) => {
+                    due.push((at(0.4), Event::Detached { id: ipad().id }));
+                    let mode = if std::mem::take(&mut recovery_fails) { UsbMode::Recovery } else { UsbMode::Dfu };
+                    due.push((at(7.), attached(mode)));
+                }
                 Effect::BootIpadosWithOverlay(_) => {
                     // ORCHARD_DEMO_STALL=1: palera1n stalls after checkm8 until "replugged".
                     if std::env::var_os("ORCHARD_DEMO_STALL").is_some() {
@@ -139,15 +152,29 @@ pub fn run(app: App, mut observer: impl Observer, input: Receiver<Event>, _event
         }
         // "DFU mode again" (3.1): the iPad comes back in DFU after a moment.
         let again = matches!(next.state, orchard_flow::State::DfuAgain { .. });
-        if again && !due.iter().any(|(_, e)| matches!(e, Event::Attached { mode: UsbMode::Dfu, .. })) {
+        if again && next.state.recovery().is_none() && !due.iter().any(|(_, e)| matches!(e, Event::Attached { .. })) {
             due.push((at(3.), Event::Detached { id: ipad().id }));
-            due.push((at(3.5), attached(UsbMode::Dfu)));
+            due.push((at(3.5), attached(if recovery.is_some() { UsbMode::Recovery } else { UsbMode::Dfu })));
         }
         observer.changed(&next);
         next
     };
     flow = feed(flow, Event::Started, &mut due, &mut omarchy_gb);
+    // The flow's timer, as the driver keeps it: started anew whenever its
+    // state or its name changes, fired once.
+    let key = |flow: &Flow| (std::mem::discriminant(&flow.state), orchard_flow::timer(&flow.state).map(|(name, _)| name));
+    let mut waiting = (key(&flow), Instant::now(), false);
     loop {
+        if key(&flow) != waiting.0 {
+            waiting = (key(&flow), Instant::now(), false);
+        }
+        if let Some((_, after)) = orchard_flow::timer(&flow.state) {
+            if !waiting.2 && waiting.1.elapsed() >= after {
+                waiting.2 = true;
+                flow = feed(flow, Event::Timeout, &mut due, &mut omarchy_gb);
+                continue;
+            }
+        }
         due.sort_by_key(|(when, _)| *when);
         while due.first().is_some_and(|(when, _)| *when <= Instant::now()) {
             let (_, event) = due.remove(0);

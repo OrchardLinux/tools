@@ -3,6 +3,7 @@
 //! does the work on its own thread; this draws the flow's view and sends what
 //! the user does back as events.
 mod assets;
+mod recovery_screen;
 mod details;
 mod guide;
 mod device;
@@ -286,6 +287,9 @@ pub struct Installer {
     /// None when it isn't running. `guide_fade` darkens the rest (0…1).
     pub guide: Option<(Instant, orchard_flow::Sequence)>,
     pub guide_fade: Tween,
+    /// When the guided run from recovery mode entered its current phase,
+    /// for the countdowns (recovery_screen::seconds_in).
+    pub recovery_since: Option<(std::mem::Discriminant<orchard_flow::recovery::Phase>, Instant)>,
     /// The run's last moment, so its row stays bright while the darkening
     /// fades out after the run.
     pub guide_last: Option<guide::Moment>,
@@ -513,7 +517,9 @@ impl Installer {
         let seconds = self.seconds();
         // The buttons follow the run's glow, and fade back with the darkening.
         let fade = self.guide_fade.value();
+        let run_glow = self.flow.state.recovery().and_then(recovery_screen::glow);
         let glow = match self.guide {
+            _ if run_glow.is_some() => run_glow,
             Some((at, sequence)) => {
                 let t = at.elapsed().as_secs_f32();
                 Some(guide::Look { levels: guide::levels(sequence, t), fade })
@@ -586,6 +592,7 @@ impl Installer {
             || self.note.progress() < 1.
             || self.guide.is_some()
             || self.guide_fade.progress() < 1.
+            || self.flow.state.recovery().is_some_and(|r| r.phase.running())
             || self.progress.progress() < 1.
             || self.dialog_fade.progress() < 1.
             || matches!(self.flow.state, orchard_flow::State::Splitting { .. })
@@ -1019,6 +1026,7 @@ pub fn run(app: Kind) {
                     note: Tween::new(1., 280.),
                     guide: None,
                     guide_fade: Tween::new(0., 300.),
+                    recovery_since: None,
                     guide_last: None,
                     details_open: false,
                     details: Tween::new(0., 220.),

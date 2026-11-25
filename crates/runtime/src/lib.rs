@@ -21,6 +21,7 @@ pub mod setup_launcher;
 pub mod lockdown;
 pub mod overlay;
 pub mod records;
+pub mod recovery_mode;
 pub mod usb_access;
 mod held;
 pub mod usbmux;

@@ -604,7 +604,10 @@ fn waiting_for_ipados(slow: bool, cx: &mut Context<Installer>) -> Div {
 }
 
 /// 3.1: DFU mode again, saying why (3.1r after a start that didn't work).
-fn dfu_again(app: orchard_flow::App, why: orchard_flow::Again, problem: Option<&str>, sequence: orchard_flow::Sequence, rows: f32, cx: &mut Context<Installer>) -> Div {
+fn dfu_again(installer: &mut Installer, why: orchard_flow::Again, run: Option<orchard_flow::recovery::Run>, sequence: orchard_flow::Sequence, rows: f32, cx: &mut Context<Installer>) -> Div {
+    let app = installer.app;
+    let problem = installer.flow.start_problem.clone();
+    let problem = problem.as_deref();
     use orchard_flow::Again;
     let (title, subtitle) = match why {
         Again::Install => ("Put your iPad in DFU mode again".to_owned(), format!("{} installs from DFU mode. Same buttons as before.", sys())),
@@ -629,11 +632,13 @@ fn dfu_again(app: orchard_flow::App, why: orchard_flow::Again, problem: Option<&
         }
         div().text_size(px(13.)).line_height(px(19.)).text_color(c(MUTED)).child(text)
     });
-    column()
-        .child(header(orchard_flow::for_device(&title), orchard_flow::for_device(&subtitle).to_owned(), TITLE))
-        .children(reason)
-        .child(steps(connected_steps(sequence), rows))
-        .child(trouble_link(cx))
+    let header = header(orchard_flow::for_device(&title), orchard_flow::for_device(&subtitle).to_owned(), TITLE);
+    // In recovery mode: the guided run in place of the steps (its header stays).
+    if let Some(run) = run {
+        let header = crate::recovery_screen::dim_while_running(header, &run);
+        return column().child(header).children(reason).children(crate::recovery_screen::body(installer, &run, cx));
+    }
+    column().child(header).children(reason).child(steps(connected_steps(sequence), rows)).child(trouble_link(cx))
 }
 
 /// 3.2: create the account while the install system starts.
@@ -1095,11 +1100,11 @@ pub fn text_column(installer: &mut Installer, cx: &mut Context<Installer>) -> Op
             let layout = installer.layout.clone();
             split_done(layout.as_ref(), *omarchy_gb, cx).into_any_element()
         }
-        State::DfuAgain { device, why, .. } => {
+        State::DfuAgain { device, why, recovery, .. } => {
             let steps = connected_steps(device.sequence);
             installer.rows.set(steps.len() as f32);
-            let problem = installer.flow.start_problem.clone();
-            dfu_again(installer.app, *why, problem.as_deref(), device.sequence, installer.rows.value(), cx).into_any_element()
+            let (why, run, sequence, rows) = (*why, recovery.clone(), device.sequence, installer.rows.value());
+            dfu_again(installer, why, run, sequence, rows, cx).into_any_element()
         }
         State::CreateAccount { account, env, .. } => create_account(installer, account, env.is_some(), cx).into_any_element(),
         // The erase dialog (3.6) sits over the form: what was typed stays.
