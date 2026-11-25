@@ -1,0 +1,74 @@
+name: Test
+
+# The workspace's tests on every push to main, on Linux and macOS. The
+# release workflow runs them too, but only for pull requests and tags; what
+# is pushed to main directly would otherwise be tested by nobody, and on
+# Linux by no computer at all.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: '0'
+  CARGO_TERM_COLOR: never
+  # No debug info: the tests are run, not debugged, and the build is a
+  # fraction of the size.
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+
+jobs:
+  test:
+    name: Test on ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            runner: ubuntu-22.04
+          - name: Linux aarch64
+            runner: ubuntu-22.04-arm
+          - name: macOS
+            runner: macos-15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      # orchard's board data: a test reads every board's firmware recipe, so a
+      # step orchard gains and the installer lacks fails here, not at a tester.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: OrchardLinux/orchard
+          path: orchard-data
+          persist-credentials: false
+
+      # What the windows link against; the release workflow's list.
+      - name: Install the build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang pkg-config libwayland-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libvulkan-dev \
+            libfontconfig-dev libfreetype-dev libasound2-dev libssl-dev
+
+      - name: Install the Rust toolchain
+        run: rustup toolchain install 1.98.0 --profile minimal
+
+      # Without the iPad companion, which only a release carries: the
+      # installer builds without one (crates/runtime/build.rs).
+      - name: Test
+        env:
+          ORCHARD_TEST_DATA: ${{ github.workspace }}/orchard-data
+        run: cargo test --workspace
