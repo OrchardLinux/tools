@@ -305,13 +305,13 @@ fn container_hint() -> Option<&'static str> {
 }
 
 /// How long Podman gets to say what state it is in.
-pub(crate) const PODMAN_ANSWERS: Duration = Duration::from_secs(20);
+pub const PODMAN_ANSWERS: Duration = Duration::from_secs(20);
 const NO_ANSWER: &str = "podman does not answer; its VM may hang: podman machine stop, then start";
 
 /// Runs a command that is asked something, for at most `limit`: its output,
 /// or `None` when it was ended for not finishing. For commands that print
 /// little; a build's producers run as long as they need.
-pub(crate) fn within(command: &mut Command, limit: Duration) -> std::io::Result<Option<Output>> {
+pub fn within(command: &mut Command, limit: Duration) -> std::io::Result<Option<Output>> {
     use std::process::Stdio;
     let mut child = command
         .stdin(Stdio::null())

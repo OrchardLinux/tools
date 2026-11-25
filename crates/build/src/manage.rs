@@ -26,6 +26,11 @@ fn setting(name: &str, default: f64) -> f64 {
         .unwrap_or(default)
 }
 
+/// GB a build needs free; 0: the check is off.
+pub fn min_free() -> f64 {
+    setting("ORCHARD_MIN_FREE_GB", MIN_FREE_GB)
+}
+
 /// Bytes the build cache may use.
 pub fn budget() -> u64 {
     (setting("ORCHARD_CACHE_BUDGET_GB", BUDGET_GB) * (1u64 << 30) as f64) as u64
@@ -51,7 +56,7 @@ pub fn human(size: u64) -> String {
 /// the needed space free: a build that runs out halfway leaves broken work
 /// directories and stops other builds on the host.
 pub fn check_free(paths: &[&Path]) -> Result<()> {
-    let needed = setting("ORCHARD_MIN_FREE_GB", MIN_FREE_GB);
+    let needed = min_free();
     if needed <= 0.0 {
         return Ok(());
     }

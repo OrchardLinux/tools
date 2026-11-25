@@ -14,9 +14,6 @@ use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// GB a build needs free (`orchard_build::manage`'s default).
-const BUILD_FREE_GB: f64 = 10.0;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum State {
@@ -145,13 +142,22 @@ fn tool(name: &'static str, program: &str, needed_for: &'static str) -> Check {
     }
 }
 
-fn podman_machine() -> Option<String> {
-    let out = Command::new("podman")
-        .args(["machine", "inspect", "--format", "{{.State}}"])
-        .stdin(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+/// What Podman says about its VM.
+enum Machine {
+    State(String),
+    Absent,
+    /// It did not answer in time, as when the VM hangs.
+    Silent,
+}
+
+fn podman_machine() -> Machine {
+    let mut ask = Command::new("podman");
+    ask.args(["machine", "inspect", "--format", "{{.State}}"]);
+    match orchard_build::within(&mut ask, orchard_build::PODMAN_ANSWERS) {
+        Ok(Some(out)) if out.status.success() => Machine::State(String::from_utf8_lossy(&out.stdout).trim().to_owned()),
+        Ok(None) => Machine::Silent,
+        _ => Machine::Absent,
+    }
 }
 
 /// Every check, in the order they are shown.
@@ -188,17 +194,20 @@ fn checks(cache: &Path) -> Vec<Check> {
     const PODMAN: &str = "build, inputs: the recipes compile in containers";
     let mut podman = tool("podman", "podman", PODMAN);
     if podman.state == State::Ready && cfg!(target_os = "macos") {
-        match podman_machine().as_deref() {
-            Some("running") => {}
-            state => {
-                podman.state = State::Missing;
-                podman.detail = match state {
-                    Some(state) => format!("its VM is {state}"),
-                    None => "it has no VM yet".into(),
-                };
-                let how = if state.is_some() { "podman machine start" } else { "podman machine init, then start" };
-                podman.setup = Some(format!("orchard2 setup podman  ({how})"));
+        let missing = match podman_machine() {
+            Machine::State(state) if state == "running" => None,
+            Machine::State(state) => Some((format!("its VM is {state}"), "podman machine start")),
+            Machine::Absent => Some(("it has no VM yet".to_owned(), "podman machine init, then start")),
+            Machine::Silent => {
+                podman.state = State::Yours;
+                podman.detail = "it does not answer; its VM may hang: podman machine stop, then start".into();
+                None
             }
+        };
+        if let Some((detail, how)) = missing {
+            podman.state = State::Missing;
+            podman.detail = detail;
+            podman.setup = Some(format!("orchard2 setup podman  ({how})"));
         }
     }
     found.push(podman);
@@ -208,14 +217,15 @@ fn checks(cache: &Path) -> Vec<Check> {
         None => Check { name: "ssh", state: State::Yours, needed_for: SSH, detail: "ssh-keygen is not on PATH; install OpenSSH".into(), setup: None },
     });
     const DISK: &str = "build: a build that runs out of space halfway leaves broken work behind";
+    let needed = orchard_build::manage::min_free();
     let free = orchard_cache::component::free_space(cache).map(|bytes| bytes as f64 / 1e9);
     found.push(match free {
-        Ok(free) if free >= BUILD_FREE_GB => Check { name: "disk", state: State::Ready, needed_for: DISK, detail: format!("{free:.0} GB free at {}", cache.display()), setup: None },
+        Ok(free) if free >= needed => Check { name: "disk", state: State::Ready, needed_for: DISK, detail: format!("{free:.0} GB free at {}", cache.display()), setup: None },
         Ok(free) => Check {
             name: "disk",
             state: State::Yours,
             needed_for: DISK,
-            detail: format!("{free:.1} GB free at {}; a build needs {BUILD_FREE_GB:.0} (orchard2 cache prune frees some)", cache.display()),
+            detail: format!("{free:.1} GB free at {}; a build needs {needed:.0} (orchard2 cache prune frees some)", cache.display()),
             setup: None,
         },
         Err(e) => Check { name: "disk", state: State::Yours, needed_for: DISK, detail: e.to_string(), setup: None },
@@ -273,7 +283,7 @@ pub fn setup(global: &Global, names: &[String]) -> Result<Output> {
                 }
                 "podman" if on_path("podman").is_some() => {
                     // Installed, but macOS runs its containers in a VM.
-                    if podman_machine().is_none() {
+                    if matches!(podman_machine(), Machine::Absent) {
                         run(&["podman".into(), "machine".into(), "init".into()], &mut done)?;
                     }
                     run(&["podman".into(), "machine".into(), "start".into()], &mut done)?;
