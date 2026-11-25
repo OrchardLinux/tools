@@ -488,11 +488,29 @@ fn writing_waits_for_the_system_and_the_boards_files() {
 #[test]
 fn a_failed_asset_is_reported_and_retried() {
     let (flow, _) = steps(App::Installer, vec![Event::Started, dfu(ipad6())]);
-    let (flow, _) = step(App::Installer, flow, Event::AssetFailed(Asset::Firmware, "IPSW range request failed".into()));
-    assert_eq!(flow.assets.failed(), Some((Asset::Firmware, "IPSW range request failed")));
+    let (flow, _) = step(App::Installer, flow, Event::AssetFailed(Asset::Firmware, Cause::Network, "IPSW range request failed".into()));
+    assert_eq!(flow.assets.failed(), Some((Asset::Firmware, Cause::Network, "IPSW range request failed")));
     let (flow, e) = step(App::Installer, flow, Event::RetryAssets);
     assert_eq!(e, vec![Effect::Fetch(Asset::Firmware)]);
     assert_eq!(flow.assets.failed(), None);
+}
+
+#[test]
+fn only_a_network_failure_is_reported_as_a_download_problem() {
+    let (title, text) = Cause::Network.copy("part of Omarchy");
+    assert_eq!(title, "A download didn't work");
+    assert!(text.contains("Check the internet connection"));
+    // A recipe this installer can't read, as the n102 recipe was for 0.1.3.
+    for cause in [Cause::Data, Cause::Other] {
+        let (title, text) = cause.copy("part of Omarchy");
+        assert!(!title.contains("download"), "{title}");
+        assert!(!text.contains("Check the internet connection"), "{text}");
+        assert!(text.contains("part of Omarchy"));
+    }
+    let (flow, _) = steps(App::Installer, vec![Event::Started, dfu(ipad6())]);
+    let why = "devices/n102/firmware.json: invalid type: string \"n102ap\", expected a boolean";
+    let (flow, _) = step(App::Installer, flow, Event::AssetFailed(Asset::Firmware, Cause::Data, why.into()));
+    assert_eq!(flow.assets.failed(), Some((Asset::Firmware, Cause::Data, why)));
 }
 
 #[test]

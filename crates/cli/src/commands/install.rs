@@ -384,7 +384,7 @@ fn finish(out: &mut Out, exit: Exit, code: &str, message: &str) -> ExitCode {
 /// A failed download (after the runtime's own retries), if any.
 fn failed_asset(flow: &Flow) -> Option<String> {
     orchard_flow::assets::ALL.iter().find_map(|&a| match flow.assets.get(a) {
-        orchard_flow::assets::AssetState::Failed(why) => Some(format!("{a:?}: {why}")),
+        orchard_flow::assets::AssetState::Failed(_, why) => Some(format!("{a:?}: {why}")),
         _ => None,
     })
 }

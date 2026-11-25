@@ -9,7 +9,7 @@ use orchard_cache::http::Http;
 use orchard_cache::source::Source;
 use orchard_cache::{Code, Error, Result};
 use orchard_flow::assets::{palera1n_pin, PALERA1N_RELEASE};
-use orchard_flow::{Asset, Device, Effect, Event};
+use orchard_flow::{Asset, Cause, Device, Effect, Event};
 use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -103,9 +103,12 @@ impl Executor {
                             eprintln!("fetch {asset:?}: {e}; again in {secs} s");
                             std::thread::sleep(std::time::Duration::from_secs(secs));
                         }
-                        None => break Event::AssetFailed(asset, format!("{e} (still failing after several minutes)")),
+                        None => break Event::AssetFailed(asset, Cause::Network, format!("{e} (still failing after several minutes)")),
                     },
-                    Err(e) => break Event::AssetFailed(asset, e.to_string()),
+                    // A recipe or file the installer can't use is not a
+                    // connection problem; saying so sends the user the wrong way.
+                    Err(e) if matches!(e.code, Code::Format | Code::Unsupported) => break Event::AssetFailed(asset, Cause::Data, e.to_string()),
+                    Err(e) => break Event::AssetFailed(asset, Cause::Other, e.to_string()),
                 }
             };
             let _ = me.events.send(event);

@@ -34,7 +34,45 @@ pub enum AssetState {
     NotStarted,
     Fetching,
     Ready,
-    Failed(String),
+    /// Failed for good: why, and the error itself.
+    Failed(Cause, String),
+}
+
+/// Why an asset failed, as far as the user can act on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cause {
+    /// The network kept failing, for minutes: the connection may be down.
+    Network,
+    /// The installer can't use what it got, such as a firmware recipe it
+    /// doesn't understand or a file that doesn't match its hash. The
+    /// connection is fine; a newer installer may be needed.
+    Data,
+    /// Anything else, such as a release that doesn't cover the board yet.
+    Other,
+}
+
+impl Cause {
+    /// The failure dialog's title and text; `what` names the asset, such as
+    /// "part of Omarchy".
+    pub fn copy(self, what: &str) -> (&'static str, String) {
+        match self {
+            Cause::Network => (
+                "A download didn't work",
+                format!("The installer couldn't download {what}. Check the internet connection, then try again."),
+            ),
+            Cause::Data => (
+                "The installer can't prepare this device",
+                format!(
+                    "The installer couldn't prepare {what}: it can't use the files it got for this device. \
+                     The internet connection is fine; a newer installer may be needed."
+                ),
+            ),
+            Cause::Other => (
+                "Something didn't work",
+                format!("The installer couldn't prepare {what}. Try again; the details below say what went wrong."),
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -100,9 +138,9 @@ impl Assets {
     }
 
     /// The first failed asset, for an error the app can show with Try again.
-    pub fn failed(&self) -> Option<(Asset, &str)> {
+    pub fn failed(&self) -> Option<(Asset, Cause, &str)> {
         ALL.iter().find_map(|&a| match self.get(a) {
-            AssetState::Failed(reason) => Some((a, reason.as_str())),
+            AssetState::Failed(cause, reason) => Some((a, *cause, reason.as_str())),
             _ => None,
         })
     }
