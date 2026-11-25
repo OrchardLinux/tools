@@ -2,7 +2,7 @@
 //! installer-app.pen): five steps, Start in the first, the lit step's
 //! countdown, Stop until the restart, and the buttons glowing on the device.
 //! The flow decides the phases (orchard_flow::recovery); this only shows them.
-use crate::screens::{countdown, icon, primary, trouble_link};
+use crate::screens::{countdown, icon, primary, trouble};
 use crate::theme::*;
 use crate::Installer;
 use gpui::{div, prelude::*, px, AnyElement, Context, Div, FontWeight};
@@ -59,7 +59,8 @@ pub fn steps(run: &Run, seconds: f32, cx: &mut Context<Installer>) -> Div {
     let (hold, power) = recovery::buttons(run.device.sequence);
     let running = run.phase.running();
     let lit = run.phase.row();
-    let mut table = div().w_full().flex().flex_col().border_1();
+    // The column is as wide as its content: the table sets the 440 px.
+    let mut table = div().w(px(440.)).flex().flex_col().border_1();
     let (mut bg, mut line) = (c(PANEL), c(PANEL_LINE));
     if running {
         bg.a *= 1. - 0.72;
@@ -123,7 +124,8 @@ pub fn steps(run: &Run, seconds: f32, cx: &mut Context<Installer>) -> Div {
     table
 }
 
-/// Under the steps: Stop until the restart went out, and the help link.
+/// Under the steps: the help link on the left, as on the other DFU screens,
+/// and Stop on the right (where Guide me's Stop sits) until the restart.
 pub fn actions(run: &Run, cx: &mut Context<Installer>) -> Div {
     let stop = matches!(run.phase, Phase::GetReady | Phase::Hold).then(|| {
         div()
@@ -147,10 +149,9 @@ pub fn actions(run: &Run, cx: &mut Context<Installer>) -> Div {
         .flex()
         .flex_row()
         .items_center()
-        .justify_end()
-        .gap(px(20.))
+        .justify_between()
+        .child(div().opacity(if run.phase.running() { DIM } else { 1. }).child(trouble(cx)))
         .children(stop)
-        .child(div().opacity(if run.phase.running() { DIM } else { 1. }).child(trouble_link(cx)))
 }
 
 /// The note, the steps and the row under them, for a screen's column.

@@ -340,7 +340,7 @@ pub fn trouble_link(cx: &mut Context<Installer>) -> impl IntoElement {
     div().flex().flex_row().mt(px(-20.)).child(trouble(cx))
 }
 
-fn trouble(cx: &mut Context<Installer>) -> gpui::Stateful<Div> {
+pub(crate) fn trouble(cx: &mut Context<Installer>) -> gpui::Stateful<Div> {
     pressable(link("trouble"), link_ring, cx, |this, _, cx| {
         this.trouble = true;
         cx.notify();
