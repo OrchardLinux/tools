@@ -349,7 +349,8 @@ impl<O: Observer> Driver<O> {
                         unnamed.extend(in_use.iter().map(|(d, _)| d.clone()));
                         // What the boot ROM says of a unit, for what an install
                         // remembers of it afterwards.
-                        for usb in named.iter().filter(|d| d.mode == orchard_usb::Mode::Dfu) {
+                        // (Recovery mode says it; DFU mode does not.)
+                        for usb in named.iter() {
                             if let (Some(ecid), Some(serial)) = (usb.identity.ecid.as_deref(), usb.identity.serial_number.as_deref()) {
                                 self.executor.note_serial_number(&crate::ecid_key(ecid), serial);
                             }

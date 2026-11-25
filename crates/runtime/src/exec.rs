@@ -56,7 +56,7 @@ pub struct Executor {
     /// the finished file (two writers on one partial file broke each other).
     downloads: Arc<Mutex<std::collections::HashMap<String, Arc<Mutex<()>>>>>,
     tools: Arc<Mutex<Option<crate::orchard_tools::Tools>>>,
-    /// Each device's serial number, as its boot ROM gave it in DFU mode.
+    /// Each device's serial number, where iBoot gave it (recovery mode).
     serials: Arc<Mutex<HashMap<String, String>>>,
 }
 
@@ -71,7 +71,7 @@ impl Executor {
         Executor { explicit_data: data.map(Path::to_owned), data: Arc::default(), cache: cache.to_owned(), events, release: Arc::default(), kernel: Arc::default(), index: String::new(), companion: None, overlay: Arc::default(), verified: Arc::default(), pongo: None, downloads: Arc::default(), tools: Arc::default(), serials: Arc::default() }
     }
 
-    /// A device's serial number was seen (its boot ROM says it in DFU mode).
+    /// A device's serial number was seen (iBoot says it in recovery mode).
     pub fn note_serial_number(&self, device: &str, serial: &str) {
         self.serials.lock().expect("serials lock").insert(device.to_owned(), serial.to_owned());
     }

@@ -362,9 +362,12 @@ impl Worker {
                 a["ssh_keys"] = json!(crate::ssh_keys::keys(self.executor.cache())?);
                 // Who this computer signs in as afterwards (orchard2 shell).
                 if let Some(user) = a.get("user").and_then(|u| u.as_str()) {
-                    // By the unit where its serial number was seen in DFU
-                    // mode: the system it gets names itself by it on USB.
-                    let unit = self.executor.serial_number(&device.id.0).map(|serial| crate::ssh_keys::unit(&serial));
+                    // By the unit: the id the install environment says in
+                    // its USB serial, which the installed system says too;
+                    // else made from the serial number, where iBoot gave it
+                    // (recovery mode; DFU mode has none).
+                    let said = self.usb.as_ref().and_then(|usb| usb.identity.unit.clone());
+                    let unit = said.or_else(|| self.executor.serial_number(&device.id.0).map(|serial| crate::ssh_keys::unit(&serial)));
                     crate::ssh_keys::installed(self.executor.cache(), user, unit.as_deref())?;
                 }
             }

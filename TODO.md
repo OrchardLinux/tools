@@ -82,6 +82,13 @@ tests and the scripted demo only:
 - the lock in the runtime;
 - `ORCHARD_ENTRY=checkra1n`;
 - `devices` asking a device that runs iOS for its name and ECID;
+- that `install --ssh` knows the unit (`user-UNIT`, the old host key
+  forgotten): it takes the id from the install environment's USB serial,
+  else makes it from the serial number seen in recovery mode. DFU mode
+  gives no serial number (seen on a j71b). Unchecked: that the install
+  environment's serial has `ID:`, and that recovery's `SRNM` is the device
+  tree's `serial-number`. If neither holds, a reinstalled unit's old host
+  key stays and the error says which line to remove;
 - `shell`, `exec`, `push` and `pull` (`crates/remote`): the serial console
   protocol is tested against a scripted console, the rest by what it
   refuses. No payload and no installed system has been reached with them.
