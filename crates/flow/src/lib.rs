@@ -97,6 +97,9 @@ pub struct Layout {
     pub ipados_used_gb: u32,
     /// Everything after iPadOS; overwritten by the install.
     pub outside: Vec<Partition>,
+    /// The bytes after iPadOS, where they were read off the disk; 0 where
+    /// only whole GB are known.
+    pub outside_bytes: u64,
 }
 
 impl Layout {
@@ -107,6 +110,14 @@ impl Layout {
     pub fn outside_gb(&self) -> u32 {
         self.total_gb - self.ipados_gb
     }
+    /// Whether the space after iPadOS, as it is, holds the system. In real
+    /// bytes where they are known: 9.5 GB reads as 10 GB and is too little.
+    pub fn has_room(&self) -> bool {
+        match self.outside_bytes {
+            0 => self.outside_gb() >= MIN_OMARCHY_GB,
+            bytes => bytes >= MIN_SYSTEM_BYTES,
+        }
+    }
 }
 
 /// Space iPadOS keeps free on top of what it uses.
@@ -115,6 +126,9 @@ pub const HEADROOM_GB: u32 = 2;
 /// size: orchard's install layout needs an 8 GiB root and a 1 GiB boot
 /// partition (9.7 GB).
 pub const MIN_OMARCHY_GB: u32 = 10;
+/// The same as orchard's install counts it: an 8 GiB root and a 1 GiB boot
+/// partition. Space that is there already is measured against this.
+pub const MIN_SYSTEM_BYTES: u64 = 9 << 30;
 pub const RECOMMENDED_OMARCHY_GB: u32 = 32;
 /// Room iPadOS keeps beyond what it uses, in the suggested split (the hard
 /// limit is [`HEADROOM_GB`]).
@@ -910,7 +924,7 @@ pub fn update(app: App, state: State, event: Event) -> (State, Vec<Effect>) {
         (S::WaitingForDfu { seen, tab, leaving }, E::EnvReady { layout }) => match seen.iter().find(|s| s.mode == UsbMode::Install) {
             Some(s) => {
                 let device = s.device.clone();
-                if layout.outside_gb() < MIN_OMARCHY_GB {
+                if !layout.has_room() {
                     return (S::NotPrepared { device }, none());
                 }
                 let account = Account::default();
@@ -940,7 +954,7 @@ pub fn update(app: App, state: State, event: Event) -> (State, Vec<Effect>) {
                     S::CreateAccount {
                         device,
                         account: Account::default(),
-                        env: Some(Layout { total_gb: 0, ipados_gb: 0, ipados_used_gb: 0, outside: Vec::new() }),
+                        env: Some(Layout { total_gb: 0, ipados_gb: 0, ipados_used_gb: 0, outside: Vec::new(), outside_bytes: 0 }),
                         erase_approved: true,
                         slow: false,
                     },
@@ -1069,7 +1083,7 @@ pub fn update(app: App, state: State, event: Event) -> (State, Vec<Effect>) {
             (S::CreateAccount { device, account, env, erase_approved, slow }, none())
         }
         (S::CreateAccount { device, account, erase_approved, .. }, E::EnvReady { layout }) => {
-            if layout.outside_gb() < MIN_OMARCHY_GB {
+            if !layout.has_room() {
                 return (S::NotPrepared { device }, none());
             }
             if !layout.outside.is_empty() && !erase_approved {

@@ -103,7 +103,13 @@ pub fn flow_layout(gpt: &Gpt) -> Layout {
             gb: gb(p.blocks),
         })
         .collect();
-    Layout { total_gb: total, ipados_gb: gb(ipados), ipados_used_gb: 0, outside }
+    // In bytes too: whether the system fits is not a matter of rounding.
+    let blocks = |all: u64| all * gpt.disk.sector;
+    let disk = match gpt.disk.bytes {
+        0 => blocks(gpt.partitions.iter().map(|p| p.blocks).sum::<u64>() + gpt.free.iter().map(|f| f.blocks).sum::<u64>()),
+        bytes => bytes,
+    };
+    Layout { total_gb: total, ipados_gb: gb(ipados), ipados_used_gb: 0, outside, outside_bytes: disk.saturating_sub(blocks(ipados)) }
 }
 
 impl Worker {

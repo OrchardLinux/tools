@@ -24,7 +24,7 @@ fn attached(mode: UsbMode) -> Event {
 
 /// What iPadOS reports before the split: 128 GB, 41 GB used.
 fn ipados_layout() -> Layout {
-    Layout { total_gb: 128, ipados_gb: 128, ipados_used_gb: 41, outside: Vec::new() }
+    Layout { total_gb: 128, ipados_gb: 128, ipados_used_gb: 41, outside: Vec::new(), outside_bytes: 0 }
 }
 
 /// What the install system reports after the split.
@@ -37,6 +37,7 @@ fn env_layout(omarchy_gb: u32) -> Layout {
             Partition { name: "BOOT".into(), filesystem: "FAT32".into(), gb: 1 },
             Partition { name: "omarchy-a".into(), filesystem: "ext4".into(), gb: omarchy_gb.saturating_sub(1) },
         ],
+        outside_bytes: 0,
     }
 }
 

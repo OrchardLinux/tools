@@ -1317,7 +1317,7 @@ mod tests {
 
     #[test]
     fn the_layout_bars_fill_their_width() {
-        let layout = Layout { total_gb: 128, ipados_gb: 128, ipados_used_gb: 41, outside: vec![] };
+        let layout = Layout { total_gb: 128, ipados_gb: 128, ipados_used_gb: 41, outside: vec![], outside_bytes: 0 };
         let width = |row: Vec<Span>| row.iter().map(|(t, _)| t.chars().count()).sum::<usize>();
         assert_eq!(width(layout_bar(&layout, 128, None, 40)), 40);
         assert_eq!(width(layout_bar(&layout, 58, Some(70), 40)), 40);

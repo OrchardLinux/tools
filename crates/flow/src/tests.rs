@@ -21,7 +21,7 @@ fn ipad8() -> Device {
 }
 
 fn fresh() -> Layout {
-    Layout { total_gb: 128, ipados_gb: 128, ipados_used_gb: 41, outside: vec![] }
+    Layout { total_gb: 128, ipados_gb: 128, ipados_used_gb: 41, outside: vec![], outside_bytes: 0 }
 }
 
 fn split_before() -> Layout {
@@ -33,6 +33,7 @@ fn split_before() -> Layout {
             Partition { name: "BOOT".into(), filesystem: "FAT32".into(), gb: 1 },
             Partition { name: "omarchy-a".into(), filesystem: "ext4".into(), gb: 63 },
         ],
+        outside_bytes: 0,
     }
 }
 
@@ -255,7 +256,7 @@ fn create_account() -> State {
 }
 
 fn installed_layout() -> Layout {
-    Layout { total_gb: 128, ipados_gb: 96, ipados_used_gb: 41, outside: vec![] }
+    Layout { total_gb: 128, ipados_gb: 96, ipados_used_gb: 41, outside: vec![], outside_bytes: 0 }
 }
 
 #[test]
@@ -720,7 +721,7 @@ fn an_install_system_found_at_start_continues_by_its_phase() {
 
 #[test]
 fn reopening_the_app_on_a_ready_install_system_prepares_into_free_space() {
-    let free = Layout { total_gb: 128, ipados_gb: 64, ipados_used_gb: 20, outside: Vec::new() };
+    let free = Layout { total_gb: 128, ipados_gb: 64, ipados_used_gb: 20, outside: Vec::new(), outside_bytes: 0 };
     let (flow, e) = step(App::Installer, with_install_system(), Event::EnvReady { layout: free });
     assert!(matches!(flow.state, State::CreateAccount { env: Some(_), .. }));
     // Preparing starts (after the assets it needs).
@@ -729,7 +730,7 @@ fn reopening_the_app_on_a_ready_install_system_prepares_into_free_space() {
     let (flow, _) = step(App::Installer, flow, Event::Continue);
     assert!(matches!(flow.state, State::Installing { .. }));
     // Too little room: not prepared.
-    let small = Layout { total_gb: 64, ipados_gb: 60, ipados_used_gb: 20, outside: Vec::new() };
+    let small = Layout { total_gb: 64, ipados_gb: 60, ipados_used_gb: 20, outside: Vec::new(), outside_bytes: 0 };
     let (flow, _) = step(App::Installer, with_install_system(), Event::EnvReady { layout: small });
     assert!(matches!(flow.state, State::NotPrepared { .. }));
 }
@@ -800,7 +801,7 @@ fn a_split_that_erases_partitions_is_confirmed_in_a_dialog() {
 // ---- Suggested split and resume ----
 
 fn layout_of(total: u32, used: u32) -> Layout {
-    Layout { total_gb: total, ipados_gb: total, ipados_used_gb: used, outside: Vec::new() }
+    Layout { total_gb: total, ipados_gb: total, ipados_used_gb: used, outside: Vec::new(), outside_bytes: 0 }
 }
 
 #[test]
@@ -1005,4 +1006,18 @@ fn a_device_other_work_holds_is_waited_for_not_unplugged() {
     // With a device that nobody holds beside it, it is "more than one device".
     assert_eq!(with(vec![held("orchard2 load"), iphone()]).in_use(), None);
     assert_eq!(with(vec![]).in_use(), None);
+}
+
+#[test]
+fn space_that_is_there_is_measured_in_bytes_against_orchards_least() {
+    let layout = |bytes: u64| Layout { total_gb: 64, ipados_gb: 54, ipados_used_gb: 20, outside: vec![], outside_bytes: bytes };
+    // 9.5 GB reads as 10 GB and is less than an 8 GiB root and a 1 GiB boot partition.
+    assert_eq!(layout(0).outside_gb(), MIN_OMARCHY_GB);
+    assert!(!layout(9_500_000_000).has_room());
+    assert!(layout(MIN_SYSTEM_BYTES).has_room());
+    assert!(!layout(MIN_SYSTEM_BYTES - 1).has_room());
+    // Where only whole GB are known, they decide.
+    assert!(layout(0).has_room());
+    let small = Layout { total_gb: 64, ipados_gb: 55, ipados_used_gb: 20, outside: vec![], outside_bytes: 0 };
+    assert!(!small.has_room());
 }

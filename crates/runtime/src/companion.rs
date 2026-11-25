@@ -136,6 +136,7 @@ impl StorageLayout {
             ipados_gb: gb((apfs.last_lba - apfs.first_lba + 1) * self.sector_size),
             ipados_used_gb: up(used),
             outside,
+            outside_bytes: (self.splittable_bytes() - (apfs.last_lba - apfs.first_lba + 1) * self.sector_size).max(0) as u64,
         }
     }
 
