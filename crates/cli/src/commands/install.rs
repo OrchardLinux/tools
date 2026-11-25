@@ -437,6 +437,9 @@ struct Shared {
     stalled: bool,
     /// The devices last listed for "More than one device connected".
     others_said: Vec<orchard_flow::Other>,
+    /// The exploit's attempt and palera1n's stage last shown.
+    attempt_said: u32,
+    stage_said: Option<&'static str>,
 }
 
 enum Next {
@@ -449,7 +452,7 @@ enum Next {
 
 impl Shared {
     fn new(app: App) -> Shared {
-        Shared { app, last: String::new(), waiting: Waiting::new(), stalled: false, others_said: Vec::new() }
+        Shared { app, last: String::new(), waiting: Waiting::new(), stalled: false, others_said: Vec::new(), attempt_said: 1, stage_said: None }
     }
 
     /// "Unplug the ones you don't want to install on." and the launcher's own.
@@ -458,6 +461,64 @@ impl Shared {
             App::Installer => "Unplug the ones you don't want to install on.",
             App::Launcher => "Unplug the ones you don't want to start.",
         }
+    }
+
+    /// "Starting your iPad", with the exploit's attempt and palera1n's stage,
+    /// while the device is being started (both apps).
+    fn starting(&mut self, out: &mut Out, flow: &Flow, first: bool) {
+        if first {
+            out.term.live_restart(vec![s(orchard_flow::for_device("Starting your iPad"), FG), s("  about a minute", MUTED)]);
+        }
+        if flow.start_attempt > self.attempt_said {
+            self.attempt_said = flow.start_attempt;
+            out.event(json!({"event": "retry", "reason": "exploit", "attempt": flow.start_attempt}));
+        }
+        // The stage from palera1n's log, beside the attempt.
+        let stage = orchard_flow::start_stage(&flow.start_log);
+        if stage != self.stage_said || first {
+            if stage != self.stage_said {
+                if let Some(st) = stage {
+                    out.event(json!({"event": "stage", "stage": st, "attempt": flow.start_attempt.max(1)}));
+                }
+            }
+            self.stage_said = stage;
+            let mut l = vec![s(orchard_flow::for_device("Starting your iPad"), FG)];
+            if flow.start_attempt > 1 {
+                l.push(s(format!("  attempt {}", flow.start_attempt), MUTED));
+            }
+            l.push(s(stage.map(|st| format!("  {}", orchard_flow::for_device(st))).unwrap_or_else(|| "  about a minute".into()), MUTED));
+            out.term.live(Some(l));
+        }
+    }
+
+    /// DFU mode again (3.1), saying why; `name` is the system's name.
+    fn dfu_again(&mut self, out: &mut Out, flow: &Flow, device: &orchard_flow::Device, why: Again, name: &str, wait: u64) {
+        out.term.live(None);
+        if matches!(why, Again::Retry | Again::RetryPrepare) {
+            out.event(json!({"event": "retry", "reason": "start-failed"}));
+        }
+        let (title, sub): (String, String) = match why {
+            Again::Install => (format!("Next, install {name}"), orchard_flow::for_device("Put your iPad in DFU mode again, the same way as before.").to_owned()),
+            Again::Retry | Again::RetryPrepare => (
+                orchard_flow::for_device("Starting your iPad didn't work").to_owned(),
+                format!("Put it in DFU mode again, the same way as before. {} then tries again.", orchard_flow::app_name(self.app)),
+            ),
+            Again::Split => (
+                orchard_flow::for_device("Put your iPad in DFU mode again").to_owned(),
+                orchard_flow::for_device(&format!("The installer then starts your iPad to split the storage between iPadOS and {name}.")).to_owned(),
+            ),
+            Again::CheckSplit => (
+                orchard_flow::for_device("Put your iPad in DFU mode again").to_owned(),
+                orchard_flow::for_device("Your iPad restarted while the storage was being split. In DFU mode the installer can check it.").to_owned(),
+            ),
+        };
+        if let Some(p) = flow.start_problem.as_deref().filter(|_| matches!(why, Again::Retry | Again::RetryPrepare)) {
+            out.muted(orchard_flow::for_device(p));
+        }
+        self.attempt_said = 1;
+        self.stage_said = None;
+        dfu_block(out, &title, Some(&sub), device.sequence, Some(&device.name), wait);
+        self.waiting = Waiting { since: Instant::now(), shown: true, sequence: Some(device.sequence) };
     }
 
     fn see(&mut self, out: &mut Out, flow: &Flow) -> Next {
@@ -506,6 +567,12 @@ impl Shared {
         }
         match &flow.state {
             State::WaitingForDfu { .. } if first => self.waiting = Waiting::new(),
+            State::Unsupported { device } => {
+                out.term.live(None);
+                out.fail(format!("This {} isn't supported yet", device.name));
+                out.muted("Supported devices: https://github.com/OrchardLinux/orchard/blob/main/docs/compatibility.md");
+                return Next::Exit(finish(out, Exit::Unsupported, "unsupported", &device.name));
+            }
             State::SeveralInDfu { .. } if first => {
                 out.term.live(None);
                 out.warn(orchard_flow::SEVERAL_TITLE);
@@ -585,8 +652,6 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
     let mut slow_said = false;
     let mut lost_said = false;
     let mut ctrl_c_said = false;
-    let mut attempt_said = 1u32;
-    let mut stage_said: Option<&'static str> = None;
     loop {
         out.term.tick();
         waiting_keys(&mut out, &mut shared.waiting, args.wait);
@@ -622,18 +687,12 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
             Next::Go { first } => first,
         };
         match &flow.state {
-            State::WaitingForDfu { .. } | State::SeveralInDfu { .. } => {}
+            State::WaitingForDfu { .. } | State::SeveralInDfu { .. } | State::Unsupported { .. } => {}
             State::UsbAccessNeeded => {
                 if first {
                     out.warn("This computer needs to allow USB access for the device. Approving it asks for your password.");
                     send(Event::Continue);
                 }
-            }
-            State::Unsupported { device } => {
-                out.term.live(None);
-                out.fail(format!("This {} isn't supported yet", device.name));
-                out.muted("Supported devices: https://github.com/OrchardLinux/orchard/blob/main/docs/compatibility.md");
-                return finish(&mut out, Exit::Unsupported, "unsupported", &device.name);
             }
             State::Found { device, .. } => {
                 if !found {
@@ -656,29 +715,7 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
                 }
             }
             State::WaitingForIpados { slow, .. } => {
-                if first {
-                    out.term.live_restart(vec![s(orchard_flow::for_device("Starting your iPad"), FG), s("  about a minute", MUTED)]);
-                }
-                if flow.start_attempt > attempt_said {
-                    attempt_said = flow.start_attempt;
-                    out.event(json!({"event": "retry", "reason": "exploit", "attempt": flow.start_attempt}));
-                }
-                // The stage from palera1n's log, beside the attempt.
-                let stage = orchard_flow::start_stage(&flow.start_log);
-                if stage != stage_said || first {
-                    if stage != stage_said {
-                        if let Some(st) = stage {
-                            out.event(json!({"event": "stage", "stage": st, "attempt": flow.start_attempt.max(1)}));
-                        }
-                    }
-                    stage_said = stage;
-                    let mut l = vec![s(orchard_flow::for_device("Starting your iPad"), FG)];
-                    if flow.start_attempt > 1 {
-                        l.push(s(format!("  attempt {}", flow.start_attempt), MUTED));
-                    }
-                    l.push(s(stage.map(|st| format!("  {}", orchard_flow::for_device(st))).unwrap_or_else(|| "  about a minute".into()), MUTED));
-                    out.term.live(Some(l));
-                }
+                shared.starting(&mut out, &flow, first);
                 if *slow && !slow_said {
                     slow_said = true;
                     out.warn(orchard_flow::for_device("Your iPad hasn't answered yet. If it shows the Lock Screen, unlock it."));
@@ -776,32 +813,7 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
             }
             State::DfuAgain { device, why, .. } => {
                 if first {
-                    out.term.live(None);
-                    if matches!(why, Again::Retry | Again::RetryPrepare) {
-                        out.event(json!({"event": "retry", "reason": "start-failed"}));
-                    }
-                    let (title, sub): (String, String) = match why {
-                        Again::Install => (format!("Next, install {name}"), orchard_flow::for_device("Put your iPad in DFU mode again, the same way as before.").to_owned()),
-                        Again::Retry | Again::RetryPrepare => (
-                            orchard_flow::for_device("Starting your iPad didn't work").to_owned(),
-                            "Put it in DFU mode again, the same way as before. The installer then tries again.".to_owned(),
-                        ),
-                        Again::Split => (
-                            orchard_flow::for_device("Put your iPad in DFU mode again").to_owned(),
-                            orchard_flow::for_device(&format!("The installer then starts your iPad to split the storage between iPadOS and {name}.")).to_owned(),
-                        ),
-                        Again::CheckSplit => (
-                            orchard_flow::for_device("Put your iPad in DFU mode again").to_owned(),
-                            orchard_flow::for_device("Your iPad restarted while the storage was being split. In DFU mode the installer can check it.").to_owned(),
-                        ),
-                    };
-                    if let Some(p) = flow.start_problem.as_deref().filter(|_| matches!(why, Again::Retry | Again::RetryPrepare)) {
-                        out.muted(orchard_flow::for_device(p));
-                    }
-                    attempt_said = 1;
-                    stage_said = None;
-                    dfu_block(&mut out, &title, Some(&sub), device.sequence, Some(&device.name), args.wait);
-                    shared.waiting = Waiting { since: Instant::now(), shown: true, sequence: Some(device.sequence) };
+                    shared.dfu_again(&mut out, &flow, device, *why, &name, args.wait);
                 }
             }
             State::NotPrepared { .. } => {
@@ -1018,28 +1030,20 @@ pub fn launch(json: bool, args: &LaunchArgs) -> ExitCode {
             }
             continue;
         };
-        if let Some(problem) = &flow.launch_problem {
-            out.term.live(None);
-            out.fail(orchard_flow::for_device("Orchard couldn't start your iPad"));
-            out.muted(problem);
-            return finish(&mut out, Exit::Failed, "start-failed", problem);
-        }
         let first = match shared.see(&mut out, &flow) {
             Next::Skip => continue,
             Next::Exit(code) => return code,
             Next::Go { first } => first,
         };
         match &flow.state {
-            State::Unsupported { device } => {
-                out.term.live(None);
-                out.fail(format!("This {} isn't supported yet", device.name));
-                return finish(&mut out, Exit::Unsupported, "unsupported", &device.name);
+            State::Found { device, .. } => {
+                if first {
+                    out.term.live(None);
+                    out.ok(format!("{} in DFU mode", device.name));
+                }
+                shared.starting(&mut out, &flow, first);
             }
-            State::Found { device, .. } if first => {
-                out.term.live(None);
-                out.ok(format!("{} in DFU mode", device.name));
-                out.term.live_restart(vec![s("Looking for installed systems", SUB)]);
-            }
+            State::DfuAgain { device, why, .. } if first => shared.dfu_again(&mut out, &flow, device, *why, "", args.wait),
             State::ChooseSystem { entries, selected, .. } if !chosen => {
                 out.term.live(None);
                 out.event(json!({"event": "systems", "entries": entries.iter().map(|e| json!({"id": e.id, "title": e.title, "kernel": e.kernel, "default": e.default})).collect::<Vec<_>>()}));

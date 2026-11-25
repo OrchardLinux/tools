@@ -359,8 +359,6 @@ pub struct Flow {
     pub unresponsive: bool,
     /// The split erases partitions: its confirmation dialog is open.
     pub confirming_split: bool,
-    /// Why the launcher couldn't start the device (L.1 shows it).
-    pub launch_problem: Option<String>,
     /// The launcher's chosen entry was handed to m1n1 and is starting.
     pub entry_started: bool,
     /// The exploit's attempt under way (0 or 1: the first).
@@ -375,6 +373,14 @@ pub struct Flow {
     /// Starts of the device held back while other devices are on USB; they
     /// go once those are gone, if the flow still waits for them.
     pub held: Vec<Effect>,
+}
+
+/// How copy names the app: "The installer" or "Orchard" (the launcher).
+pub fn app_name(app: App) -> &'static str {
+    match app {
+        App::Installer => "The installer",
+        App::Launcher => "Orchard",
+    }
 }
 
 /// The title of the screen (and the CLI's line) while more than one Apple
@@ -424,7 +430,7 @@ impl Flow {
     }
 
     pub fn new() -> Flow {
-        Flow { state: State::start(), assets: Assets::default(), write_waiting: false, start_waiting: None, boot_waiting: None, companion: false, split_problem: None, install_problem: None, resuming: false, boot_stalled: false, booting: false, unresponsive: false, confirming_split: false, launch_problem: None, entry_started: false, start_attempt: 0, start_problem: None, start_log: Vec::new(), others: Vec::new(), held: Vec::new() }
+        Flow { state: State::start(), assets: Assets::default(), write_waiting: false, start_waiting: None, boot_waiting: None, companion: false, split_problem: None, install_problem: None, resuming: false, boot_stalled: false, booting: false, unresponsive: false, confirming_split: false, entry_started: false, start_attempt: 0, start_problem: None, start_log: Vec::new(), others: Vec::new(), held: Vec::new() }
     }
 
     /// The asset the current step waits for, for "Getting your iPad ready…".
@@ -600,15 +606,13 @@ fn step_inner(app: App, mut flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
             return step(app, flow, Event::InstallFinished { ok: false });
         }
         Event::AccountNeeded if matches!(flow.state, State::WaitingForDfu { .. }) => flow.resuming = true,
-        // A start that didn't work: its reason shows on DFU mode again.
-        Event::ChainFailed(ref reason) if matches!(flow.state, State::WaitingForIpados { .. } | State::CreateAccount { env: None, .. }) => {
+        // A start that didn't work: its reason shows on DFU mode again (both
+        // apps; the launcher's start runs from Found until m1n1 took the entry).
+        Event::ChainFailed(ref reason)
+            if matches!(flow.state, State::WaitingForIpados { .. } | State::CreateAccount { env: None, .. })
+                || (app == App::Launcher && matches!(flow.state, State::Found { .. } | State::Starting { .. })) =>
+        {
             flow.start_problem = Some(reason.clone());
-        }
-        // The launcher's chain or m1n1 failed: back to waiting, with the reason.
-        Event::ChainFailed(reason) if app == App::Launcher && matches!(flow.state, State::Found { .. } | State::Starting { .. }) => {
-            flow.launch_problem = Some(reason);
-            flow.state = State::start();
-            return (flow, out);
         }
         Event::SplitRefused(reason) => {
             flow.split_problem = Some(reason);
@@ -693,10 +697,6 @@ fn step_inner(app: App, mut flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
     flow.state = state;
     if !matches!(flow.state, State::ChooseSplit { .. } | State::Splitting { .. } | State::WaitingForIpados { .. }) {
         flow.split_problem = None;
-    }
-    // A new attempt clears the launcher's last reason.
-    if matches!(flow.state, State::Found { .. }) {
-        flow.launch_problem = None;
     }
     if !matches!(flow.state, State::InstallFailed { .. }) {
         flow.install_problem = None;
@@ -990,6 +990,10 @@ pub fn update(app: App, state: State, event: Event) -> (State, Vec<Effect>) {
         }
 
         // ---- DFU again ----
+        // The launcher's route after DFU mode: start m1n1 and list the systems.
+        (S::DfuAgain { device: d, .. }, E::Attached { device, mode: UsbMode::Dfu }) if app == App::Launcher && d.id == device.id => {
+            found(app, device)
+        }
         (S::DfuAgain { device: d, why, .. }, E::Attached { device, mode: UsbMode::Dfu }) if d.id == device.id => {
             match why {
                 Again::Install | Again::Retry => install_from_dfu(device),
@@ -1136,6 +1140,10 @@ pub fn update(app: App, state: State, event: Event) -> (State, Vec<Effect>) {
             (S::DfuAgain { device, why: Again::RetryPrepare, seen: None }, none())
         }
         (S::CreateAccount { device, env: None, .. }, E::ChainFailed(_)) => {
+            (S::DfuAgain { device, why: Again::Retry, seen: None }, none())
+        }
+        // The launcher's start (palera1n, Pongo, m1n1, the entry) failed: the same.
+        (S::Found { device, .. } | S::Starting { device, .. }, E::ChainFailed(_)) if app == App::Launcher => {
             (S::DfuAgain { device, why: Again::Retry, seen: None }, none())
         }
         (S::DfuAgain { device: d, why, .. }, E::Attached { device, mode }) if d.id == device.id => {

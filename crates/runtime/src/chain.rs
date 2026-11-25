@@ -388,12 +388,8 @@ pub fn boot_ipados(executor: &Executor, device: &Device) -> Result<()> {
 /// nothing else comes from the host (orchard's `orchard launch`).
 pub fn start_m1n1(executor: &Executor, device: &Device) -> Result<orchard_usb::Device> {
     let tools = executor.orchard_tools()?;
-    let pongo_image = executor.pongo_image()?;
     let m1n1 = std::fs::read(executor.download(&tools.m1n1)?)?;
-    let usb = into_pongo(executor, device, &pongo_image)?;
-    let mut pongo = Pongo::open(&usb).map_err(|e| fail(e.to_string()))?;
-    pongo.send(&m1n1, Duration::from_secs(60)).map_err(|e| fail(e.to_string()))?;
-    let _ = pongo.command("bootm", Duration::from_secs(10));
+    start_from_pongo(executor, device, &m1n1)?;
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         if let Some(usb) = the_device(device, Mode::M1n1)? {
@@ -410,13 +406,19 @@ pub fn start_m1n1(executor: &Executor, device: &Device) -> Result<orchard_usb::D
 /// goes back to the flow, which asks for DFU again.
 pub fn boot_install_env(executor: &Executor, device: &Device) -> Result<()> {
     let payload = payload(executor, device)?;
+    start_from_pongo(executor, device, &payload)
+}
+
+/// Both apps' start: palera1n → Pongo, then `image` to Pongo and `bootm`.
+/// What follows differs: the install system shows up on USB by itself (the
+/// installer), or m1n1 does (the launcher). bootm's own answer may not come
+/// (Pongo is gone once the image runs), so only what shows up next confirms it.
+fn start_from_pongo(executor: &Executor, device: &Device, image: &[u8]) -> Result<()> {
     let pongo_image = executor.pongo_image()?;
     let usb = into_pongo(executor, device, &pongo_image)?;
     let mut pongo = Pongo::open(&usb).map_err(|e| fail(e.to_string()))?;
-    pongo.send(&payload, Duration::from_secs(60)).map_err(|e| fail(e.to_string()))?;
-    // bootm starts the payload; Pongo may be gone before it answers, and the
-    // install system appearing is what confirms it.
-    pongo.command("bootm", Duration::from_secs(10)).map_err(|e| fail(e.to_string()))?;
+    pongo.send(image, Duration::from_secs(60)).map_err(|e| fail(e.to_string()))?;
+    let _ = pongo.command("bootm", Duration::from_secs(10));
     Ok(())
 }
 

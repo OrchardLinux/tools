@@ -349,7 +349,7 @@ fn trouble(cx: &mut Context<Installer>) -> gpui::Stateful<Div> {
 const NOTE_GAP: f32 = 16.;
 const NOTE_LINE: f32 = 19.;
 
-fn waiting_for_dfu(tab: Sequence, rows: f32, note: f32, guide: (bool, Option<crate::guide::Moment>, [f32; 6], f32), unresponsive: bool, launcher: Option<Option<String>>, cx: &mut Context<Installer>) -> Div {
+fn waiting_for_dfu(tab: Sequence, rows: f32, note: f32, guide: (bool, Option<crate::guide::Moment>, [f32; 6], f32), unresponsive: bool, launcher: bool, cx: &mut Context<Installer>) -> Div {
     let (running, moment, highlight, dim) = guide;
     let darken = 1. - GUIDE_DARKEN * dim;
     let list = match tab {
@@ -358,11 +358,10 @@ fn waiting_for_dfu(tab: Sequence, rows: f32, note: f32, guide: (bool, Option<cra
         Sequence::VolumeDownSide => VOLUME_DOWN_SIDE,
     };
     // L.1 (the launcher) words it as starting the device.
-    let top = match &launcher {
-        Some(_) => header("Start your device", "This puts it in a special startup mode (DFU) so Orchard can start it."),
-        None => header("Let's connect your device", "This puts it in a special startup mode (DFU) so the installer can reach it."),
+    let top = match launcher {
+        true => header("Start your device", "This puts it in a special startup mode (DFU) so Orchard can start it."),
+        false => header("Let's connect your device", "This puts it in a special startup mode (DFU) so the installer can reach it."),
     };
-    let problem = launcher.flatten();
     column()
         .child(top.opacity(darken))
         .child(
@@ -399,10 +398,6 @@ fn waiting_for_dfu(tab: Sequence, rows: f32, note: f32, guide: (bool, Option<cra
                         ),
                 ),
         )
-        // The launcher's last start failed: why (draft copy).
-        .children(problem.map(|p| {
-            div().w_full().text_size(px(13.)).line_height(px(19.)).text_color(c(RED)).child(orchard_flow::for_device(&format!("Orchard couldn't start your iPad: {p}")).to_owned())
-        }))
         // A device running iPadOS is on USB but doesn't answer, so it can't
         // be shown as found (draft copy).
         .children(unresponsive.then(|| {
@@ -888,7 +883,7 @@ pub fn text_column(installer: &mut Installer, kind: ScreenKind, cx: &mut Context
             };
             let guide = (installer.guide.is_some(), moment, highlight, fade);
             let unresponsive = installer.flow.unresponsive;
-            let launcher = (installer.app == orchard_flow::App::Launcher).then(|| installer.flow.launch_problem.clone());
+            let launcher = installer.app == orchard_flow::App::Launcher;
             waiting_for_dfu(tab, installer.rows.value(), installer.note.value(), guide, unresponsive, launcher, cx).into_any_element()
         }
         (State::Found { device, .. }, _) => found(device, cx).into_any_element(),

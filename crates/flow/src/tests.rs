@@ -923,3 +923,23 @@ fn the_launcher_holds_its_start_too_and_lets_go_once_the_system_starts() {
     let (flow, _) = step(app, flow, Event::Others(vec![iphone(), iphone()]));
     assert!(!flow.refusing());
 }
+
+#[test]
+fn the_launchers_failed_start_is_the_installers() {
+    let app = App::Launcher;
+    let (flow, effects) = step(app, Flow::new(), dfu(ipad6()));
+    assert!(matches!(effects[..], [Effect::ListEntries(_)]), "{effects:?}");
+    let (flow, _) = step(app, flow, Event::StartAttempt(2));
+    let (flow, _) = step(app, flow, Event::ChainFailed("palera1n: Unable to perform checkm8".into()));
+    // DFU mode again, with palera1n's reason, as in the installer (3.1r).
+    assert!(matches!(flow.state, State::DfuAgain { why: Again::Retry, .. }), "{:?}", flow.state);
+    assert_eq!(flow.start_problem.as_deref(), Some("palera1n: Unable to perform checkm8"));
+    // Back in DFU mode: the launcher's route again (m1n1, the systems).
+    let (flow, effects) = step(app, flow, dfu(ipad6()));
+    assert!(matches!(flow.state, State::Found { .. }) && matches!(effects[..], [Effect::ListEntries(_)]), "{effects:?}");
+    // m1n1 failing to start the entry goes the same way.
+    let mut flow = flow;
+    flow.state = State::Starting { device: ipad6(), title: "A".into() };
+    let (flow, _) = step(app, flow, Event::ChainFailed("m1n1 is not running".into()));
+    assert!(matches!(flow.state, State::DfuAgain { why: Again::Retry, .. }));
+}
