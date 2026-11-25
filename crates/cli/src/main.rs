@@ -17,6 +17,18 @@ fn main() -> ExitCode {
             Err(e) => output::finish(&cli.global, Err(e)),
         };
     }
+    // A shell and a command on the device end with their own status.
+    let on_device = match &cli.command {
+        args::Command::Shell { reach } => Some(commands::remote::shell(&cli.global, reach)),
+        args::Command::Exec { reach, command } => Some(commands::remote::exec(&cli.global, reach, command)),
+        _ => None,
+    };
+    if let Some(ended) = on_device {
+        return match ended {
+            Ok(status) => status,
+            Err(e) => output::finish(&cli.global, Err(e)),
+        };
+    }
     // Install and launch stream their own output and exit codes.
     match &cli.command {
         args::Command::Install(a) => return commands::install::install(&cli.global, a),
@@ -31,7 +43,15 @@ fn main() -> ExitCode {
             commands::build::component_keys(&cli.global, &output, &platform)
         }
         args::Command::Run(args) => commands::run::run(&cli.global, &args),
-        args::Command::Session { .. } => unreachable!("handled above"),
+        args::Command::Session { .. } | args::Command::Shell { .. } | args::Command::Exec { .. } => {
+            unreachable!("handled above")
+        }
+        args::Command::Push { local, remote, reach, serial } => {
+            commands::remote::push(&cli.global, &reach, &local, &remote, serial)
+        }
+        args::Command::Pull { remote, local, reach, serial } => {
+            commands::remote::pull(&cli.global, &reach, &remote, &local, serial)
+        }
         args::Command::Devices(a) => commands::devices::run(&cli.global, &a),
         args::Command::Wait { mode, timeout } => {
             commands::devices::wait(&cli.global, mode.into(), timeout.timeout)

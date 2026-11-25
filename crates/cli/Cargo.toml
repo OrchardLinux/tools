@@ -15,6 +15,7 @@ orchard-build.workspace = true
 orchard-cache.workspace = true
 orchard-device.workspace = true
 orchard-formats.workspace = true
+orchard-remote.workspace = true
 orchard-usb.workspace = true
 orchard-flow = { path = "../flow" }
 orchard-runtime = { path = "../runtime" }

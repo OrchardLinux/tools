@@ -80,7 +80,10 @@ tests and the scripted demo only:
 
 - `--ecid` and `--location` for `install` and `launch`;
 - the lock in the runtime;
-- `ORCHARD_ENTRY=checkra1n`.
+- `ORCHARD_ENTRY=checkra1n`;
+- `shell`, `exec`, `push` and `pull` (`crates/remote`): the serial console
+  protocol is tested against a scripted console, the rest by what it
+  refuses. No payload and no installed system has been reached with them.
 
 Not run on Linux at all (written on macOS): the udev rule (`setup usb`, and
 what `install` and `launch` install when access is refused), and `setup`'s

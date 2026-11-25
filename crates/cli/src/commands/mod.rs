@@ -13,6 +13,7 @@ pub mod m1n1;
 pub mod pongo;
 pub mod prep;
 pub mod recovery;
+pub mod remote;
 pub mod run;
 pub mod session;
 pub mod term;

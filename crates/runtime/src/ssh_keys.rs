@@ -43,6 +43,21 @@ fn identity(cache: &Path) -> Result<PathBuf> {
     Ok(key)
 }
 
+/// Remembers the user an install let this computer sign in as, for
+/// `orchard2 shell` and its kin (`private/ssh/user`, as orchard's
+/// computer_key.py).
+pub fn remember_user(cache: &Path, user: &str) -> Result<()> {
+    let key = identity(cache)?;
+    let path = key.with_file_name("user");
+    std::fs::write(&path, format!("{user}\n"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
+}
+
 /// The keys to import: Orchard's own, then the user's, each once.
 pub fn keys(cache: &Path) -> Result<Vec<String>> {
     let mut out = Vec::new();

@@ -32,6 +32,21 @@ pub struct Global {
     pub device: DeviceArgs,
 }
 
+/// How a running system is reached.
+#[derive(Args, Debug, Clone)]
+pub struct ReachArgs {
+    /// An installed system's user (default: the one its install let this
+    /// computer sign in as)
+    #[arg(long, conflicts_with = "ram")]
+    pub user: Option<String>,
+    /// An SSH address, instead of the device on USB
+    #[arg(long)]
+    pub host: Option<String>,
+    /// With --host: a RAM payload, reached as root
+    #[arg(long, requires = "host")]
+    pub ram: bool,
+}
+
 /// Which device to work on. Every command uses these same flags.
 #[derive(Args, Default)]
 pub struct DeviceArgs {
@@ -88,6 +103,46 @@ pub enum Command {
         mode: ModeArg,
         #[command(flatten)]
         timeout: TimeoutArgs,
+    },
+    /// Open a shell on the running RAM payload or installed system
+    Shell {
+        #[command(flatten)]
+        reach: ReachArgs,
+    },
+    /// Run a command on the running RAM payload or installed system:
+    /// orchard2 exec -- CMD...
+    Exec {
+        #[command(flatten)]
+        reach: ReachArgs,
+        /// The command and its arguments, after `--`
+        #[arg(last = true, required = true)]
+        command: Vec<String>,
+    },
+    /// Copy a file of this computer to the running RAM payload or installed
+    /// system, checked by SHA-256
+    Push {
+        /// The file here
+        local: std::path::PathBuf,
+        /// Where it goes on the device
+        remote: String,
+        #[command(flatten)]
+        reach: ReachArgs,
+        /// Over the USB serial console (a payload without SSH; up to 16 MiB)
+        #[arg(long, conflicts_with_all = ["host", "ram"])]
+        serial: bool,
+    },
+    /// Copy a file of the running RAM payload or installed system to this
+    /// computer, checked by SHA-256
+    Pull {
+        /// The file on the device
+        remote: String,
+        /// Where it goes here
+        local: std::path::PathBuf,
+        #[command(flatten)]
+        reach: ReachArgs,
+        /// Over the USB serial console (a payload without SSH; up to 16 MiB)
+        #[arg(long, conflicts_with_all = ["host", "ram"])]
+        serial: bool,
     },
     /// Keep one device locked while a command runs; orchard2 commands in it
     /// work on that device

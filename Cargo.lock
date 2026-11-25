@@ -3857,6 +3857,7 @@ dependencies = [
  "orchard-device",
  "orchard-flow",
  "orchard-formats",
+ "orchard-remote",
  "orchard-runtime",
  "orchard-usb",
  "serde",
@@ -3907,6 +3908,17 @@ dependencies = [
  "orchard-runtime",
  "orchard-usb",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "orchard-remote"
+version = "0.1.4"
+dependencies = [
+ "libc",
+ "orchard-cache",
+ "orchard-usb",
+ "sha2 0.10.9",
+ "tempfile",
 ]
 
 [[package]]

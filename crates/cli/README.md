@@ -7,6 +7,7 @@ The command line. Its documentation is in [`docs/`](../../docs/README.md):
   (`crates/flow`, run by `crates/runtime`);
 - [build](../../docs/build.md) and [cache](../../docs/cache.md)
   (`crates/build`, whose README describes how it works inside);
+- [shell, exec, push and pull](../../docs/remote.md) (`crates/remote`);
 - [devices](../../docs/devices.md), the
   [boot commands](../../docs/boot-commands.md) and the
   [low-level commands](../../docs/low-level.md) (`crates/device`,

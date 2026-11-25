@@ -28,6 +28,7 @@ aarch64).
 | `crates/formats` | File formats Apple devices and Linux boots use |
 | `crates/cache` | Pinned downloads and the cache |
 | `crates/build` | `build`: the component cache and orchard's producers |
+| `crates/remote` | `shell`, `exec`, `push`, `pull`: a running system over SSH or the serial console |
 | `crates/device`, `crates/cli` | The command line |
 | `docs` | What `orchard2` does, command by command |
 | `TODO.md` | What is decided but not done |

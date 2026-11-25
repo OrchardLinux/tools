@@ -38,7 +38,8 @@ the release. Each file is checked before it is used.
    screen PIN (6 digits) are asked twice each, or read from
    `--password-file FILE` and `--pin-file FILE` (`-`: the next line of
    stdin, password first). `--ssh` lets this computer sign in over SSH with
-   its keys; `--no-ssh` doesn't and doesn't ask.
+   its keys, and remembers the user for `orchard2 shell`
+   ([remote.md](remote.md)); `--no-ssh` doesn't and doesn't ask.
 5. **Writing.** The system is written and finished on the device, which then
    starts it.
 

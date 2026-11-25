@@ -360,6 +360,10 @@ impl Worker {
         if account.ssh {
             if let Some(a) = plan.get_mut("account").filter(|a| a.is_object()) {
                 a["ssh_keys"] = json!(crate::ssh_keys::keys(self.executor.cache())?);
+                // Who this computer signs in as afterwards (orchard2 shell).
+                if let Some(user) = a.get("user").and_then(|u| u.as_str()) {
+                    crate::ssh_keys::remember_user(self.executor.cache(), user)?;
+                }
             }
         }
         // This computer's time zone (the install tools link /etc/localtime to it).
