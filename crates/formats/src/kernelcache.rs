@@ -8,10 +8,14 @@ use crate::{im4p, img4, lzfse, lzss, Error, Result};
 /// Decompressed kernels larger than this are refused.
 const MAX_KERNEL: usize = 256 << 20;
 
-/// The bundle ids `smartio` accepts.
+/// The bundle ids `smartio` accepts: A10, A9, A8 and A8X, A7, A10X. The
+/// first is what `smartio-from-kernelcache@1` means.
 pub const SMARTIO_KEXTS: &[&str] = &[
     "com.apple.driver.AppleT8010SmartIO",
     "com.apple.driver.AppleS8000SmartIO",
+    "com.apple.driver.AppleT7000SmartIO",
+    "com.apple.driver.AppleS5L8960XSmartIO",
+    "com.apple.driver.AppleT8011SmartIO",
 ];
 
 /// Decodes a kernelcache IM4P to the ARM64 kernel Mach-O.
@@ -76,6 +80,14 @@ impl<'a> Kernelcache<'a> {
 
     /// The sections of the one prelinked kext with bundle id `bundle`.
     pub fn kext(&self, bundle: &str) -> Result<Vec<Section>> {
+        self.kext_or_merged(bundle)?
+            .ok_or(Error("kext is merged into the kernel and has no sections of its own"))
+    }
+
+    /// The same, or `None` for a kext whose segments are merged into the
+    /// kernel's own: some chips' iOS 12 kernelcaches give a kext a
+    /// `ModuleIndex` and no load address, and it has no Mach-O of its own.
+    pub fn kext_or_merged(&self, bundle: &str) -> Result<Option<Vec<Section>>> {
         let info = self.section("__PRELINK_INFO", "__info", &self.sections)?;
         let info = osserialize::xml(self.read(info.addr, info.size)?)?;
         let kexts = info
@@ -88,12 +100,15 @@ impl<'a> Kernelcache<'a> {
         let (Some(kext), None) = (matching.next(), matching.next()) else {
             return Err(Error("kernelcache does not hold exactly one such kext"));
         };
+        if kext.get("_PrelinkExecutableLoadAddr").is_none() && kext.get("ModuleIndex").is_some() {
+            return Ok(None);
+        }
         let load = kext
             .get("_PrelinkExecutableLoadAddr")
             .and_then(Value::as_u64)
             .ok_or(Error("kext has no load address"))?;
         let start = self.read(load, 32)?.as_ptr() as usize - self.data.as_ptr() as usize;
-        Ok(macho::parse(self.data, start)?.sections)
+        Ok(Some(macho::parse(self.data, start)?.sections))
     }
 
     pub fn section<'s>(
@@ -117,8 +132,11 @@ pub fn smartio<'a>(kc: &Kernelcache<'a>, bundle: &str) -> Result<&'a [u8]> {
     if !SMARTIO_KEXTS.contains(&bundle) {
         return Err(Error("unknown SmartIO kext"));
     }
-    let sections = kc.kext(bundle)?;
-    let firmware = kc.section("__DATA", "__firmware", &sections)?;
+    // A kext merged into the kernel keeps its firmware in the kernel's one
+    // `__DATA.__firmware` section.
+    let own = kc.kext_or_merged(bundle)?;
+    let sections = own.as_deref().unwrap_or(&kc.sections);
+    let firmware = kc.section("__DATA", "__firmware", sections)?;
     if !(4096..=4 << 20).contains(&firmware.size) {
         return Err(Error("SmartIO firmware has an unlikely size"));
     }
