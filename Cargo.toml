@@ -5,6 +5,7 @@ members = [
     "crates/cache",
     "crates/boards",
     "crates/device",
+    "crates/build",
     "crates/cli",
     "crates/flow",
     "crates/runtime",
@@ -24,6 +25,7 @@ orchard-usb = { path = "crates/usb" }
 orchard-cache = { path = "crates/cache" }
 orchard-boards = { path = "crates/boards" }
 orchard-device = { path = "crates/device" }
+orchard-build = { path = "crates/build" }
 clap = { version = "4", features = ["derive", "env"] }
 nusb = "0.2"
 unicode-width = "0.2"

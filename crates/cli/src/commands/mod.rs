@@ -1,5 +1,6 @@
 pub mod boards;
 pub mod boot;
+pub mod build;
 pub mod cache;
 pub mod data;
 pub mod devices;

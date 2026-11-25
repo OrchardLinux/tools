@@ -27,6 +27,8 @@ pub enum Code {
     DeviceChanged,
     /// The device answered and said it cannot do what was asked.
     Refused,
+    /// A producer or a project's build entry failed.
+    Build,
 }
 
 impl Code {
@@ -45,6 +47,7 @@ impl Code {
             Code::Locked => 12,
             Code::DeviceChanged => 13,
             Code::Refused => 14,
+            Code::Build => 15,
         }
     }
 }

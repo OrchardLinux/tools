@@ -3817,12 +3817,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "orchard-build"
+version = "0.1.2"
+dependencies = [
+ "flate2",
+ "libc",
+ "orchard-boards",
+ "orchard-cache",
+ "orchard-formats",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "toml 0.8.23",
+ "ureq",
+]
+
+[[package]]
 name = "orchard-cache"
 version = "0.1.4"
 dependencies = [
  "libc",
  "orchard-formats",
  "serde",
+ "serde_json",
  "sha2 0.10.9",
  "tempfile",
  "ureq",
@@ -3835,6 +3852,7 @@ dependencies = [
  "clap",
  "libc",
  "orchard-boards",
+ "orchard-build",
  "orchard-cache",
  "orchard-device",
  "orchard-flow",

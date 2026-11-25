@@ -8,11 +8,10 @@ publish.workspace = true
 [dependencies]
 orchard-formats.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
 sha2.workspace = true
 ureq.workspace = true
-
-[dev-dependencies]
-tempfile.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

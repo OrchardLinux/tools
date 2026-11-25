@@ -40,7 +40,14 @@ pub fn run(global: &Global, command: Option<&DataCommand>) -> Result<Output> {
     // An update refreshes the loaders' record with the board data; a look
     // shows the record that is there.
     let (data, loaders) = match command {
-        Some(DataCommand::Update) => (board_data::update(&store)?, Some(loaders::update(&store)?)),
+        Some(DataCommand::Update) => {
+            // The recipes `build` runs are a copy of their own, of the
+            // newest nightly; it follows once a build has fetched one.
+            if orchard_build::snapshot::existing(&store).is_some() {
+                orchard_build::snapshot::update(&store, &|line| eprintln!("{line}"))?;
+            }
+            (board_data::update(&store)?, Some(loaders::update(&store)?))
+        }
         None => (
             board_data::resolve(global.data.as_deref(), &store)?,
             loaders::existing(&store),

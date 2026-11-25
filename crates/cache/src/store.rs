@@ -101,6 +101,52 @@ impl Store {
         Ok(())
     }
 
+    /// The cached file with this SHA-256, downloaded from `url` when it is
+    /// not there. It is streamed to disk and gets its name only once its
+    /// hash is right, so files too large for memory are cached too.
+    pub fn fetch(&self, url: &str, sha256: &str, limit: u64) -> Result<PathBuf> {
+        use crate::source::Source;
+        let hex = sha256.to_ascii_lowercase();
+        let target = self.files.join(format!("sha256-{hex}"));
+        if target.is_file() {
+            if crate::component::digest(&target)? == hex {
+                return Ok(target);
+            }
+            fs::remove_file(&target).context(target.display())?;
+        }
+        let timeout = std::time::Duration::from_secs(60);
+        let mut remote = crate::http::Http::probe(url, timeout)?;
+        let size = remote.size();
+        if size > limit {
+            return Err(Error::new(Code::TooLarge, format!("{url} is larger than expected")));
+        }
+        let temp = self.files.join(format!(".sha256-{hex}.{}", std::process::id()));
+        let result = (|| {
+            use std::io::Write;
+            let mut file = fs::File::create(&temp)?;
+            let mut hash = Sha256::new();
+            let mut offset = 0;
+            while offset < size {
+                let chunk = remote.fetch(offset, (size - offset).min(8 << 20) as usize)?;
+                hash.update(&chunk);
+                file.write_all(&chunk)?;
+                offset += chunk.len() as u64;
+            }
+            file.sync_all()?;
+            let actual: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+            if actual != hex {
+                return Err(Error::new(Code::Format, format!("SHA-256 is {actual}, expected {hex}")));
+            }
+            fs::rename(&temp, &target)?;
+            Ok(())
+        })();
+        if let Err(e) = result {
+            let _ = fs::remove_file(&temp);
+            return Err(e.context(url));
+        }
+        Ok(target)
+    }
+
     pub fn entries(&self) -> Result<Vec<Entry>> {
         let mut entries = self.file_entries()?;
         let keys = self.dir().join("firmware-keys");

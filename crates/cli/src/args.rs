@@ -61,6 +61,23 @@ pub enum Command {
     /// Start a system installed on your iPad or iPhone, from DFU mode (as
     /// Orchard, the launcher, does)
     Launch(crate::commands::install::LaunchArgs),
+    /// Build a project: DIRECTORY/init and optional DIRECTORY/rootfs into a
+    /// RAM payload for every board of one platform; in a distribution
+    /// checkout (orchard.toml [release]), its release
+    Build(crate::commands::build::BuildArgs),
+    /// Resolve what a distribution build takes from orchard finished
+    /// (kernels, m1n1, Pongo, tools) into one JSON document
+    Inputs(crate::commands::build::InputsArgs),
+    /// Write the source keys of the components a nightly publishes
+    /// (component-keys.json), from the data's files alone
+    #[command(hide = true)]
+    ComponentKeys {
+        /// Where to write the document
+        #[arg(long)]
+        output: std::path::PathBuf,
+        /// Platforms (default: every arm64 platform)
+        platform: Vec<String>,
+    },
     /// Boot Linux build outputs in RAM on J71b through iBSS/recovery
     Run(crate::commands::run::Args),
     /// List connected devices
@@ -163,7 +180,8 @@ pub enum Command {
         #[command(subcommand)]
         command: Option<DataCommand>,
     },
-    /// Show or clear cached firmware files
+    /// Show the cache, or delete from it: downloaded files and build
+    /// components
     Cache {
         #[command(subcommand)]
         command: CacheCommand,
@@ -382,10 +400,23 @@ pub enum DataCommand {
 
 #[derive(Subcommand)]
 pub enum CacheCommand {
-    /// List cached files
+    /// List cached files and build components
     Ls,
     /// Delete all cached files
     Clear,
+    /// Delete build components
+    Rm {
+        /// COMPONENT (all of its entries) or COMPONENT/KEY-PREFIX, such as
+        /// kernel-j71b/0bd1204e
+        #[arg(required = true)]
+        entries: Vec<String>,
+    },
+    /// Keep only the most recently used build components of each kind
+    Prune {
+        /// Entries per component to keep
+        #[arg(long, default_value = "5")]
+        keep: usize,
+    },
 }
 
 #[derive(Args)]

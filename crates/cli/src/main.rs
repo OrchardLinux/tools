@@ -25,6 +25,11 @@ fn main() -> ExitCode {
     }
     let result = match cli.command {
         args::Command::Install(_) | args::Command::Launch(_) => unreachable!("handled above"),
+        args::Command::Build(args) => commands::build::build(&cli.global, &args),
+        args::Command::Inputs(args) => commands::build::inputs(&cli.global, &args),
+        args::Command::ComponentKeys { output, platform } => {
+            commands::build::component_keys(&cli.global, &output, &platform)
+        }
         args::Command::Run(args) => commands::run::run(&cli.global, &args),
         args::Command::Session { .. } => unreachable!("handled above"),
         args::Command::Devices(a) => commands::devices::run(&cli.global, &a),
