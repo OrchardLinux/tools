@@ -314,8 +314,9 @@ pub fn vxd<'a>(kc: &Kernelcache<'a>) -> Result<&'a [u8]> {
         let raw = kc
             .read(addr, (cstring.addr + cstring.size - addr).min(64))
             .ok()?;
+        // Printable ASCII, as the firmware's name is.
         let s = std::str::from_utf8(raw.split(|&b| b == 0).next()?).ok()?;
-        s.chars().all(|c| !c.is_control()).then_some(s)
+        s.bytes().all(|b| (0x20..=0x7e).contains(&b)).then_some(s)
     };
     let bytes = kc.read(data.addr, data.size)?;
     let quad = |at: usize| u64::from_le_bytes(bytes[at..at + 8].try_into().unwrap());

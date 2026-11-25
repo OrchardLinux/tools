@@ -148,8 +148,7 @@ pub fn build_with_device(
                         board.name,
                         steps.join(", ")
                     ),
-                )
-                .hint("add --skip-unsupported to make the other files"));
+                ));
             }
             let store = Store::open(cache)?;
             report.written = plan.build(&mut Inputs::new(&store, &board, &recipe), out)?;

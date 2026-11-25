@@ -120,6 +120,24 @@ impl<'a> Plan<'a> {
                 );
             }
             if let Check::Pending(_) = output.check {
+                // Its result is what gets measured and pinned, so it may
+                // only be made from inputs that are pinned themselves.
+                let reads = output.steps.iter().flat_map(|step| {
+                    let also = match step.name.as_str() {
+                        "trx-add-nvram@1" => step.params.get("nvram").and_then(|v| v.as_str()),
+                        _ => None,
+                    };
+                    step.input.as_deref().into_iter().chain(also)
+                });
+                for name in reads {
+                    if recipe.inputs.get(name).is_some_and(|input| input.sha256.is_none()) {
+                        return Err(Error::new(
+                            Code::Format,
+                            format!("a pending output reads the unpinned input {name}"),
+                        )
+                        .context(dest));
+                    }
+                }
                 plan.pending.push(dest);
                 continue;
             }

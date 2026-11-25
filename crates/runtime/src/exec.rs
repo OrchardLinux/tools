@@ -143,7 +143,10 @@ impl Executor {
             Asset::Firmware => {
                 let board = need_board()?;
                 let out = self.firmware_dir(board);
-                let request = Request::Peripheral { skip_unsupported: true };
+                // Every file the board's recipe names, or none: a step this
+                // version lacks ends the install with what is missing,
+                // instead of leaving the device without that firmware.
+                let request = Request::Peripheral { skip_unsupported: false };
                 let store = self.cache.join("store");
                 firmware_build::build(&self.data()?, Some(&store), board, &out, &request).map(drop)
             }

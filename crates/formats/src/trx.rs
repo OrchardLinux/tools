@@ -31,13 +31,18 @@ pub fn add_nvram(firmware: &[u8], nvram: &[u8], placeholder_mac: &str) -> Result
         .ok()
         .filter(|t| t.is_ascii())
         .ok_or(Error("NVRAM is not ASCII"))?;
+    // Lines and blanks as orchard's Python reads them: a line also ends at
+    // a lone carriage return, a vertical tab, a form feed and the three
+    // separator controls, and those with the unit separator are blanks.
+    let breaks = |c: char| matches!(c, '\n' | '\r' | '\x0b' | '\x0c' | '\x1c' | '\x1d' | '\x1e');
+    let blank = |c: char| matches!(c, ' ' | '\t' | '\x1f') || breaks(c);
     let mut lines = Vec::new();
-    for raw in text.lines() {
-        let line = raw.split('#').next().unwrap_or("").trim();
+    for raw in text.split(breaks) {
+        let line = raw.split('#').next().unwrap_or("").trim_matches(blank);
         let Some((key, value)) = line.split_once('=') else {
             continue;
         };
-        let (key, value) = (key.trim(), value.trim());
+        let (key, value) = (key.trim_matches(blank), value.trim_matches(blank));
         if key.is_empty() || line.contains('\0') {
             return Err(Error("bad NVRAM entry"));
         }
@@ -103,6 +108,20 @@ mod tests {
         );
         // The result is a valid TRX again, without room for more NVRAM.
         assert!(add_nvram(&out, b"", "02:00:00:00:00:00").is_err());
+    }
+
+    #[test]
+    fn lines_and_blanks_are_pythons() {
+        // A lone carriage return, a vertical tab and a form feed end a line;
+        // the unit separator is a blank around a key or a value.
+        let out = add_nvram(
+            &trx(b"code", 8),
+            b"a=1\rb=2\x0bc=3\x0c\x1fd\x1f=\x1f4\x1f\x1ce=5",
+            "02:00:00:00:00:00",
+        )
+        .unwrap();
+        let body = &out[HEADER + 4..out.len() - 4];
+        assert!(body.starts_with(b"a=1\0b=2\0c=3\0d=4\0e=5\0macaddr="), "{body:?}");
     }
 
     #[test]

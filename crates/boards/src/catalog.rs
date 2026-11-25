@@ -685,6 +685,9 @@ fn boot_step(mut params: serde_json::Map<String, serde_json::Value>) -> Result<B
 
 #[derive(Deserialize)]
 struct RecipeFile {
+    /// Absent in a file means 0, which no version reads.
+    #[serde(default)]
+    schema: u32,
     ipsw: Ipsw,
     inputs: BTreeMap<String, InputFile>,
     #[serde(default)]
@@ -768,6 +771,8 @@ enum KernelcacheFile {
 fn peripheral_recipe(text: &str) -> Result<Recipe> {
     let file: RecipeFile =
         serde_json::from_str(text).map_err(|e| Error::new(Code::Format, e.to_string()))?;
+    // Steps mean what they mean in this schema only.
+    check_schema(file.schema, 2)?;
     file.into_recipe()
 }
 
@@ -1124,6 +1129,16 @@ mod tests {
         assert!(e.hint.unwrap().contains("iboot, iboot-autogo"));
         assert_eq!(data.chain("iboot-autogo").unwrap().0, "iboot-autogo");
         assert_eq!(data.chain("nope").unwrap_err().code, Code::NotFound);
+    }
+
+    #[test]
+    fn refuses_a_firmware_recipe_of_another_schema() {
+        let recipe = |schema: &str| format!(r#"{{{schema} {IPSW}, "inputs": {{}}, "outputs": []}}"#);
+        peripheral_recipe(&recipe(r#""schema": 2,"#)).unwrap();
+        for other in [r#""schema": 3,"#, r#""schema": 1,"#, ""] {
+            let e = peripheral_recipe(&recipe(other)).unwrap_err();
+            assert_eq!(e.code, Code::Unsupported, "{other}");
+        }
     }
 
     #[test]

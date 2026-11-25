@@ -68,15 +68,22 @@ pub fn run(global: &Global, command: &Fw) -> Result<Output> {
                 }
             };
             let selector = global.device.selector(None);
-            Ok(orchard_device::keys::build(
+            let built = orchard_device::keys::build(
                 &global.data_dir()?,
                 global.cache.as_deref(),
                 board,
                 out,
                 &request,
                 device_keys.then_some(&selector),
-            )?
-            .into())
+            );
+            // The way round a step this version lacks is this command's.
+            let lacking = matches!(request, Request::Peripheral { skip_unsupported: false });
+            Ok(built
+                .map_err(|e| match e.code == Code::Unsupported && lacking && e.hint.is_none() {
+                    true => e.hint("add --skip-unsupported to make the other files"),
+                    false => e,
+                })?
+                .into())
         }
     }
 }

@@ -318,6 +318,7 @@ pub fn from_packets(p: &Profile, packet: &str) -> Result<Vec<u8>> {
         .profile
         .get("Constructed Firmware")
         .and_then(Value::as_array)
+        .filter(|packets| !packets.is_empty())
         .ok_or(Error("expected a packet array"))?;
     let config = p.config()?;
     let nested = match config.get("Config") {
@@ -453,12 +454,10 @@ pub fn from_mtfw(mtfw: &[u8], profile: &str, otp_preflight: bool) -> Result<Vec<
                 records.push((SEND, encode_blob(address, data(item, "Payload")?)?));
             }
             "Property" => {
-                if let Some(payload) = item
-                    .get("Payload")
-                    .and_then(Value::as_data)
-                    .filter(|d| !d.is_empty())
-                {
-                    records.push((SEND, encode_blob(address, payload)?));
+                // Apple's default for a unit without the property, where
+                // there is one; anything else than data there is refused.
+                if truthy(item.get("Payload")) {
+                    records.push((SEND, encode_blob(address, data(item, "Payload")?)?));
                 }
                 records.push(calibration_record(
                     item.get("Property").and_then(Value::as_str).unwrap_or(""),
