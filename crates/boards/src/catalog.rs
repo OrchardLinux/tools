@@ -30,6 +30,9 @@ pub struct Board {
     /// Feature states (`working`, `untested`, `missing`, `none`), in the
     /// order of the board file.
     pub features: Vec<(String, String)>,
+    /// The entries (outside tools such as `checkra1n`) the board takes into
+    /// its boot chain, in order of preference; empty for the default.
+    pub entries: Vec<String>,
     dir: PathBuf,
     peripheral_recipe: Option<String>,
 }
@@ -130,8 +133,14 @@ pub enum Location {
     Member(String),
     /// A file in the system volume, relative to its root.
     System(String),
-    /// A BuildManifest component of the board, such as `KernelCache`.
-    Component(String),
+    /// The decoded kernel (the Mach-O inside the IM4P), which is what a
+    /// recipe's hash for it covers. `board` names another board's kernel by
+    /// its device class, such as `n102ap`; `restore` another restore image,
+    /// pinned like the recipe's own, to take it from.
+    Kernelcache {
+        board: Option<String>,
+        restore: Option<Ipsw>,
+    },
 }
 
 impl std::fmt::Display for Location {
@@ -139,7 +148,16 @@ impl std::fmt::Display for Location {
         match self {
             Location::Member(m) => write!(f, "member {m}"),
             Location::System(p) => write!(f, "system file {p}"),
-            Location::Component(c) => write!(f, "component {c}"),
+            Location::Kernelcache { board, restore } => {
+                write!(f, "kernelcache")?;
+                if let Some(board) = board {
+                    write!(f, " of {board}")?;
+                }
+                match restore {
+                    Some(ipsw) => write!(f, " in {} {}", ipsw.version, ipsw.build),
+                    None => Ok(()),
+                }
+            }
         }
     }
 }
@@ -479,7 +497,15 @@ struct DeviceFile {
     #[serde(default)]
     support: SupportSection,
     #[serde(default)]
+    boot: BootSection,
+    #[serde(default)]
     features: toml::Table,
+}
+
+#[derive(Deserialize, Default)]
+struct BootSection {
+    #[serde(default)]
+    entries: Vec<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -535,6 +561,7 @@ fn load(name: &str, dir: &Path) -> Result<Board> {
             .into_iter()
             .filter_map(|(k, v)| Some((k, v.as_str()?.to_owned())))
             .collect(),
+        entries: file.boot.entries,
         dir: dir.to_owned(),
         peripheral_recipe: file.firmware.recipe,
     })
@@ -738,8 +765,16 @@ struct InputFile {
 struct InputLocation {
     zip: Option<String>,
     rootfs: Option<String>,
-    #[serde(default)]
-    kernelcache: bool,
+    kernelcache: Option<KernelcacheFile>,
+    restore: Option<Ipsw>,
+}
+
+/// `"kernelcache": true` (the recipe's board) or `"kernelcache": "n102ap"`.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum KernelcacheFile {
+    Own(bool),
+    Board(String),
 }
 
 fn peripheral_recipe(text: &str) -> Result<Recipe> {
@@ -750,22 +785,32 @@ fn peripheral_recipe(text: &str) -> Result<Recipe> {
 
 /// Turns one firmware input into its `(name, Input)`, used by both recipe kinds.
 fn convert_input((name, input): (String, InputFile)) -> Result<(String, Input)> {
-    let location = match input.ipsw {
-        InputLocation {
-            zip: Some(member),
-            rootfs: None,
-            kernelcache: false,
-        } => Location::Member(member),
-        InputLocation {
-            zip: None,
-            rootfs: Some(path),
-            kernelcache: false,
-        } => Location::System(path),
-        InputLocation {
-            zip: None,
-            rootfs: None,
-            kernelcache: true,
-        } => Location::Component("KernelCache".to_owned()),
+    let InputLocation {
+        zip,
+        rootfs,
+        kernelcache,
+        restore,
+    } = input.ipsw;
+    let kernelcache = match kernelcache {
+        None | Some(KernelcacheFile::Own(false)) => None,
+        Some(KernelcacheFile::Own(true)) => Some(None),
+        Some(KernelcacheFile::Board(board)) => Some(Some(board)),
+    };
+    // Another restore image than the recipe's: always for a named board's
+    // kernel, and the input pinned (orchard's recipe.supported).
+    if restore.is_some()
+        && (input.sha256.is_none() || !matches!(kernelcache, Some(Some(_))) || zip.is_some())
+    {
+        return Err(Error::new(
+            Code::Format,
+            "an input from another restore image needs its sha256 and board",
+        )
+        .context(format!("input {name}")));
+    }
+    let location = match (zip, rootfs, kernelcache) {
+        (Some(member), None, None) => Location::Member(member),
+        (None, Some(path), None) => Location::System(path),
+        (None, None, Some(board)) => Location::Kernelcache { board, restore },
         _ => {
             return Err(Error::new(Code::Format, "needs exactly one location")
                 .context(format!("input {name}")))
@@ -889,7 +934,7 @@ mod tests {
             format!(
                 "schema = 1\n[device]\nprofile = \"{name}\"\nname = \"Test {name}\"\napple_products = [\"Test1,{board}\"]\n\
                  [match.dfu]\nchip = {chip:#x}\nboard = {board:#x}\n\
-                 [support]\nstatus = \"supported\"\n[features]\nwifi = \"working\"\ntouch = \"missing\"\n{firmware}"
+                 [boot]\nentries = [\"checkra1n\"]\n[support]\nstatus = \"supported\"\n[features]\nwifi = \"working\"\ntouch = \"missing\"\n{firmware}"
             ),
         )
         .unwrap();
@@ -957,6 +1002,7 @@ mod tests {
         let b = catalog.board("x1").unwrap();
         assert_eq!((b.chip, b.board), (0x8010, 0x18));
         assert_eq!(b.products, ["Test1,24"]);
+        assert_eq!(b.entries, ["checkra1n"]);
         assert_eq!(catalog.board_for(0x8011, 0x0a).unwrap().name, "x2");
         assert_eq!(catalog.board("x9").unwrap_err().code, Code::NotFound);
         assert_eq!(catalog.board("../x1").unwrap_err().code, Code::NotFound);
@@ -979,7 +1025,10 @@ mod tests {
         );
         assert_eq!(
             peripheral.inputs["kernelcache"].location,
-            Location::Component("KernelCache".into())
+            Location::Kernelcache {
+                board: None,
+                restore: None
+            }
         );
         assert_eq!(peripheral.inputs["kernelcache"].sha256, None);
         let e = catalog
@@ -990,6 +1039,55 @@ mod tests {
         assert_eq!(
             (e.code, e.message.as_str()),
             (Code::NotFound, "x2: no peripheral firmware recipe")
+        );
+    }
+
+    #[test]
+    fn reads_a_kernelcache_from_another_restore_image() {
+        let restore = r#""restore": {"version": "12.4", "build": "16G77", "url": "https://example.com/y.ipsw", "bytes": 200, "sha256": "11"}"#;
+        let recipe = |input: &str| {
+            peripheral_recipe(&format!(
+                r#"{{"schema": 2, {IPSW}, "inputs": {{"kc": {input}}}, "outputs": []}}"#
+            ))
+        };
+        let read = recipe(&format!(
+            r#"{{"ipsw": {{"kernelcache": "n102ap", {restore}}}, "sha256": "cc"}}"#
+        ))
+        .unwrap();
+        let Location::Kernelcache {
+            board,
+            restore: image,
+        } = &read.inputs["kc"].location
+        else {
+            panic!("not a kernelcache");
+        };
+        assert_eq!(board.as_deref(), Some("n102ap"));
+        let image = image.as_ref().unwrap();
+        assert_eq!(
+            (image.build.as_str(), image.size, image.url.as_str()),
+            ("16G77", 200, "https://example.com/y.ipsw")
+        );
+        assert_eq!(
+            read.inputs["kc"].location.to_string(),
+            "kernelcache of n102ap in 12.4 16G77"
+        );
+        // Another image's input is pinned and names its board.
+        for refused in [
+            format!(r#"{{"ipsw": {{"kernelcache": "n102ap", {restore}}}}}"#),
+            format!(r#"{{"ipsw": {{"kernelcache": true, {restore}}}, "sha256": "cc"}}"#),
+        ] {
+            let e = recipe(&refused).unwrap_err();
+            assert_eq!(e.code, Code::Format);
+            assert!(e.message.contains("needs its sha256 and board"), "{}", e.message);
+        }
+        // A board's kernel in the recipe's own image.
+        let own = recipe(r#"{"ipsw": {"kernelcache": "j71tap"}}"#).unwrap();
+        assert_eq!(
+            own.inputs["kc"].location,
+            Location::Kernelcache {
+                board: Some("j71tap".into()),
+                restore: None
+            }
         );
     }
 

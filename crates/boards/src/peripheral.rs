@@ -261,13 +261,24 @@ fn pinned(output: &Output, candidates: Vec<&[u8]>, what: &str) -> Result<Vec<u8>
         .ok_or_else(|| Error::new(Code::Format, format!("no {what} with the recipe's hash")))
 }
 
-/// The decoded kernel for input `name`, decoding it the first time.
-fn kernel<'k>(kernels: &'k mut Kernels, name: &str, im4p: &[u8]) -> Result<&'k [u8]> {
+/// The decoded kernel for input `name`. A kernelcache input is the decoded
+/// Mach-O already (that is what its hash covers); an IM4P, such as a recipe's
+/// plain archive member, is decoded the first time.
+fn kernel<'k>(kernels: &'k mut Kernels, name: &str, data: &[u8]) -> Result<&'k [u8]> {
     if !kernels.contains_key(name) {
-        kernels.insert(name.to_owned(), kernelcache::decode(im4p)?);
+        let decoded = if data.starts_with(&MH_MAGIC_64) || data.starts_with(&FAT_MAGIC) {
+            orchard_formats::macho::arm64(data)?.to_vec()
+        } else {
+            kernelcache::decode(data)?
+        };
+        kernels.insert(name.to_owned(), decoded);
     }
     Ok(&kernels[name])
 }
+
+/// A 64-bit Mach-O, and a universal binary, as their files start.
+const MH_MAGIC_64: [u8; 4] = [0xcf, 0xfa, 0xed, 0xfe];
+const FAT_MAGIC: [u8; 4] = [0xca, 0xfe, 0xba, 0xbe];
 
 /// The step for a recipe step, `None` if this version does not know it.
 fn parse(raw: &catalog::Step, recipe: &Recipe) -> Result<Option<Step>> {
