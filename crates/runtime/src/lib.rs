@@ -32,7 +32,10 @@ use orchard_flow::{Device, DeviceId, Event, Model, Sequence, Support, UsbMode};
 use std::collections::BTreeMap;
 
 /// What the flow needs to know about a board, from the catalog.
-pub fn describe(board: &Board, ecid: &str) -> Device {
+pub fn describe(catalog: &Catalog, board: &Board, ecid: &str) -> Device {
+    // Every start here goes through palera1n, which reaches 64-bit chips
+    // only: a 32-bit board is refused before anything is started on it.
+    let reachable = catalog.chip(board.chip).map_or(true, |chip| chip.architecture != "arm");
     let product = board.products.first().map(String::as_str).unwrap_or("");
     let (model, sequence) = layout(product);
     Device {
@@ -42,6 +45,7 @@ pub fn describe(board: &Board, ecid: &str) -> Device {
         model,
         sequence,
         support: match board.status.as_str() {
+            _ if !reachable => Support::Unsupported,
             "supported" => Support::Supported,
             "experimental" => Support::Experimental,
             _ => Support::Unsupported,
@@ -89,7 +93,7 @@ pub fn identify(catalog: &Catalog, usb: &orchard_usb::Device) -> Option<Seen> {
     let chip = u32::from_str_radix(id.chip.as_deref()?, 16).ok()?;
     let board = u32::from_str_radix(id.board_id.as_deref()?, 16).ok()?;
     let device = match catalog.board_for(chip, board) {
-        Ok(b) => describe(&b, ecid),
+        Ok(b) => describe(catalog, &b, ecid),
         Err(_) => Device {
             id: DeviceId(ecid.to_owned()),
             board: String::new(),
@@ -178,7 +182,7 @@ impl Watcher {
             }
             // Plugged in running iPadOS: its model names the board.
             let board = told.product.as_deref().and_then(|p| catalog.board_for_product(p).ok())?;
-            let device = describe(&board, &id.0);
+            let device = describe(catalog, &board, &id.0);
             self.known.insert(id, device.clone());
             return Some(device);
         }
@@ -196,7 +200,7 @@ impl Watcher {
         // which device to put in DFU (1.2). Its DFU sighting brings the ECID.
         let product = told.product.as_deref()?;
         let udid = usb.identity.udid.as_deref()?;
-        catalog.board_for_product(product).ok().map(|board| describe(&board, &format!("udid-{udid}")))
+        catalog.board_for_product(product).ok().map(|board| describe(catalog, &board, &format!("udid-{udid}")))
     }
 
     /// The Apple devices in `listing` other than `target` (any mode), by the
@@ -248,7 +252,7 @@ impl Watcher {
                 let mut of_board = self.known.values().filter(|d| d.board.eq_ignore_ascii_case(board));
                 let device = match (of_board.next(), of_board.next()) {
                     (Some(device), None) => Some(device.clone()),
-                    _ => catalog.board(board).ok().map(|b| describe(&b, &format!("board-{board}"))),
+                    _ => catalog.board(board).ok().map(|b| describe(catalog, &b, &format!("board-{board}"))),
                 };
                 if let Some(device) = device {
                     now.push(Seen { device, mode: UsbMode::Installed });
@@ -259,7 +263,7 @@ impl Watcher {
                 let id = DeviceId(ecid_key(ecid));
                 if !self.known.contains_key(&id) {
                     if let Some(board) = usb.identity.board.as_deref().and_then(|b| catalog.board(b).ok()) {
-                        self.known.insert(id.clone(), describe(&board, &id.0));
+                        self.known.insert(id.clone(), describe(catalog, &board, &id.0));
                     }
                 }
                 if let Some(device) = self.known.get(&id) {
@@ -304,6 +308,34 @@ impl Watcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_32_bit_board_is_unsupported_whatever_its_status() {
+        let root = std::env::temp_dir().join(format!("orchard-runtime-arch-{}", std::process::id()));
+        let write = |path: &str, text: &str| {
+            std::fs::create_dir_all(root.join(path).parent().unwrap()).unwrap();
+            std::fs::write(root.join(path), text).unwrap();
+        };
+        for (board, chip, architecture) in [("wide", 0x8010, "arm64"), ("narrow", 0x8950, "arm"), ("plain", 0x8011, "")] {
+            write(
+                &format!("devices/{board}/device.toml"),
+                &format!(
+                    "[device]\nname = \"{board}\"\napple_products = [\"iPad{chip},1\"]\ndt_compatible = [\"apple,{board}\"]\n\
+                     [match.dfu]\nchip = {chip}\nboard = 1\n[support]\nstatus = \"experimental\"\n"
+                ),
+            );
+            write(
+                &format!("chips/{board}.toml"),
+                &format!("cpid = {chip}\nname = \"A\"\nsoc = \"s{chip}\"\narchitecture = \"{architecture}\"\n"),
+            );
+        }
+        let catalog = Catalog::open(&root).unwrap();
+        let support = |name: &str| describe(&catalog, &catalog.board(name).unwrap(), "1").support;
+        assert_eq!(support("wide"), Support::Experimental);
+        assert_eq!(support("plain"), Support::Experimental);
+        assert_eq!(support("narrow"), Support::Unsupported);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     fn seen(ecid: &str, mode: UsbMode) -> Seen {
         Seen {

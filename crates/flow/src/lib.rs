@@ -220,6 +220,8 @@ pub enum State {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
     // User
+    /// The launcher never starts an entry by itself (see `Flow::ask_entry`).
+    AskEntry,
     SelectTab(Sequence),
     Continue,
     Skip,
@@ -361,6 +363,9 @@ pub struct Flow {
     pub confirming_split: bool,
     /// The launcher's chosen entry was handed to m1n1 and is starting.
     pub entry_started: bool,
+    /// The launcher asks which entry to start even when there is one: a
+    /// command that only lists them, or that names the one to start.
+    pub ask_entry: bool,
     /// The exploit's attempt under way (0 or 1: the first).
     pub start_attempt: u32,
     /// Why the last start didn't work (palera1n's words), for DFU mode again.
@@ -430,7 +435,7 @@ impl Flow {
     }
 
     pub fn new() -> Flow {
-        Flow { state: State::start(), assets: Assets::default(), write_waiting: false, start_waiting: None, boot_waiting: None, companion: false, split_problem: None, install_problem: None, resuming: false, boot_stalled: false, booting: false, unresponsive: false, confirming_split: false, entry_started: false, start_attempt: 0, start_problem: None, start_log: Vec::new(), others: Vec::new(), held: Vec::new() }
+        Flow { ask_entry: false, state: State::start(), assets: Assets::default(), write_waiting: false, start_waiting: None, boot_waiting: None, companion: false, split_problem: None, install_problem: None, resuming: false, boot_stalled: false, booting: false, unresponsive: false, confirming_split: false, entry_started: false, start_attempt: 0, start_problem: None, start_log: Vec::new(), others: Vec::new(), held: Vec::new() }
     }
 
     /// The asset the current step waits for, for "Getting your iPad ready…".
@@ -572,6 +577,18 @@ fn step_inner(app: App, mut flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
             // The launcher installs nothing: only what starts the device.
             let first: &[Asset] = if app == App::Launcher { &[Asset::Palera1n, Asset::Chain] } else { &assets::AT_START };
             out.extend(fetch(flow.assets.start(first)));
+            return (flow, out);
+        }
+        Event::AskEntry => {
+            flow.ask_entry = true;
+            return (flow, out);
+        }
+        Event::EntriesListed(entries)
+            if flow.ask_entry && entries.len() == 1 && matches!(flow.state, State::Found { .. }) =>
+        {
+            if let State::Found { device, .. } = flow.state.clone() {
+                flow.state = State::ChooseSystem { device, entries, selected: 0 };
+            }
             return (flow, out);
         }
         // Nothing the user confirms goes on while other devices are on USB

@@ -183,8 +183,9 @@ pub enum Command {
     /// Show the cache, or delete from it: downloaded files and build
     /// components
     Cache {
+        /// Default: ls
         #[command(subcommand)]
-        command: CacheCommand,
+        command: Option<CacheCommand>,
     },
     /// Talk to a device in DFU mode
     Dfu {

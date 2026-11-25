@@ -31,7 +31,8 @@ enum Exit {
 
 #[derive(clap::Args)]
 pub struct InstallArgs {
-    /// The distribution: a name (omarchy-a), its release index URL or a local index.toml
+    /// The distribution: a name (omarchy-a), its release index URL or a local
+    /// index.toml; in a distribution checkout the default is its last build
     pub source: Option<String>,
     /// The release index to install from (instead of SOURCE)
     #[arg(long)]
@@ -98,6 +99,14 @@ fn index_for(source: &str) -> String {
         return format!("file://{}", absolute.display());
     }
     format!("https://github.com/OrchardLinux/{source}/releases/latest/download/index.toml")
+}
+
+/// In a distribution checkout, the release its last `build` made.
+fn last_build() -> Option<String> {
+    let here = std::env::current_dir().ok()?;
+    let (checkout, _) = orchard_build::project::find_release(&here).ok()??;
+    let index = orchard_build::distro::latest(&checkout).ok()?;
+    Some(format!("file://{}", index.display()))
 }
 
 /// Ctrl-C presses since the run started.
@@ -587,7 +596,8 @@ impl Shared {
 
 pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
     let mut out = Out { term: Term::new(args.log.as_deref()), json };
-    let Some(index) = args.index.clone().or_else(|| args.source.as_deref().map(index_for)) else {
+    let given = args.index.as_deref().or(args.source.as_deref()).map(index_for);
+    let Some(index) = given.or_else(last_build) else {
         out.fail("Which system? orchard2 install omarchy-a (or --index URL)");
         return finish(&mut out, Exit::Usage, "usage", "no distribution given");
     };
@@ -1011,6 +1021,11 @@ pub fn launch(json: bool, args: &LaunchArgs) -> ExitCode {
     let send = |e: Event| {
         let _ = handle.events.send(e);
     };
+    if args.list || args.entry.is_some() {
+        // Also with one system installed: --list starts nothing, and --entry
+        // starts only the entry it names.
+        send(Event::AskEntry);
+    }
     let mut shared = Shared::new(App::Launcher);
     let mut chosen = false;
     loop {

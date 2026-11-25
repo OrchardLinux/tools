@@ -92,7 +92,10 @@ fn main() -> ExitCode {
         args::Command::Boards => commands::boards::list(&cli.global),
         args::Command::Board { name } => commands::boards::show(&cli.global, &name),
         args::Command::Data { command } => commands::data::run(&cli.global, command.as_ref()),
-        args::Command::Cache { command } => commands::cache::run(&cli.global, &command),
+        args::Command::Cache { command } => {
+            let command = command.unwrap_or(args::CacheCommand::Ls);
+            commands::cache::run(&cli.global, &command)
+        }
         args::Command::Dfu { timeout, command } => {
             commands::dfu::run(&cli.global, timeout.timeout, &command)
         }

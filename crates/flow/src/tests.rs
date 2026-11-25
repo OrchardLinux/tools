@@ -380,6 +380,18 @@ fn launcher_starts_a_single_entry_immediately() {
 }
 
 #[test]
+fn launcher_asked_to_ask_starts_no_single_entry_by_itself() {
+    let (flow, _) = step(App::Launcher, Flow::new(), Event::AskEntry);
+    let (flow, _) = step(App::Launcher, flow, dfu(ipad6()));
+    let (flow, e) = step(App::Launcher, flow, Event::EntriesListed(vec![entry("a", "Omarchy A", true)]));
+    assert!(matches!(flow.state, State::ChooseSystem { ref entries, selected: 0, .. } if entries.len() == 1));
+    assert!(e.is_empty());
+    let (flow, e) = step(App::Launcher, flow, Event::Continue);
+    assert!(matches!(flow.state, State::Starting { .. }));
+    assert_eq!(e, vec![Effect::BootEntry("a".into())]);
+}
+
+#[test]
 fn launcher_lets_the_user_choose_between_several_entries() {
     let s = update(App::Launcher, State::start(), dfu(ipad6())).0;
     let entries = vec![entry("a", "Omarchy A", false), entry("b", "Omarchy A", true), entry("c", "Minimal Linux", false)];
