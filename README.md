@@ -42,8 +42,10 @@ cargo build --release -p orchard-installer-app   # orchard-installer and orchard
 cargo test --workspace
 ```
 
-Linux needs libusb, libxkbcommon and the Vulkan and Wayland/X11 headers; the
-companion needs Xcode (`companion/build.sh`). Release artifacts:
+Linux needs libxkbcommon and the Wayland, X11 (xcb), Vulkan, fontconfig,
+FreeType, ALSA and OpenSSL headers for the windows
+(`packaging/linux/Containerfile` lists the packages); the command line alone
+needs none of them, and nothing needs libusb. The companion needs Xcode (`companion/build.sh`). Release artifacts:
 `packaging/build-macos.sh`, `packaging/build-linux.sh <arch>` (Podman) and
 `packaging/package-linux.sh <arch>`, then `packaging/stamp.py` per distribution.
 

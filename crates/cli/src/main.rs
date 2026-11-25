@@ -92,6 +92,8 @@ fn main() -> ExitCode {
         args::Command::Boards => commands::boards::list(&cli.global),
         args::Command::Board { name } => commands::boards::show(&cli.global, &name),
         args::Command::Data { command } => commands::data::run(&cli.global, command.as_ref()),
+        args::Command::Doctor => commands::host::doctor(&cli.global),
+        args::Command::Setup { names } => commands::host::setup(&cli.global, &names),
         args::Command::Cache { command } => {
             let command = command.unwrap_or(args::CacheCommand::Ls);
             commands::cache::run(&cli.global, &command)

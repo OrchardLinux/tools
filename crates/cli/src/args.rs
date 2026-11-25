@@ -180,6 +180,15 @@ pub enum Command {
         #[command(subcommand)]
         command: Option<DataCommand>,
     },
+    /// Show what this computer has of what orchard2 uses, and what each is
+    /// needed for; changes nothing
+    Doctor,
+    /// Get one of the things doctor lists as missing; without a name, show
+    /// them
+    Setup {
+        /// What to get, as doctor names it: usb, podman, git, python
+        names: Vec<String>,
+    },
     /// Show the cache, or delete from it: downloaded files and build
     /// components
     Cache {

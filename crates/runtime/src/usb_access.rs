@@ -1,22 +1,27 @@
 //! Linux: lets the user's own account reach the device on USB, once per
-//! computer, after orchard's `setup-host` rule: a udev rule for each stage
-//! the installer talks to (DFU, recovery, Pongo, the install system, the
-//! installed system), plus write access to the port's `disable` control of a
-//! device in DFU, for the USB port reset after checkm8 (replug.rs).
+//! computer: a udev rule for every stage orchard2 and the windows talk to
+//! (DFU, recovery, Pongo, m1n1, and Orchard's own systems with their serial
+//! consoles), plus write access to the port's `disable` control of a device
+//! in DFU, for the USB port reset after checkm8 (replug.rs).
 //!
 //! Installed with pkexec (a graphical password prompt) when there is a
 //! desktop session, else sudo. macOS needs none of this.
 //!
-//! UNTESTED on Linux hardware so far (written on macOS); the rule is the one
-//! orchard's CLI installs, narrowed to the installer's stages.
+//! UNTESTED on Linux hardware so far (written on macOS); the rule covers
+//! what orchard's Python CLI's does.
 use orchard_cache::{Code, Error, Result};
 use std::path::Path;
 use std::process::Command;
 
 pub const RULES: &str = "/etc/udev/rules.d/70-orchard-installer.rules";
 const APPLE: u16 = 0x05ac;
-/// DFU, recovery, Pongo, the installed system, the install system.
-const PRODUCTS: [u16; 5] = [0x1227, 0x1281, 0x4141, 0x4145, 0x4146];
+/// DFU, recovery, Pongo, and Orchard's systems: recovery, RAM, installed,
+/// install.
+const PRODUCTS: [u16; 7] = [0x1227, 0x1281, 0x4141, 0x4142, 0x4144, 0x4145, 0x4146];
+/// Orchard's systems, which have a serial console.
+const WITH_CONSOLE: [u16; 4] = [0x4142, 0x4144, 0x4145, 0x4146];
+/// m1n1's proxy, which is a serial port too.
+const M1N1: (u16, u16) = (0x1209, 0x316d);
 const DFU: u16 = 0x1227;
 
 /// The rule file for this group.
@@ -25,11 +30,15 @@ pub fn rules(group: &str) -> Result<String> {
         return Err(Error::new(Code::InvalidInput, format!("unsupported group name: {group}")));
     }
     let access = format!("MODE=\"0660\", GROUP=\"{group}\", TAG+=\"uaccess\"");
-    let mut lines = vec!["# Orchard Installer: the device's USB stages, for the logged-in user.".to_owned()];
-    for product in PRODUCTS {
-        lines.push(format!("SUBSYSTEM==\"usb\", ATTR{{idVendor}}==\"{APPLE:04x}\", ATTR{{idProduct}}==\"{product:04x}\", {access}"));
+    let mut lines = vec!["# Orchard: the device's USB stages and m1n1, with their serial consoles, for the logged-in user.".to_owned()];
+    let devices = PRODUCTS.iter().map(|product| (APPLE, *product, WITH_CONSOLE.contains(product))).chain([(M1N1.0, M1N1.1, true)]);
+    for (vendor, product, console) in devices {
+        lines.push(format!("SUBSYSTEM==\"usb\", ATTR{{idVendor}}==\"{vendor:04x}\", ATTR{{idProduct}}==\"{product:04x}\", {access}"));
+        if console {
+            lines.push(format!("SUBSYSTEM==\"tty\", ATTRS{{idVendor}}==\"{vendor:04x}\", ATTRS{{idProduct}}==\"{product:04x}\", {access}"));
+        }
     }
-    lines.push("# Lets the installer reset the port of a device in DFU that doesn't come back after checkm8.".to_owned());
+    lines.push("# Lets orchard reset the port of a device in DFU that doesn't come back after checkm8.".to_owned());
     lines.push(format!(
         "ACTION==\"add\", SUBSYSTEM==\"usb\", ENV{{DEVTYPE}}==\"usb_device\", ATTR{{idVendor}}==\"{APPLE:04x}\", \
          ATTR{{idProduct}}==\"{DFU:04x}\", RUN+=\"/bin/sh -c 'chgrp {group} /sys%p/port/disable && chmod g+w /sys%p/port/disable'\""
@@ -99,10 +108,14 @@ mod tests {
     #[test]
     fn the_rule_covers_every_stage_and_the_port_reset() {
         let r = rules("staff").unwrap();
-        for product in ["1227", "1281", "4141", "4145", "4146"] {
+        for product in ["1227", "1281", "4141", "4142", "4144", "4145", "4146"] {
             assert!(r.contains(&format!("ATTR{{idProduct}}==\"{product}\", MODE=\"0660\", GROUP=\"staff\", TAG+=\"uaccess\"")), "{product}");
         }
         assert!(r.contains("chgrp staff /sys%p/port/disable && chmod g+w /sys%p/port/disable"));
+        // m1n1's proxy and the systems' consoles are serial ports as well.
+        assert!(r.contains("SUBSYSTEM==\"usb\", ATTR{idVendor}==\"1209\", ATTR{idProduct}==\"316d\""));
+        assert_eq!(r.matches("SUBSYSTEM==\"tty\"").count(), 5);
+        assert!(!r.contains("SUBSYSTEM==\"tty\", ATTRS{idVendor}==\"05ac\", ATTRS{idProduct}==\"1227\""));
         assert!(rules("evil\"; rm").is_err());
         assert!(!cfg!(target_os = "macos") || !needed(), "never needed on macOS");
         assert!(script(Path::new("/tmp/x.rules")).starts_with("install -m 0644 '/tmp/x.rules' '/etc/udev/rules.d/70-orchard-installer.rules'"));

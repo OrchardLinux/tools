@@ -49,3 +49,7 @@ tests and the scripted demo only:
 - `--ecid` and `--location` for `install` and `launch`;
 - the lock in the runtime;
 - `ORCHARD_ENTRY=checkra1n`.
+
+Not run on Linux at all (written on macOS): the udev rule (`setup usb`, and
+what `install` and `launch` install when access is refused), and `setup`'s
+package installs with apt, dnf and pacman.

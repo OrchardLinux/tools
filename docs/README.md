@@ -15,6 +15,7 @@ installer and the launcher are built on the same libraries; `install` and
 | take a device through a boot chain by hand | [boot-commands.md](boot-commands.md) |
 | talk to DFU mode, iBoot, Pongo or m1n1 directly | [low-level.md](low-level.md) |
 | look at board data and firmware | [data-and-firmware.md](data-and-firmware.md) |
+| see what this computer lacks, and get it | [host.md](host.md) |
 | script it: options, environment, JSON, exit statuses | [reference.md](reference.md) |
 
 ## What every command shares
@@ -30,5 +31,5 @@ installer and the launcher are built on the same libraries; `install` and
 - `--ecid` and `--location` name one device ([devices.md](devices.md)).
 
 No command touches a device unless it says so: `build`, `inputs`, `cache`,
-`boards`, `board`, `data`, `fw` (except `fw build --device-keys`),
+`doctor`, `boards`, `board`, `data`, `fw` (except `fw build --device-keys`),
 `m1n1 pack` and every `--plan` work without one.

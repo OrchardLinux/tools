@@ -1214,6 +1214,12 @@ pub fn launch(global: &Global, args: &LaunchArgs) -> ExitCode {
             Next::Go { first } => first,
         };
         match &flow.state {
+            State::UsbAccessNeeded => {
+                if first {
+                    out.warn("This computer needs to allow USB access for the device. Approving it asks for your password.");
+                    send(Event::Continue);
+                }
+            }
             State::Found { device, .. } => {
                 if first {
                     out.term.live(None);
