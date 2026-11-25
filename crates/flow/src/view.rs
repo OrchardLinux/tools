@@ -76,6 +76,16 @@ pub enum ScreenKind {
     NothingInstalled,
 }
 
+/// What the window shows for `flow`: the state's screen, or the "more than
+/// one device" screen while the installer refuses to go on because of
+/// other devices on USB (Flow::refusing).
+pub fn view_flow(app: App, flow: &crate::Flow) -> (DeviceView, ScreenKind) {
+    if flow.refusing(app) {
+        return view(app, &State::SeveralInDfu { devices: Vec::new() });
+    }
+    view(app, &flow.state)
+}
+
 pub fn view(app: App, state: &State) -> (DeviceView, ScreenKind) {
     use Glyph as G;
     use State as S;

@@ -105,8 +105,7 @@ pub fn identify(catalog: &Catalog, usb: &orchard_usb::Device) -> Option<Seen> {
 /// The ECID as the device's id: lower-case hex without leading zeros, so the
 /// boot ROM's padded form and the install system's plain one are the same.
 pub fn ecid_key(ecid: &str) -> String {
-    let trimmed = ecid.trim().trim_start_matches("0x").trim_start_matches('0').to_ascii_lowercase();
-    if trimmed.is_empty() { "0".into() } else { trimmed }
+    orchard_usb::ecid_key(ecid)
 }
 
 /// The mode of one of Orchard's own systems, for a device already known by
@@ -132,6 +131,9 @@ pub struct Watcher {
     normal: BTreeMap<DeviceId, orchard_usb::Device>,
     /// What devices running iPadOS said about themselves (lockdown), by UDID.
     told: BTreeMap<String, lockdown::Answers>,
+    /// Where each device was last seen: its USB port, which stays while it
+    /// changes modes on the same cable.
+    locations: BTreeMap<DeviceId, String>,
 }
 
 impl Watcher {
@@ -150,6 +152,11 @@ impl Watcher {
     /// when it tells, its ECID), so it is recognised without a DFU sighting.
     pub fn learn(&mut self, udid: &str, answers: lockdown::Answers) {
         self.told.insert(udid.to_ascii_lowercase(), answers);
+    }
+
+    /// The model a device running iOS told (lockdown), if it did.
+    pub fn told_product(&self, usb: &orchard_usb::Device) -> Option<String> {
+        self.told.get(usb.identity.udid.as_deref()?)?.product.clone()
     }
 
     /// Whether this UDID has been asked about.
@@ -178,14 +185,41 @@ impl Watcher {
         let running = listing.iter().filter(|d| d.mode == orchard_usb::Mode::Normal).count();
         let absent: Vec<&Device> =
             self.known.values().filter(|d| !others.iter().any(|s| s.device.id == d.id)).collect();
+        // ... and only at the port it was seen at: another iPhone plugged in
+        // elsewhere isn't it.
         if let (1, [only]) = (running, absent.as_slice()) {
-            return Some((*only).clone());
+            if self.locations.get(&only.id).is_none_or(|at| *at == usb.location) {
+                return Some((*only).clone());
+            }
         }
         // No ECID told and no known device it could be: the model alone shows
         // which device to put in DFU (1.2). Its DFU sighting brings the ECID.
         let product = told.product.as_deref()?;
         let udid = usb.identity.udid.as_deref()?;
         catalog.board_for_product(product).ok().map(|board| describe(&board, &format!("udid-{udid}")))
+    }
+
+    /// The Apple devices in `listing` other than `target` (any mode), by the
+    /// shared rule (orchard_usb::others): its ECID, else the port it was
+    /// last seen at. A device running iOS that told its ECID is known by it.
+    pub fn others(&self, listing: &[orchard_usb::Device], target: Option<&DeviceId>) -> Vec<orchard_usb::Device> {
+        let listing: Vec<orchard_usb::Device> = listing
+            .iter()
+            .cloned()
+            .map(|mut d| {
+                if d.identity.ecid.is_none() {
+                    let told = d.identity.udid.as_deref().and_then(|u| self.told.get(u)).and_then(|t| t.ecid.clone());
+                    d.identity.ecid = told;
+                }
+                d
+            })
+            .collect();
+        let target = target.map(|id| orchard_usb::Target {
+            // Ids that aren't an ECID: a device known only by its UDID or board.
+            ecid: (!id.0.contains('-')).then_some(id.0.as_str()),
+            location: self.locations.get(id).map(String::as_str),
+        });
+        orchard_usb::others(&listing, target).into_iter().cloned().collect()
     }
 
     /// Identifies a listing and returns the events since the last one.
@@ -201,6 +235,7 @@ impl Watcher {
             }
             if let Some(seen) = identify(catalog, usb) {
                 self.known.insert(seen.device.id.clone(), seen.device.clone());
+                self.locations.insert(seen.device.id.clone(), usb.location.clone());
                 now.push(seen);
             } else if let (Some(UsbMode::Installed), None, Some(board)) =
                 (orchard_mode(usb), usb.identity.ecid.as_deref(), usb.identity.board.as_deref())
@@ -228,6 +263,7 @@ impl Watcher {
                     }
                 }
                 if let Some(device) = self.known.get(&id) {
+                    self.locations.insert(device.id.clone(), usb.location.clone());
                     if mode == UsbMode::Install {
                         self.install.insert(device.id.clone(), usb.clone());
                     }
@@ -237,6 +273,7 @@ impl Watcher {
         }
         for usb in normal {
             if let Some(device) = self.normal_owner(catalog, usb, listing, &now) {
+                self.locations.insert(device.id.clone(), usb.location.clone());
                 self.normal.insert(device.id.clone(), usb.clone());
                 now.push(Seen { device, mode: UsbMode::Normal });
             }
@@ -283,10 +320,14 @@ mod tests {
     }
 
     fn usb(mode: orchard_usb::Mode, serial: &str) -> orchard_usb::Device {
+        usb_at(mode, serial, &format!("loc-{serial}"))
+    }
+
+    fn usb_at(mode: orchard_usb::Mode, serial: &str, location: &str) -> orchard_usb::Device {
         orchard_usb::Device {
             mode,
             system: None,
-            location: format!("loc-{serial}"),
+            location: location.into(),
             product: None,
             identity: match mode {
                 orchard_usb::Mode::Normal => orchard_usb::Identity::from_udid(serial),
@@ -299,8 +340,8 @@ mod tests {
     fn a_device_running_ipados_is_the_known_one_only_when_nothing_else_could_be() {
         let catalog = Catalog::open(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").join("orchard").as_path());
         let Ok(catalog) = catalog else { return };
-        let dfu = usb(orchard_usb::Mode::Dfu, "CPID:8010 BDID:0C ECID:0011223344556677");
-        let ipados = usb(orchard_usb::Mode::Normal, "0123456789abcdef0123456789abcdef01234567");
+        let dfu = usb_at(orchard_usb::Mode::Dfu, "CPID:8010 BDID:0C ECID:0011223344556677", "port-1");
+        let ipados = usb_at(orchard_usb::Mode::Normal, "0123456789abcdef0123456789abcdef01234567", "port-1");
         let other = usb(orchard_usb::Mode::Normal, "1111111111111111111111111111111111111111");
         let mut w = Watcher::default();
         w.see(&catalog, std::slice::from_ref(&dfu));
@@ -342,4 +383,42 @@ mod tests {
         assert!(matches!(w.update(vec![seen("a", UsbMode::Dfu)])[..], [Event::Attached { mode: UsbMode::Dfu, .. }]));
         assert!(matches!(w.update(vec![])[..], [Event::Detached { .. }]));
     }
+
+    /// The installer's device (j71b's chip and board, ECID 11223344556677)
+    /// on port-1 in DFU, then its other modes on the same cable.
+    fn the_ipad_and_another_device(catalog: &Catalog) {
+        let dfu = usb_at(orchard_usb::Mode::Dfu, "CPID:8010 BDID:0C ECID:0011223344556677", "port-1");
+        let id = DeviceId("11223344556677".into());
+        let mut w = Watcher::default();
+        w.see(catalog, std::slice::from_ref(&dfu));
+        let others = |w: &Watcher, listing: &[orchard_usb::Device]| w.others(listing, Some(&id)).len();
+        // Its own modes, and the moments between them, are never another device.
+        let pongo = usb_at(orchard_usb::Mode::Pongo, "CPID:8010 ECID:0011223344556677", "port-1");
+        let ios = usb_at(orchard_usb::Mode::Normal, "0123456789abcdef0123456789abcdef01234567", "port-1");
+        let m1n1 = usb_at(orchard_usb::Mode::M1n1, "", "port-1");
+        for listing in [vec![dfu.clone()], vec![], vec![pongo.clone()], vec![ios.clone()], vec![m1n1]] {
+            assert_eq!(others(&w, &listing), 0, "{listing:?}");
+        }
+        // An iPhone running iOS (a UDID that is a hash) on another port, beside
+        // the iPad in DFU, and alone while the iPad is off USB after checkm8.
+        let phone = usb_at(orchard_usb::Mode::Normal, "1111111111111111111111111111111111111111", "port-2");
+        assert_eq!(others(&w, &[dfu.clone(), phone.clone()]), 1);
+        assert_eq!(others(&w, std::slice::from_ref(&phone)), 1);
+        // ... and the watcher doesn't take it for the iPad having restarted.
+        let events = w.see(catalog, std::slice::from_ref(&phone));
+        assert!(!events.iter().any(|e| matches!(e, Event::Attached { device, .. } if device.id == id)), "{events:?}");
+        // A device whose UDID carries its ECID, even on the iPad's port.
+        let modern = usb_at(orchard_usb::Mode::Normal, "00008020-0099887766554433", "port-1");
+        assert_eq!(others(&w, std::slice::from_ref(&modern)), 1);
+        // Plugged in mid-run, while the iPad runs Pongo.
+        assert_eq!(others(&w, &[pongo, phone]), 1);
+    }
+
+    #[test]
+    fn another_device_is_never_the_ipad() {
+        let catalog = Catalog::open(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").join("orchard").as_path());
+        let Ok(catalog) = catalog else { return };
+        the_ipad_and_another_device(&catalog);
+    }
+
 }

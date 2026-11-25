@@ -6,7 +6,6 @@
 //! Pongo that appears must carry the same ECID when it reports one, and the
 //! install system's receiver checks the ECID again when it is opened.
 use crate::exec::Executor;
-use crate::ecid_key;
 use orchard_boards::install_env;
 use orchard_cache::{Code, Error, Result};
 use orchard_flow::Device;
@@ -31,19 +30,29 @@ fn fail(message: impl Into<String>) -> Error {
     Error::new(Code::NotFound, message.into())
 }
 
-/// The listed devices in `mode` that are `device`, refusing anything that
-/// could be another device.
+/// What the chain says when another Apple device is on USB: it stops rather
+/// than let palera1n or a wait take the wrong one.
+pub const ANOTHER: &str = "another device is connected";
+
+/// Where the device was last seen with its ECID, by device id: a sighting
+/// without one (iOS before A12, m1n1) is the device only at that port.
+static LOCATION: std::sync::Mutex<Option<(String, String)>> = std::sync::Mutex::new(None);
+
+/// `device` in `mode`, if it is there. Any other Apple device on USB, in any
+/// mode, is an error (orchard_usb::others).
 fn the_device(device: &Device, mode: Mode) -> Result<Option<orchard_usb::Device>> {
     let listed = orchard_usb::list().map_err(|e| fail(e.to_string()))?;
-    let found: Vec<_> = listed.into_iter().filter(|d| d.mode == mode).collect();
-    match found.as_slice() {
-        [] => Ok(None),
-        [one] => match one.identity.ecid.as_deref() {
-            Some(ecid) if ecid_key(ecid) != device.id.0 => Err(fail("another device is connected")),
-            _ => Ok(Some(one.clone())),
-        },
-        _ => Err(fail("more than one device is connected")),
+    let mut known = LOCATION.lock().expect("location lock");
+    let location = known.as_ref().filter(|(id, _)| *id == device.id.0).map(|(_, at)| at.clone());
+    let target = orchard_usb::Target { ecid: Some(&device.id.0), location: location.as_deref() };
+    if !orchard_usb::others(&listed, Some(target)).is_empty() {
+        return Err(fail(ANOTHER));
     }
+    let found = listed.into_iter().find(|d| d.mode == mode && orchard_usb::apple_device(d));
+    if let Some(d) = found.as_ref().filter(|d| d.identity.ecid.is_some()) {
+        *known = Some((device.id.0.clone(), d.location.clone()));
+    }
+    Ok(found)
 }
 
 /// The install payload for this device: m1n1, the layer's kernel, initrd and
@@ -139,10 +148,20 @@ fn run_palera1n_from(executor: &Executor, device: &Device, from: Mode, args: &[s
             // this start can't work any more, whatever palera1n still waits for.
             Ok(None) if from == Mode::Dfu && looked.elapsed() >= Duration::from_secs(1) => {
                 looked = Instant::now();
-                if matches!(the_device(device, Mode::Normal), Ok(Some(_))) {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    break Err(restarted(&log_path));
+                match the_device(device, Mode::Normal) {
+                    Ok(Some(_)) => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        break Err(restarted(&log_path));
+                    }
+                    // Another device: palera1n mustn't go on with two on USB
+                    // (it would take one running iOS to recovery).
+                    Err(e) if e.to_string().contains(ANOTHER) => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        break Err(e);
+                    }
+                    _ => {}
                 }
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(200)),
@@ -254,7 +273,8 @@ fn into_pongo(executor: &Executor, device: &Device, pongo_image: &std::path::Pat
             }
             Err(e) => e,
         };
-        if failed.to_string().contains(RESTARTED) || Instant::now() > until {
+        let why = failed.to_string();
+        if why.contains(RESTARTED) || why.contains(ANOTHER) || Instant::now() > until {
             return Err(failed);
         }
         // Where did it go? Still or again in DFU mode: once more.

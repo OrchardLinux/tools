@@ -497,6 +497,7 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
     let mut ctrl_c_said = false;
     let mut attempt_said = 1u32;
     let mut stage_said: Option<&'static str> = None;
+    let mut others_said: Vec<orchard_flow::Other> = Vec::new();
     loop {
         out.term.tick();
         waiting_keys(&mut out, &mut waiting, args.wait);
@@ -532,6 +533,26 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
             out.muted(&why);
             return finish(&mut out, Exit::Network, "download", &why);
         }
+        // Other Apple devices on USB: nothing goes on until they're gone, then
+        // the current step is shown again.
+        if flow.refusing(orchard_flow::App::Installer) {
+            if flow.others != others_said {
+                others_said = flow.others.clone();
+                out.term.live(None);
+                out.event(json!({"event": "needs", "action": "disconnect-others", "devices": flow.others.iter().map(|o| json!({"name": o.name, "mode": o.mode})).collect::<Vec<_>>()}));
+                out.warn(orchard_flow::SEVERAL_TITLE);
+                for other in &flow.others {
+                    out.sub(format!("{} · {}", other.name, other.mode));
+                }
+                out.sub("Unplug the ones you don't want to install on.");
+                out.term.live_restart(vec![s("Waiting for one device", SUB)]);
+            }
+            continue;
+        }
+        if !others_said.is_empty() {
+            others_said.clear();
+            last.clear();
+        }
         let name_now = state_name(&flow.state);
         let first = name_now != last;
         if first {
@@ -564,7 +585,7 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
             State::SeveralInDfu { .. } => {
                 if first {
                     out.term.live(None);
-                    out.warn("Two devices are in DFU mode");
+                    out.warn(orchard_flow::SEVERAL_TITLE);
                     out.sub("Unplug the ones you don't want to install on.");
                     out.term.live_restart(vec![s("Waiting for one device in DFU mode", SUB)]);
                 }

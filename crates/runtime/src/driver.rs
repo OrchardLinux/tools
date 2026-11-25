@@ -224,6 +224,8 @@ impl<O: Observer> Driver<O> {
         let (asked_tx, asked_rx) = mpsc::channel::<(String, std::result::Result<crate::lockdown::Answers, String>)>();
         let mut asking = std::collections::BTreeSet::new();
         let mut unresponsive = false;
+        // The devices the flow was last told about (Event::Others).
+        let mut others_told: Vec<orchard_flow::Other> = Vec::new();
         // Sightings in normal or recovery mode wait a moment: a device passes
         // through them on its way to DFU, and screens shouldn't flicker.
         let mut pending: std::collections::BTreeMap<orchard_flow::DeviceId, (Event, Instant)> = std::collections::BTreeMap::new();
@@ -288,8 +290,23 @@ impl<O: Observer> Driver<O> {
                             unresponsive = silent;
                             flow = self.feed(flow, Event::Unresponsive(silent));
                         }
+                        let seen_events = watcher.see(&catalog, &devices);
+                        // Other Apple devices besides the one being installed on:
+                        // the installer refuses to go on until they're gone.
+                        if self.app == App::Installer {
+                            let target = flow.state.device().map(|d| d.id.clone());
+                            let others = if watcher.others(&devices, target.as_ref()).is_empty() {
+                                Vec::new()
+                            } else {
+                                listed_devices(&catalog, &watcher, &devices, flow.state.device())
+                            };
+                            if others != others_told {
+                                others_told = others.clone();
+                                flow = self.feed(flow, Event::Others(others));
+                            }
+                        }
                         let mut ready = Vec::new();
-                        for event in watcher.see(&catalog, &devices) {
+                        for event in seen_events {
                             match &event {
                                 Event::Attached { device, mode: UsbMode::Normal | UsbMode::Recovery } => {
                                     pending.insert(device.id.clone(), (event.clone(), Instant::now()));
@@ -342,4 +359,35 @@ impl<O: Observer> Driver<O> {
             }
         }
     }
+}
+
+/// Every Apple device on USB as the "more than one device" screen lists it:
+/// its name where it can be told (the device being installed on, a board
+/// the boot ROM names, the model iOS told), and what it runs.
+fn listed_devices(
+    catalog: &Catalog,
+    watcher: &crate::Watcher,
+    devices: &[orchard_usb::Device],
+    target: Option<&orchard_flow::Device>,
+) -> Vec<orchard_flow::Other> {
+    // Whether a listed device is the one being installed on (orchard_usb::others).
+    let is_target = |d: &orchard_usb::Device| target.is_some_and(|t| watcher.others(std::slice::from_ref(d), Some(&t.id)).is_empty());
+    devices
+        .iter()
+        .filter(|d| orchard_usb::apple_device(d))
+        .map(|d| {
+            let name = target.filter(|_| is_target(d)).map(|t| t.name.clone());
+            let name = name
+                .or_else(|| crate::identify(catalog, d).map(|s| s.device.name).filter(|n| !n.starts_with("Unknown")))
+                .or_else(|| watcher.told_product(d).and_then(|p| catalog.board_for_product(&p).ok()).map(|b| b.display_name))
+                .or_else(|| d.product.clone().filter(|p| !p.starts_with("Apple Mobile Device")))
+                .unwrap_or_else(|| "Apple device".into());
+            let mode = match d.mode {
+                orchard_usb::Mode::Normal if name.starts_with("iPad") => "ipados",
+                orchard_usb::Mode::Normal => "ios",
+                mode => mode.as_str(),
+            };
+            orchard_flow::Other { name, mode: mode.into() }
+        })
+        .collect()
 }

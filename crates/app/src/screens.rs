@@ -643,9 +643,10 @@ fn unsupported(device: &Device, cx: &mut Context<Installer>) -> Div {
 const SUPPORTED_DEVICES: &str = "https://github.com/OrchardLinux/orchard/blob/main/docs/compatibility.md";
 
 /// 1.8: several devices in DFU.
-fn several(devices: &[Device]) -> Div {
+/// Every Apple device on USB, by name and what it runs (1.3).
+fn several(devices: &[(String, String)]) -> Div {
     let mut list = div().w_full().flex().flex_col().bg(c(PANEL)).border_1().border_color(c(PANEL_LINE));
-    for (i, device) in devices.iter().enumerate() {
+    for (i, (name, mode)) in devices.iter().enumerate() {
         let mut row = div()
             .w_full()
             .flex()
@@ -654,14 +655,14 @@ fn several(devices: &[Device]) -> Div {
             .gap(px(10.))
             .px(px(14.))
             .py(px(11.))
-            .child(div().text_size(px(14.)).text_color(c(TEXT)).child(device.name.clone()))
-            .child(badge("dfu", BLUE));
+            .child(div().text_size(px(14.)).text_color(c(TEXT)).child(name.clone()))
+            .child(badge(mode.clone(), BLUE));
         if i > 0 {
             row = row.border_t_1().border_color(c(PANEL_LINE));
         }
         list = list.child(row);
     }
-    column().child(title("More than one device in DFU mode")).child(
+    column().child(title(orchard_flow::SEVERAL_TITLE)).child(
         div()
             .w(px(342.))
             .flex()
@@ -824,6 +825,11 @@ pub fn text_column(installer: &mut Installer, kind: ScreenKind, cx: &mut Context
             return screen;
         }
     }
+    // Other Apple devices on USB: nothing goes on until they're gone.
+    if installer.flow.refusing(installer.app) {
+        let rows: Vec<(String, String)> = installer.flow.others.iter().map(|o| (o.name.clone(), o.mode.clone())).collect();
+        return several(&rows).into_any_element();
+    }
     if let Some(screen) = crate::install_screens::text_column(installer, cx) {
         return screen;
     }
@@ -883,7 +889,10 @@ pub fn text_column(installer: &mut Installer, kind: ScreenKind, cx: &mut Context
         }
         (State::Found { device, .. }, _) => found(device, cx).into_any_element(),
         (State::Unsupported { device }, _) => unsupported(device, cx).into_any_element(),
-        (State::SeveralInDfu { devices }, _) => several(devices).into_any_element(),
+        (State::SeveralInDfu { devices }, _) => {
+            let rows: Vec<(String, String)> = devices.iter().map(|d| (d.name.clone(), "dfu".to_owned())).collect();
+            several(&rows).into_any_element()
+        }
         // Not drawn yet: the screen's name, so the flow can be followed.
         (_, kind) => column().child(div().text_size(px(24.)).text_color(c(TITLE)).child(format!("{kind:?}"))).into_any_element(),
     }

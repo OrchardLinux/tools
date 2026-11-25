@@ -15,7 +15,7 @@ use gpui::{
     div, point, prelude::*, px, size, App, Application, Bounds, Context, MouseButton, SharedString, TitlebarOptions,
     Window, WindowBounds, WindowOptions,
 };
-use orchard_flow::{view, DeviceView, Event, Flow, ScreenKind};
+use orchard_flow::{DeviceView, Event, Flow, ScreenKind};
 use orchard_runtime::driver::{self, Observer, Options};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
@@ -588,7 +588,7 @@ impl Render for Installer {
         if timing() {
             let gap = self.last_frame.elapsed().as_millis();
             if gap > 250 {
-                eprintln!("timing: {gap} ms since the last frame (dialog {:?}, screen {:?})", screens::open_dialog(self).is_some(), view(self.app, &self.flow.state).1);
+                eprintln!("timing: {gap} ms since the last frame (dialog {:?}, screen {:?})", screens::open_dialog(self).is_some(), orchard_flow::view_flow(self.app, &self.flow).1);
             }
         }
         let watching = matches!(self.flow.state, orchard_flow::State::ChooseSplit { .. } | orchard_flow::State::Splitting { link: orchard_flow::Link::Up, .. });
@@ -601,7 +601,7 @@ impl Render for Installer {
         // Draw every display frame while something moves. Asked last, after
         // this frame has updated everything (a dialog that just started to
         // fade, a tween that just got a new target), so no motion stalls.
-        let device_view = view(self.app, &self.flow.state).0;
+        let device_view = orchard_flow::view_flow(self.app, &self.flow).0;
         if self.animating(&device_view) {
             window.request_animation_frame();
         }
@@ -654,7 +654,7 @@ impl Installer {
     }
 
     fn render_screen(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
-        let (device_view, kind) = view(self.app, &self.flow.state);
+        let (device_view, kind) = orchard_flow::view_flow(self.app, &self.flow);
         self.track(device_view, kind);
         if std::mem::take(&mut self.refocus) {
             window.focus(&self.root_focus);

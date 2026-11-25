@@ -8,7 +8,7 @@
 pub mod assets;
 mod view;
 pub use assets::{Asset, AssetState, Assets};
-pub use view::{view, DeviceView, Glyph, Screen, ScreenKind, Tint};
+pub use view::{view, view_flow, DeviceView, Glyph, Screen, ScreenKind, Tint};
 
 #[cfg(test)]
 mod tests;
@@ -235,6 +235,10 @@ pub enum Event {
     // USB
     Attached { device: Device, mode: UsbMode },
     Detached { id: DeviceId },
+    /// The Apple devices on USB when there are others besides the device
+    /// being installed on (or several before one is chosen); empty once
+    /// there aren't.
+    Others(Vec<Other>),
     UsbAccessDenied,
     UsbAccessGranted,
     // Work
@@ -365,11 +369,51 @@ pub struct Flow {
     pub start_problem: Option<String>,
     /// palera1n's log of the start under way (Details).
     pub start_log: Vec<String>,
+    /// Every Apple device on USB while more than the one being installed on
+    /// is (the installer refuses to go on); empty otherwise.
+    pub others: Vec<Other>,
+    /// Starts of the device held back while other devices are on USB; they
+    /// go once those are gone, if the flow still waits for them.
+    pub held: Vec<Effect>,
+}
+
+/// The title of the screen (and the CLI's line) while more than one Apple
+/// device is on USB.
+pub const SEVERAL_TITLE: &str = "More than one device connected";
+
+/// An Apple device on USB, as the "more than one device" screen lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Other {
+    pub name: String,
+    /// What it runs: dfu, recovery, ios, pongo, m1n1, linux.
+    pub mode: String,
 }
 
 impl Flow {
+    /// Whether the installer refuses to go on because other Apple devices
+    /// are on USB: from waiting for DFU mode up to the install system (the
+    /// install itself runs over its own connection).
+    pub fn refusing(&self, app: App) -> bool {
+        use State::*;
+        app == App::Installer
+            && !self.others.is_empty()
+            && matches!(
+                self.state,
+                WaitingForDfu { .. }
+                    | SeveralInDfu { .. }
+                    | Unsupported { .. }
+                    | Found { .. }
+                    | WaitingForIpados { .. }
+                    | SplitDone { .. }
+                    | DfuAgain { .. }
+                    | NotPrepared { .. }
+                    | InstallFailed { .. }
+                    | CreateAccount { env: None, .. }
+            )
+    }
+
     pub fn new() -> Flow {
-        Flow { state: State::start(), assets: Assets::default(), write_waiting: false, start_waiting: None, boot_waiting: None, companion: false, split_problem: None, install_problem: None, resuming: false, boot_stalled: false, booting: false, unresponsive: false, confirming_split: false, launch_problem: None, entry_started: false, start_attempt: 0, start_problem: None, start_log: Vec::new() }
+        Flow { state: State::start(), assets: Assets::default(), write_waiting: false, start_waiting: None, boot_waiting: None, companion: false, split_problem: None, install_problem: None, resuming: false, boot_stalled: false, booting: false, unresponsive: false, confirming_split: false, launch_problem: None, entry_started: false, start_attempt: 0, start_problem: None, start_log: Vec::new(), others: Vec::new(), held: Vec::new() }
     }
 
     /// The asset the current step waits for, for "Getting your iPad ready…".
@@ -513,10 +557,19 @@ fn step_inner(app: App, mut flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
             out.extend(fetch(flow.assets.start(first)));
             return (flow, out);
         }
+        Event::Others(others) => {
+            flow.others = others;
+            if flow.others.is_empty() {
+                let held = std::mem::take(&mut flow.held);
+                route(app, &mut flow, held, &mut out);
+            }
+            return (flow, out);
+        }
         Event::AssetReady(asset) => {
             flow.assets.set(asset, AssetState::Ready);
             if flow.boot_waiting.is_some() && flow.assets.ready_to_boot_ipados() {
-                out.extend(flow.boot_waiting.take());
+                let waiting: Vec<Effect> = flow.boot_waiting.take().into_iter().collect();
+                route(app, &mut flow, waiting, &mut out);
             }
             if flow.write_waiting && flow.assets.ready_to_write() {
                 flow.write_waiting = false;
@@ -662,13 +715,31 @@ fn step_inner(app: App, mut flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
     if !matches!(flow.state, State::WaitingForIpados { .. }) {
         flow.boot_waiting = None;
     }
+    if !booting_screen {
+        flow.held.clear();
+    }
     // The board is known from Found on: start its assets once.
     // (The launcher installs nothing: its Chain started at the start.)
     if app == App::Installer && flow.state.device().is_some() && !matches!(flow.state, State::Unsupported { .. }) {
         out.extend(fetch(flow.assets.start(&assets::WITH_BOARD)));
     }
+    route(app, &mut flow, effects, &mut out);
+    (flow, out)
+}
+
+/// Sends the effects of a step, holding back what must wait: a boot of iPadOS
+/// before its overlay is built, a write before its files are in, and any
+/// start of the device while other Apple devices are on USB.
+fn route(app: App, flow: &mut Flow, effects: Vec<Effect>, out: &mut Vec<Effect>) {
+    let fetch = |assets: Vec<Asset>| assets.into_iter().map(Effect::Fetch);
     for effect in effects {
         match effect {
+            Effect::BootIpadosWithOverlay(_) | Effect::BootInstallEnv(_) if app == App::Installer && !flow.others.is_empty() => {
+                if matches!(effect, Effect::BootIpadosWithOverlay(_)) {
+                    out.extend(fetch(flow.assets.start(&[Asset::Overlay])));
+                }
+                flow.held.push(effect);
+            }
             Effect::BootIpadosWithOverlay(_) => {
                 out.extend(fetch(flow.assets.start(&[Asset::Overlay])));
                 // Not before the overlay is built (and palera1n is here).
@@ -684,7 +755,6 @@ fn step_inner(app: App, mut flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
             _ => out.push(effect),
         }
     }
-    (flow, out)
 }
 
 impl State {

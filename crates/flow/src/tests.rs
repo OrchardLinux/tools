@@ -849,3 +849,53 @@ fn the_no_home_button_tab_draws_the_iphone_beside_the_ipad_until_a_device_is_kno
     assert!(!view::view(App::Installer, &waiting(Sequence::HomePower)).0.pair);
     assert!(!view::view(App::Installer, &waiting(Sequence::VolumeDownSide)).0.pair);
 }
+
+fn iphone() -> Other {
+    Other { name: "iPhone".into(), mode: "ios".into() }
+}
+
+#[test]
+fn another_device_holds_the_start_until_it_is_gone() {
+    let app = App::Installer;
+    let mut flow = Flow::new();
+    flow.state = State::DfuAgain { device: ipad6(), why: Again::Install, seen: None };
+    let (flow, _) = step(app, flow, Event::Others(vec![Other { name: "iPad (6th generation)".into(), mode: "dfu".into() }, iphone()]));
+    assert!(flow.refusing(app));
+    assert_eq!(view_flow(app, &flow).1, ScreenKind::SeveralInDfu);
+    // The iPad arrives in DFU: the install system's start waits.
+    let (flow, effects) = step(app, flow, dfu(ipad6()));
+    assert!(!effects.iter().any(|e| matches!(e, Effect::BootInstallEnv(_))), "{effects:?}");
+    assert!(matches!(flow.state, State::CreateAccount { env: None, .. }));
+    // The iPhone is unplugged: the start goes.
+    let (flow, effects) = step(app, flow, Event::Others(Vec::new()));
+    assert!(effects.iter().any(|e| matches!(e, Effect::BootInstallEnv(_))), "{effects:?}");
+    assert!(!flow.refusing(app) && flow.held.is_empty());
+}
+
+#[test]
+fn a_held_start_is_dropped_when_the_flow_moves_on() {
+    let app = App::Installer;
+    let mut flow = Flow::new();
+    flow.state = State::DfuAgain { device: ipad6(), why: Again::Install, seen: None };
+    let (flow, _) = step(app, flow, Event::Others(vec![iphone(), iphone()]));
+    let (flow, _) = step(app, flow, dfu(ipad6()));
+    assert_eq!(flow.held.len(), 1);
+    // The start failed meanwhile (palera1n saw the other device): back to DFU mode again.
+    let (flow, _) = step(app, flow, Event::ChainFailed(String::from("another device is connected")));
+    assert!(flow.held.is_empty(), "{:?}", flow.state);
+    let (_, effects) = step(app, flow, Event::Others(Vec::new()));
+    assert!(!effects.iter().any(|e| matches!(e, Effect::BootInstallEnv(_))));
+}
+
+#[test]
+fn once_the_install_system_is_up_others_dont_stop_it() {
+    let app = App::Installer;
+    let mut flow = Flow::new();
+    flow.state = State::CreateAccount { device: ipad6(), account: Account::default(), env: Some(fresh()), erase_approved: false, slow: false };
+    let (flow, _) = step(app, flow, Event::Others(vec![iphone(), iphone()]));
+    assert!(!flow.refusing(app));
+    // The launcher is left alone.
+    let mut flow = Flow::new();
+    flow.others = vec![iphone(), iphone()];
+    assert!(!flow.refusing(App::Launcher));
+}
