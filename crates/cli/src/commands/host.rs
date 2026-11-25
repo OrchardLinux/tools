@@ -68,7 +68,7 @@ impl Check {
     fn cells(&self) -> (String, String) {
         let parts: Vec<&str> = self.detail.split("; ").collect();
         match self.state {
-            State::Ready if self.name == "disk" => (format!("ready, {}", self.detail.split(" free").next().unwrap_or("")), String::new()),
+            State::Ready if self.name == "disk" => (self.detail.split(" free").next().unwrap_or("").to_owned(), String::new()),
             State::Ready => ("ready".into(), String::new()),
             // The command, without what it runs.
             State::Missing => {
@@ -228,8 +228,8 @@ fn checks(cache: &Path) -> Vec<Check> {
     if podman.state == State::Ready && cfg!(target_os = "macos") {
         let missing = match podman_machine() {
             Machine::State(state) if state == "running" => None,
-            Machine::State(state) => Some((format!("its VM is {state}"), "podman machine start")),
-            Machine::Absent => Some(("it has no VM yet".to_owned(), "podman machine init, then start")),
+            Machine::State(state) => Some((format!("VM {state}"), "podman machine start")),
+            Machine::Absent => Some(("no VM".to_owned(), "podman machine init, then start")),
             Machine::Silent => {
                 podman.state = State::Yours;
                 podman.detail = "it does not answer; its VM may hang: podman machine stop, then start".into();
@@ -369,14 +369,14 @@ mod tests {
         let check = |state, detail: &str, setup: Option<&str>| Check { name: "podman", state, needed_for: "x", detail: detail.into(), setup: setup.map(str::to_owned) };
         assert_eq!(check(State::Ready, "/usr/bin/podman", None).cells(), ("ready".into(), String::new()));
         assert_eq!(
-            check(State::Missing, "its VM is stopped", Some("orchard2 setup podman  (podman machine start)")).cells(),
-            ("its VM is stopped".into(), "orchard2 setup podman".into())
+            check(State::Missing, "VM stopped", Some("orchard2 setup podman  (podman machine start)")).cells(),
+            ("VM stopped".into(), "orchard2 setup podman".into())
         );
         assert_eq!(
             check(State::Yours, "it does not answer; its VM may hang: podman machine stop, then start", None).cells(),
             ("it does not answer".into(), "its VM may hang: podman machine stop, then start".into())
         );
         let disk = Check { name: "disk", state: State::Ready, needed_for: "x", detail: "30 GB free at /cache".into(), setup: None };
-        assert_eq!(disk.cells().0, "ready, 30 GB");
+        assert_eq!(disk.cells().0, "30 GB");
     }
 }

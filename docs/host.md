@@ -14,15 +14,15 @@ changes nothing. It lists what orchard2 takes from the computer, what each
 is for, whether it is there, and for what is not the command that gets it:
 
 ```
-┌────────────┬──────────┬───────────────────┬───────────────────────┐
-│ Check      │ For      │ State             │ Get it                │
-├────────────┼──────────┼───────────────────┼───────────────────────┤
-│ Python     │ building │ ready             │                       │
-│ git        │ building │ ready             │                       │
-│ Podman     │ building │ its VM is stopped │ orchard2 setup podman │
-│ Free space │ building │ ready, 30 GB      │                       │
-│ ssh-keygen │ SSH      │ ready             │                       │
-└────────────┴──────────┴───────────────────┴───────────────────────┘
+┌────────────┬──────────┬────────────┬───────────────────────┐
+│ Check      │ For      │ State      │ Get it                │
+├────────────┼──────────┼────────────┼───────────────────────┤
+│ Python     │ building │ ready      │                       │
+│ git        │ building │ ready      │                       │
+│ Podman     │ building │ VM stopped │ orchard2 setup podman │
+│ Free space │ building │ 30 GB      │                       │
+│ ssh-keygen │ SSH      │ ready      │                       │
+└────────────┴──────────┴────────────┴───────────────────────┘
 ```
 
 A state in yellow is missing and orchard2 can get it with the command
