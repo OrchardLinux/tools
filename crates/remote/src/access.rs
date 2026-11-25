@@ -26,6 +26,9 @@ fn refused() -> Error {
 pub struct Login<W: Wire> {
     wire: W,
     pending: Vec<u8>,
+    /// Signed in: from then on "Permission denied" is a command's own word,
+    /// not the login's.
+    signed_in: bool,
 }
 
 /// The command that adds `keys` to the user's `authorized_keys`, each once.
@@ -37,12 +40,15 @@ pub fn append_keys(keys: &[String]) -> String {
             format!("grep -qxF {key} ~/.ssh/authorized_keys 2>/dev/null || echo {key} >> ~/.ssh/authorized_keys; ")
         })
         .collect();
-    format!("umask 077; mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && {lines}chmod 600 ~/.ssh/authorized_keys")
+    // A file whose last line has no end would get the first new key glued
+    // onto that line, and both keys would stop working: end it first.
+    let ended = "if [ -s ~/.ssh/authorized_keys ] && [ -n \"$(tail -c1 ~/.ssh/authorized_keys)\" ]; then echo >> ~/.ssh/authorized_keys; fi; ";
+    format!("umask 077; mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && {ended}{lines}chmod 600 ~/.ssh/authorized_keys")
 }
 
 impl<W: Wire> Login<W> {
     pub fn new(wire: W) -> Login<W> {
-        Login { wire, pending: Vec::new() }
+        Login { wire, pending: Vec::new(), signed_in: false }
     }
 
     /// Reads until `found` matches what is pending and takes it out up to
@@ -50,7 +56,7 @@ impl<W: Wire> Login<W> {
     fn until<T>(&mut self, deadline: Instant, found: impl Fn(&[u8]) -> Option<(usize, T)>) -> Result<T> {
         loop {
             let said = String::from_utf8_lossy(&self.pending);
-            if ["Login incorrect", "Authentication failure", "Permission denied"].iter().any(|no| said.contains(no)) {
+            if !self.signed_in && ["Login incorrect", "Authentication failure", "Permission denied"].iter().any(|no| said.contains(no)) {
                 self.pending.clear();
                 return Err(refused());
             }
@@ -88,7 +94,24 @@ impl<W: Wire> Login<W> {
         let deadline = Instant::now() + timeout;
         // A fresh line brings up the login prompt, or a shell left open.
         self.wire.send(b"\r", deadline)?;
-        let mut first = self.shows(&[Shown::Login, Shown::Password, Shown::Shell], deadline)?;
+        let soon = deadline.min(Instant::now() + Duration::from_secs(3));
+        let mut first = match self.shows(&[Shown::Login, Shown::Password, Shown::Shell], soon) {
+            Ok(shown) => shown,
+            Err(e) if e.code == Code::Refused || Instant::now() >= deadline => return Err(e),
+            // Nothing known stands there. A login would: so it is a shell
+            // with a prompt of its own (starship's, say), and a shell prints
+            // what it is asked to. Should it be a slow login after all, it
+            // takes the line for a user name and asks for a password.
+            Err(_) => {
+                let token = token();
+                self.wire.send(format!("printf '\\n%s\\n' {token}\r").as_bytes(), deadline)?;
+                self.until(deadline, |data| {
+                    let printed = marker(data, token.as_bytes(), false, false).map(|(_, end, _)| (end, Shown::Shell));
+                    let asks = (data.ends_with(b"assword: ") || data.ends_with(b"assword:")).then_some((data.len(), Shown::Password));
+                    printed.or(asks)
+                })?
+            }
+        };
         if first == Shown::Shell {
             // Someone's shell is open on the console: end it, sign in anew.
             self.wire.send(b"exit\r", deadline)?;
@@ -116,7 +139,10 @@ impl<W: Wire> Login<W> {
             self.wire.send(format!("printf '\\n%s\\n' {token}\r").as_bytes(), deadline)?;
             let soon = deadline.min(Instant::now() + Duration::from_secs(3));
             match self.until(soon, |data| marker(data, token.as_bytes(), false, false).map(|(_, end, _)| (end, ()))) {
-                Ok(()) => return Ok(()),
+                Ok(()) => {
+                    self.signed_in = true;
+                    return Ok(());
+                }
                 Err(e) if e.code == Code::Refused => return Err(e),
                 Err(e) if Instant::now() >= deadline => return Err(e),
                 Err(_) => {}
@@ -134,6 +160,7 @@ impl<W: Wire> Login<W> {
 
     /// Ends the session; the console shows its login again.
     pub fn logout(&mut self) {
+        self.signed_in = false;
         let _ = self.wire.send(b"exit\r", Instant::now() + Duration::from_secs(5));
     }
 
@@ -161,11 +188,13 @@ mod tests {
         ready: Vec<u8>,
         typed: Vec<u8>,
         ran: Vec<String>,
+        /// The shell's prompt.
+        prompt: &'static str,
     }
 
     impl Getty {
         fn new(state: &'static str) -> Getty {
-            Getty { state, user: String::new(), password: "secret", ready: Vec::new(), typed: Vec::new(), ran: Vec::new() }
+            Getty { state, user: String::new(), password: "secret", ready: Vec::new(), typed: Vec::new(), ran: Vec::new(), prompt: "[tablet@ipad ~]$ " }
         }
 
         fn say(&mut self, text: &str) {
@@ -175,6 +204,10 @@ mod tests {
         fn line(&mut self, line: String) {
             match self.state {
                 "login" if line.is_empty() => self.say("\r\nipad login: "),
+                "shell" if line.is_empty() => {
+                    let prompt = self.prompt;
+                    self.say(&format!("\r\n{prompt}"));
+                }
                 "login" => {
                     self.user = line;
                     self.state = "password";
@@ -183,7 +216,8 @@ mod tests {
                 "password" => {
                     if self.user == "tablet" && line == self.password {
                         self.state = "shell";
-                        self.say("\r\nLast login: today\r\n[tablet@ipad ~]$ ");
+                        let prompt = self.prompt;
+                        self.say(&format!("\r\nLast login: today\r\n{prompt}"));
                     } else {
                         self.state = "login";
                         self.say("\r\nLogin incorrect\r\n\r\nipad login: ");
@@ -202,9 +236,13 @@ mod tests {
                         self.ran.push(command.to_owned());
                         let token = rest.split(' ').next().unwrap();
                         let code = if command.contains("fail") { 1 } else { 0 };
+                        if command.contains("denied") {
+                            self.say("chmod: /x: Permission denied\r\n");
+                        }
                         self.say(&format!("\r\n{token}:{code}\r\n"));
                     }
-                    self.say("[tablet@ipad ~]$ ");
+                    let prompt = self.prompt;
+                    self.say(prompt);
                 }
             }
         }
@@ -273,6 +311,41 @@ mod tests {
         login.wire.say("Password: ");
         login.grant("tablet", "secret", &keys()).unwrap();
         assert_eq!(login.wire.ran.len(), 1);
+    }
+
+    #[test]
+    fn a_shell_with_a_prompt_of_its_own_is_known_by_what_it_prints() {
+        // starship's, which Omarchy uses: no $ or # to know it by.
+        let mut getty = Getty::new("shell");
+        getty.prompt = "\u{276f} ";
+        let mut login = Login::new(getty);
+        login.grant("tablet", "secret", &keys()).unwrap();
+        assert_eq!((login.wire.state, login.wire.ran.len()), ("login", 1));
+    }
+
+    #[test]
+    fn a_commands_permission_denied_is_not_a_wrong_password() {
+        let mut login = Login::new(Getty::new("login"));
+        login.login("tablet", "secret", Duration::from_secs(60)).unwrap();
+        assert_eq!(login.run("echo denied; fail", Duration::from_secs(60)).unwrap(), 1);
+    }
+
+    #[test]
+    fn a_last_line_without_its_end_is_ended_before_a_key_is_added() {
+        let home = tempfile::tempdir().unwrap();
+        let file = home.path().join(".ssh/authorized_keys");
+        let run = |keys: &[String]| {
+            let done = std::process::Command::new("sh").arg("-c").arg(append_keys(keys)).env("HOME", home.path()).status().unwrap();
+            assert!(done.success());
+            std::fs::read_to_string(&file).unwrap()
+        };
+        // No file yet.
+        assert_eq!(run(&keys()[..1]), "ssh-ed25519 AAAAone\n");
+        // Someone's key, with no line end after it.
+        std::fs::write(&file, "ssh-ed25519 AAAAone\nssh-rsa THEIRS").unwrap();
+        assert_eq!(run(&keys()), "ssh-ed25519 AAAAone\nssh-rsa THEIRS\nssh-ed25519 AAAAtwo\n");
+        // Again: nothing is added twice, and no empty line appears.
+        assert_eq!(run(&keys()), "ssh-ed25519 AAAAone\nssh-rsa THEIRS\nssh-ed25519 AAAAtwo\n");
     }
 
     #[test]
