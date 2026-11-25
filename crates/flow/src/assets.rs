@@ -64,7 +64,7 @@ impl Cause {
                 "The installer can't prepare this device",
                 format!(
                     "The installer couldn't prepare {what}: it can't use the files it got for this device. \
-                     The internet connection is fine; a newer installer may be needed."
+                     A newer installer may be needed."
                 ),
             ),
             Cause::Other => (
