@@ -1079,23 +1079,22 @@ pub fn launch(json: bool, args: &LaunchArgs) -> ExitCode {
                         }
                     },
                     None if count == 1 => 0,
+                    // Without a terminal the default starts, as the device
+                    // does by itself.
+                    None if !out.term.tty => *selected,
                     None => {
                         out.term.blank();
                         out.heading("Choose a system", None);
-                        for (i, e) in entries.iter().enumerate() {
-                            out.term.line(vec![s(format!("  {}  ", i + 1), BLUE), s(format!("{:<16}", e.title), FG), s(format!("{:<9}", e.kernel), MUTED), s(if e.default { "default" } else { "" }, GREEN)]);
-                        }
-                        out.term.blank();
-                        match out.term.ask(vec![s("  Start which? ", FG), s(format!("[{}] ", selected + 1), MUTED)], false) {
-                            Some(t) if t.trim().is_empty() => *selected,
-                            Some(t) => match t.trim().parse::<usize>() {
-                                Ok(n) if (1..=count).contains(&n) => n - 1,
-                                _ => {
-                                    out.fail(format!("Choose 1 to {count}"));
-                                    return finish(&mut out, Exit::Usage, "usage", "no such system");
-                                }
-                            },
-                            None => *selected,
+                        let rows: Vec<Vec<Span>> = entries
+                            .iter()
+                            .map(|e| vec![s(format!("{:<18}", e.title), FG), s(format!("{:<10}", e.kernel), MUTED), s(if e.default { "default" } else { "" }, GREEN)])
+                            .collect();
+                        match out.term.pick(&rows, *selected, "↑ ↓ choose · Enter start · Esc leave") {
+                            Some(index) => index,
+                            None => {
+                                out.muted(orchard_flow::for_device("Nothing started. To start a system, put your iPad in DFU mode and run this again."));
+                                return finish(&mut out, Exit::Interrupted, "interrupted", "left the list");
+                            }
                         }
                     }
                 };

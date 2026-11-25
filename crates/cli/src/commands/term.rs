@@ -225,6 +225,76 @@ impl Term {
         Some(line.trim_end_matches(['\r', '\n']).to_owned())
     }
 
+    /// Lets the person choose one of ROWS with the arrow keys (or j and k, or
+    /// its number) and Enter, starting at SELECTED; None when they leave
+    /// (Esc, q) or without a terminal. The rows stay, the chosen one marked.
+    pub fn pick(&mut self, rows: &[Vec<Span>], selected: usize, hint: &str) -> Option<usize> {
+        if !self.tty || rows.is_empty() {
+            return None;
+        }
+        self.keys(false);
+        self.clear_live();
+        let live = self.live.take();
+        let saved = cbreak()?;
+        let mut at = selected.min(rows.len() - 1);
+        let mut drawn = false;
+        ASKING.store(true, Ordering::SeqCst);
+        let chosen = loop {
+            if drawn {
+                let _ = write!(self.out, "\x1b[{}A", rows.len() + 1);
+            }
+            drawn = true;
+            for (i, row) in rows.iter().enumerate() {
+                let mut all = vec![match i == at {
+                    true => s("  ❯ ", BLUE),
+                    false => s("    ", MUTED),
+                }];
+                // The row under the mark reads as the title does.
+                all.extend(row.iter().map(|(text, color)| match (i == at, *color) {
+                    (true, FG) => (text.clone(), TITLE),
+                    (false, FG) => (text.clone(), SUB),
+                    _ => (text.clone(), *color),
+                }));
+                let text = self.paint(&all);
+                let _ = writeln!(self.out, "\r\x1b[2K{text}");
+            }
+            let text = self.paint(&[s(format!("  {hint}"), MUTED)]);
+            let _ = writeln!(self.out, "\r\x1b[2K{text}");
+            let _ = self.out.flush();
+            // Read from the terminal itself: Rust's stdin keeps what follows a
+            // byte to itself, and an arrow key is Esc, [ and a letter at once.
+            let key = match terminal_byte() {
+                None => break None,
+                Some(0x1b) if !waiting_byte() => Key::Leave,
+                Some(0x1b) => match (terminal_byte(), terminal_byte()) {
+                    (Some(b'[' | b'O'), Some(b'A')) => Key::Up,
+                    (Some(b'[' | b'O'), Some(b'B')) => Key::Down,
+                    _ => Key::Other,
+                },
+                Some(byte) => key_of(byte),
+            };
+            match moved(at, rows.len(), key) {
+                Move::To(next) => at = next,
+                Move::Take(index) => break Some(index),
+                Move::Leave => break None,
+            }
+        };
+        ASKING.store(false, Ordering::SeqCst);
+        restore(saved);
+        // The hint goes; the list stays as it was left.
+        let _ = write!(self.out, "\x1b[1A\r\x1b[2K");
+        let _ = self.out.flush();
+        if let Some(log) = self.log.as_mut() {
+            for (i, row) in rows.iter().enumerate() {
+                let plain: String = row.iter().map(|(t, _)| t.as_str()).collect();
+                let mark = if chosen == Some(i) { ">" } else { " " };
+                let _ = writeln!(log, "  {mark} {plain}");
+            }
+        }
+        self.live = live;
+        chosen
+    }
+
     /// A secret line, a dot per character: Backspace takes one back, Ctrl-U
     /// all. Ctrl-C still quits (the signal handler, ISIG stays on).
     fn read_secret(&mut self, line: &mut String) -> std::io::Result<()> {
@@ -309,6 +379,69 @@ impl Term {
     }
 }
 
+/// A key of the list of choices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Key {
+    Up,
+    Down,
+    Enter,
+    /// The row with this number, from 1.
+    Number(usize),
+    Leave,
+    Other,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Move {
+    To(usize),
+    Take(usize),
+    Leave,
+}
+
+fn key_of(byte: u8) -> Key {
+    match byte {
+        b'\r' | b'\n' => Key::Enter,
+        b'k' | b'K' | 0x10 => Key::Up,
+        b'j' | b'J' | 0x0e => Key::Down,
+        b'1'..=b'9' => Key::Number(usize::from(byte - b'0')),
+        b'q' | b'Q' | 0x04 => Key::Leave,
+        _ => Key::Other,
+    }
+}
+
+/// Where a key takes the mark from row AT of COUNT; the ends don't wrap.
+fn moved(at: usize, count: usize, key: Key) -> Move {
+    match key {
+        Key::Up => Move::To(at.saturating_sub(1)),
+        Key::Down => Move::To((at + 1).min(count - 1)),
+        Key::Enter => Move::Take(at),
+        Key::Number(n) if n <= count => Move::Take(n - 1),
+        Key::Number(_) | Key::Other => Move::To(at),
+        Key::Leave => Move::Leave,
+    }
+}
+
+/// The next byte typed, waited for; None when the terminal is gone.
+fn terminal_byte() -> Option<u8> {
+    let mut byte = 0u8;
+    loop {
+        // SAFETY: reads one byte from stdin into a byte this function owns.
+        match unsafe { libc::read(0, std::ptr::addr_of_mut!(byte).cast(), 1) } {
+            1 => return Some(byte),
+            0 => return None,
+            _ if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted => {}
+            _ => return None,
+        }
+    }
+}
+
+/// Whether more input follows at once: the rest of a key's sequence.
+fn waiting_byte() -> bool {
+    let mut fd = libc::pollfd { fd: 0, events: libc::POLLIN, revents: 0 };
+    // SAFETY: poll on stdin with one descriptor.
+    unsafe { libc::poll(&mut fd, 1, 50) > 0 }
+}
+
 impl Drop for Term {
     fn drop(&mut self) {
         self.keys(false);
@@ -337,5 +470,23 @@ fn restore(t: libc::termios) {
     // SAFETY: puts back what tcgetattr gave.
     unsafe {
         libc::tcsetattr(0, libc::TCSANOW, &t);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_mark_moves_within_the_list_and_keys_choose() {
+        assert_eq!(moved(0, 3, Key::Up), Move::To(0));
+        assert_eq!(moved(0, 3, Key::Down), Move::To(1));
+        assert_eq!(moved(2, 3, Key::Down), Move::To(2));
+        assert_eq!(moved(1, 3, Key::Enter), Move::Take(1));
+        assert_eq!(moved(0, 3, key_of(b'3')), Move::Take(2));
+        assert_eq!(moved(1, 3, key_of(b'4')), Move::To(1));
+        assert_eq!(moved(1, 3, key_of(b'x')), Move::To(1));
+        assert_eq!(moved(1, 3, key_of(b'q')), Move::Leave);
+        assert_eq!((key_of(b'j'), key_of(b'k'), key_of(b'\r')), (Key::Down, Key::Up, Key::Enter));
     }
 }
