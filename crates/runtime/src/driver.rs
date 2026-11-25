@@ -82,6 +82,8 @@ impl Options {
 /// What a front end is told while the flow runs. Called on the driver's
 /// thread.
 pub trait Observer: Send + 'static {
+    /// The flow right after an event, before its effects are carried out.
+    fn stepped(&mut self, _flow: &Flow) {}
     /// The flow after every event.
     fn changed(&mut self, flow: &Flow);
     /// Each effect, before it is carried out.
@@ -161,6 +163,7 @@ impl<O: Observer> Driver<O> {
             self.observer.problem(&format!("failed: {event:?}"));
         }
         let (next, effects) = step(self.app, flow, event);
+        self.observer.stepped(&next);
         for effect in effects {
             self.observer.effect(&effect);
             let acts_on_device = matches!(

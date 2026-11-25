@@ -60,6 +60,7 @@ pub fn run(app: App, mut observer: impl Observer, input: Receiver<Event>, _event
     }
     let mut feed = |flow: Flow, event: Event, due: &mut Vec<(Instant, Event)>, omarchy_gb: &mut u32| -> Flow {
         let (next, effects) = step(app, flow, event);
+        observer.stepped(&next);
         for effect in effects {
             observer.effect(&effect);
             match effect {

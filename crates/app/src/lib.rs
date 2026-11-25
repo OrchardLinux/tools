@@ -57,6 +57,50 @@ fn set_keyboard(on: bool) {
 #[derive(Clone, Default)]
 struct Latest(Arc<Mutex<Option<Flow>>>);
 
+/// The install's stopwatch (3.5 shows it): it runs from Install until the
+/// install system reports done. Kept with the flow's events, not with the
+/// frames: a covered window draws late.
+#[derive(Clone, Copy, Default)]
+struct Stopwatch {
+    started: Option<Instant>,
+    took: Option<Duration>,
+}
+
+impl Stopwatch {
+    /// The flow is in `state` at `now`; the time taken when the install just ended.
+    fn see(&mut self, state: &orchard_flow::State, now: Instant) -> Option<Duration> {
+        match state {
+            orchard_flow::State::Installing { .. } => {
+                self.started.get_or_insert(now);
+                None
+            }
+            orchard_flow::State::Starting { .. } => match (self.started, self.took) {
+                (Some(started), None) => {
+                    self.took = Some(now.duration_since(started));
+                    self.took
+                }
+                _ => None,
+            },
+            _ => {
+                *self = Stopwatch::default();
+                None
+            }
+        }
+    }
+}
+
+static STOPWATCH: Mutex<Stopwatch> = Mutex::new(Stopwatch { started: None, took: None });
+
+/// The install's stopwatch as it stands.
+fn stopwatch() -> Stopwatch {
+    *STOPWATCH.lock().unwrap()
+}
+
+/// How long the install took, once it is done.
+pub(crate) fn install_took() -> Option<Duration> {
+    stopwatch().took
+}
+
 struct Bridge {
     latest: Latest,
     /// The last state's name, to log each change once.
@@ -88,6 +132,12 @@ fn set_up_launcher() {
 }
 
 impl Observer for Bridge {
+    fn stepped(&mut self, flow: &Flow) {
+        let took = STOPWATCH.lock().unwrap().see(&flow.state, Instant::now());
+        if let Some(took) = took {
+            eprintln!("{} timing: installed in {:.1}s (Install pressed to done)", orchard_runtime::install::stamp(), took.as_secs_f64());
+        }
+    }
     fn changed(&mut self, flow: &Flow) {
         // STAMP is set only in the installer.
         if STAMP.get().is_some() && matches!(flow.state, orchard_flow::State::Starting { .. }) {
@@ -300,10 +350,8 @@ pub struct Installer {
     /// When the last frame was drawn (ORCHARD_TIMING).
     last_frame: Instant,
     /// The install's stopwatch: from Install to the device's "done".
-    install_started: Option<Instant>,
     /// After "done", 3.4 stays until its bar has filled to 100 % (then 3.5).
     pub finish_hold: Option<Instant>,
-    pub install_took: Option<Duration>,
     /// A quit request waiting for an answer (installer only).
     pub quitting: Option<QuitAsk>,
     /// Since when the companion is unreachable while the split screen or the
@@ -415,27 +463,6 @@ impl Installer {
         self.ssh_chosen = account.ssh;
         if typed != *account {
             self.send(Event::EditAccount(typed));
-        }
-    }
-
-    /// The install's stopwatch (3.5 shows it): it runs from Install until
-    /// the install system reports done.
-    fn time_install(&mut self) {
-        match &self.flow.state {
-            orchard_flow::State::Installing { .. } => {
-                self.install_started.get_or_insert_with(Instant::now);
-            }
-            orchard_flow::State::Starting { .. } => {
-                if let (Some(start), None) = (self.install_started, self.install_took) {
-                    let took = start.elapsed();
-                    eprintln!("{} timing: installed in {:.1}s (Install pressed to done)", orchard_runtime::install::stamp(), took.as_secs_f64());
-                    self.install_took = Some(took);
-                }
-            }
-            _ => {
-                self.install_started = None;
-                self.install_took = None;
-            }
         }
     }
 
@@ -626,7 +653,6 @@ fn timing() -> bool {
 
 impl Installer {
     fn render_inner(&mut self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
-        self.time_install();
         // Just installed: 3.4 with its bar filling to 100 % first, then 3.5.
         let held = self.hold_finish(window);
         let real = held.map(|installing| std::mem::replace(&mut self.flow.state, installing));
@@ -645,7 +671,7 @@ impl Installer {
             return None;
         };
         // Only right after an install this window watched (the bar is on).
-        if self.install_started.is_none() && self.finish_hold.is_none() {
+        if stopwatch().started.is_none() && self.finish_hold.is_none() {
             return None;
         }
         let until = *self.finish_hold.get_or_insert_with(|| Instant::now() + Duration::from_millis(900));
@@ -1022,9 +1048,7 @@ pub fn run(app: Kind) {
                     dialog_kind: None,
                     dialog_fade: Tween::new(0., 150.),
                     last_frame: Instant::now(),
-                    install_started: None,
                     finish_hold: None,
-                    install_took: None,
                     erase_shown: None,
                     split_erase_shown: None,
                     download_shown: None,
@@ -1048,4 +1072,40 @@ pub fn run(app: Kind) {
         });
         cx.activate(true);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use orchard_flow::{Device, DeviceId, Link, Model, Sequence, State, Support};
+
+    #[test]
+    fn the_stopwatch_runs_from_install_to_done() {
+        let device = Device {
+            id: DeviceId("1a2b".into()),
+            board: "j71b".into(),
+            name: "iPad (6th generation)".into(),
+            model: Model::IpadHome,
+            sequence: Sequence::HomePower,
+            support: Support::Supported,
+        };
+        let installing = |percent| State::Installing { device: device.clone(), percent, link: Link::Up, streamed: false, step: None };
+        let starting = State::Starting { device: device.clone(), title: "System".into() };
+        let start = Instant::now();
+        let at = |s: u64| start + Duration::from_secs(s);
+        let mut watch = Stopwatch::default();
+        assert_eq!(watch.see(&State::start(), at(0)), None);
+        assert_eq!(watch.see(&installing(0), at(10)), None);
+        assert_eq!(watch.see(&installing(99), at(60)), None);
+        // Done; whatever comes after (USB events, late frames) doesn't count.
+        assert_eq!(watch.see(&starting, at(73)), Some(Duration::from_secs(63)));
+        assert_eq!(watch.see(&starting, at(80)), None);
+        assert_eq!(watch.took, Some(Duration::from_secs(63)));
+        // A failed install starts over.
+        assert_eq!(watch.see(&State::InstallFailed { device: device.clone() }, at(90)), None);
+        assert!(watch.started.is_none() && watch.took.is_none());
+        // A system that starts without an install this window watched: no time.
+        assert_eq!(watch.see(&starting, at(91)), None);
+        assert_eq!(watch.took, None);
+    }
 }

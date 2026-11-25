@@ -1124,7 +1124,7 @@ pub fn text_column(installer: &mut Installer, cx: &mut Context<Installer>) -> Op
             install_failed(reason.as_deref(), cx).into_any_element()
         }
         State::Starting { .. } => {
-            let took = installer.install_took;
+            let took = crate::install_took();
             let user = installer.username.clone();
             starting(took, installer.ssh_chosen.then_some(user.as_ref()), cx).into_any_element()
         }
