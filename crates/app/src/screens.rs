@@ -1085,25 +1085,24 @@ fn quit_dialog(state: &State, focus: &gpui::FocusHandle, cx: &mut Context<Instal
         )
 }
 
-/// The first download that failed for good, with the reason.
-fn failed_download(installer: &Installer) -> Option<(orchard_flow::assets::Asset, String)> {
-    orchard_flow::assets::ALL.iter().find_map(|&a| match installer.flow.assets.get(a) {
-        orchard_flow::assets::AssetState::Failed(why) => Some((a, why.clone())),
-        _ => None,
-    })
+/// The first asset that failed for good: why, and the reason.
+fn failed_download(installer: &Installer) -> Option<(orchard_flow::assets::Asset, orchard_flow::Cause, String)> {
+    installer.flow.assets.failed().map(|(a, cause, why)| (a, cause, why.to_owned()))
 }
 
-/// A download failed for good (draft copy): what, why, and try again.
+/// An asset failed for good (draft copy): what, why, and try again. Only a
+/// network failure is called a download problem.
 fn download_dialog(installer: &Installer, focus: &gpui::FocusHandle, cx: &mut Context<Installer>) -> Div {
-    let (asset, why) = failed_download(installer).expect("a failed download");
+    let (asset, cause, why) = failed_download(installer).expect("a failed download");
     let what = match asset {
         orchard_flow::assets::Asset::RootImage => format!("{} itself", orchard_flow::system_name()),
         orchard_flow::assets::Asset::Palera1n => orchard_flow::for_device("palera1n, which starts your iPad").to_owned(),
         _ => format!("part of {}", orchard_flow::system_name()),
     };
+    let (title, text) = cause.copy(&what);
     dialog(480.)
-        .child(div().text_size(px(18.)).font_weight(FontWeight::SEMIBOLD).text_color(c(TITLE)).child("A download didn't work"))
-        .child(paragraph(format!("The installer couldn't download {what}. Check the internet connection, then try again.")))
+        .child(div().text_size(px(18.)).font_weight(FontWeight::SEMIBOLD).text_color(c(TITLE)).child(title))
+        .child(paragraph(text))
         .child(div().w_full().font_family(MONO).text_size(px(12.)).line_height(px(18.)).text_color(c(SUBTITLE)).child(why))
         .child(div().w_full().flex().flex_row().justify_end().pt(px(4.)).child(dialog_button(
             "download-retry",

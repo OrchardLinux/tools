@@ -3,15 +3,17 @@
 use super::apfs::Container;
 use super::archive::Archive;
 use super::disk_image::DiskImage;
-use crate::catalog::{Board, Catalog, Input, Kind, Location, Recipe};
+use crate::catalog::{Board, Catalog, Input, Ipsw, Kind, Location, Recipe};
 use orchard_cache::http::Http;
 use orchard_cache::source::{FileSource, Slice, Source};
 use orchard_cache::store::{Key, Store};
 use orchard_cache::{Code, Context, Error, Result};
 use orchard_formats::apfs::DirEntry;
 use orchard_formats::build_manifest::{Identity, Manifest};
+use orchard_formats::kernelcache;
 use orchard_formats::udif;
 use sha2::{Digest, Sha256};
+use std::collections::hash_map::{Entry, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -74,13 +76,15 @@ impl Target {
     }
 }
 
-/// A board's recipe inputs, taken from the cache where possible. The
-/// firmware is opened only when an input is missing, and then only once.
+/// A board's recipe inputs, taken from the cache where possible. A firmware
+/// (the recipe's, or another restore image an input names) is opened only
+/// when an input from it is missing, and then only once.
 pub struct Inputs<'a> {
     store: &'a Store,
     board: &'a Board,
     recipe: &'a Recipe,
-    firmware: Option<Firmware>,
+    /// Opened firmwares by URL.
+    firmware: HashMap<String, Firmware>,
 }
 
 /// An input's bytes, and whether they came from the cache.
@@ -95,7 +99,7 @@ impl<'a> Inputs<'a> {
             store,
             board,
             recipe,
-            firmware: None,
+            firmware: HashMap::new(),
         }
     }
 
@@ -103,14 +107,18 @@ impl<'a> Inputs<'a> {
         let input = self.recipe.inputs.get(name).ok_or_else(|| {
             Error::new(Code::NotFound, "not in the recipe").context(format!("input {name}"))
         })?;
+        let ipsw = match &input.location {
+            Location::Kernelcache {
+                restore: Some(restore),
+                ..
+            } => restore,
+            _ => &self.recipe.ipsw,
+        };
         let key = match &input.sha256 {
             Some(hex) => Key::Sha256(hex.clone()),
             // Without a recorded hash, the file is known by the IPSW it comes
             // from and its place in it.
-            None => Key::Origin(format!(
-                "ipsw {}, {}",
-                self.recipe.ipsw.sha256, input.location
-            )),
+            None => Key::Origin(format!("ipsw {}, {}", ipsw.sha256, input.location)),
         };
         if let Some(bytes) = self.store.get(&key)? {
             if bytes.len() as u64 > limit {
@@ -123,9 +131,9 @@ impl<'a> Inputs<'a> {
                 cached: true,
             });
         }
-        let firmware = match &mut self.firmware {
-            Some(f) => f,
-            slot => slot.insert(Firmware::open_recipe(self.recipe)?),
+        let firmware = match self.firmware.entry(ipsw.url.clone()) {
+            Entry::Occupied(f) => f.into_mut(),
+            Entry::Vacant(slot) => slot.insert(Firmware::open_ipsw(ipsw)?),
         };
         let bytes = firmware.input(name, input, self.board, limit)?;
         self.store.put(&key, &bytes)?;
@@ -161,12 +169,14 @@ impl Firmware {
 
     /// Opens the firmware a recipe names, at the size the recipe records.
     pub fn open_recipe(recipe: &Recipe) -> Result<Firmware> {
-        Firmware::from_source(Box::new(Http::new(
-            &recipe.ipsw.url,
-            recipe.ipsw.size,
-            TIMEOUT,
-        )?))
-        .context(&recipe.ipsw.url)
+        Firmware::open_ipsw(&recipe.ipsw)
+    }
+
+    /// Opens a pinned firmware at the size it records. Only the parts read
+    /// are fetched.
+    pub fn open_ipsw(ipsw: &Ipsw) -> Result<Firmware> {
+        Firmware::from_source(Box::new(Http::new(&ipsw.url, ipsw.size, TIMEOUT)?))
+            .context(&ipsw.url)
     }
 
     fn from_source(source: Box<dyn Source>) -> Result<Firmware> {
@@ -200,13 +210,23 @@ impl Firmware {
                 };
                 self.read(&at, limit)?
             }
-            Location::Component(component) => {
-                let identity = self.manifest.identity_for(board.chip, board.board)?;
-                let member = identity.components.get(component).cloned().ok_or_else(|| {
-                    Error::new(Code::NotFound, format!("no component {component}"))
-                        .context(&identity.device_class)
-                })?;
-                self.member(&member, limit)?
+            Location::Kernelcache { board: named, .. } => {
+                // Another board's kernel by its device class; it need not be
+                // the installing board, nor in the recipe's own image.
+                let identity = match named {
+                    Some(class) => self.manifest.identity(class)?,
+                    None => self.manifest.identity_for(board.chip, board.board)?,
+                };
+                let member = identity
+                    .components
+                    .get("KernelCache")
+                    .cloned()
+                    .ok_or_else(|| {
+                        Error::new(Code::NotFound, "no component KernelCache")
+                            .context(&identity.device_class)
+                    })?;
+                let im4p = self.member(&member, limit)?;
+                kernelcache::decode(&im4p).map_err(|e| Error::from(e).context(&member))?
             }
         };
         if let Some(expected) = &input.sha256 {
