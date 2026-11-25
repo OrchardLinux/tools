@@ -73,7 +73,7 @@ pub fn steps(run: &Run, seconds: f32, cx: &mut Context<Installer>) -> Div {
         (vec![text("Click Start")], None),
         (vec![text("Get ready")], Some("3 s")),
         (vec![text("Hold "), button(hold), text(" and "), button(power)], Some("4 s")),
-        (vec![text("Let go of "), button(power), text(", keep holding "), button(hold)], Some("~10 s")),
+        (vec![text("Let go of "), button(power), text(", keep holding "), button(hold)], Some("12 s")),
         (vec![text("Let go when this window changes")], None),
     ];
     for (i, (parts, duration)) in rows.into_iter().enumerate() {
@@ -109,6 +109,8 @@ pub fn steps(run: &Run, seconds: f32, cx: &mut Context<Installer>) -> Div {
                 let done = recovery::HOLD.as_secs_f32() + seconds;
                 Some((total - done, done / total, button_color(power)))
             }
+            // Home alone, at most LET_GO: the screen keeps moving while it is held.
+            (Phase::LetGo, 3) => Some((recovery::LET_GO.as_secs_f32() - seconds, seconds / recovery::LET_GO.as_secs_f32(), button_color(hold))),
             _ => None,
         };
         row = match (count, i, duration) {
