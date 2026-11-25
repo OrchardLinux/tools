@@ -168,7 +168,7 @@ const FETCH: Duration = Duration::from_secs(30);
 const RUN: Duration = Duration::from_secs(120);
 
 /// How long Pongo may take to show up on USB once the tool has ended.
-const ARRIVE: Duration = Duration::from_secs(30);
+const ARRIVE: Duration = Duration::from_secs(60);
 
 /// Shown when the tool starts: after the exploit some hosts only see the
 /// device again once it is plugged in anew.

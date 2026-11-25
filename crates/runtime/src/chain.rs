@@ -21,7 +21,9 @@ const PALERA1N_SECONDS: u64 = 120;
 const START_WINDOW: Duration = Duration::from_secs(20 * 60);
 /// After a failed attempt: how long to look where the device went.
 const SETTLE_SECONDS: u64 = 15;
-const PONGO_SECONDS: u64 = 30;
+/// How long Pongo may take to show up on USB once palera1n has ended (seen
+/// 40–42 s on an iPad Air with a Raspberry Pi 4 host, orchard#239).
+const PONGO_SECONDS: u64 = 60;
 /// A full boot uploads the patchfinder, ramdisk and overlay before iPadOS starts.
 const IPADOS_SECONDS: u64 = 240;
 
@@ -258,6 +260,10 @@ fn into_pongo(executor: &Executor, device: &Device, pongo_image: &std::path::Pat
         // Where did it go? Still or again in DFU mode: once more.
         let look = Instant::now() + Duration::from_secs(SETTLE_SECONDS);
         let again = loop {
+            // Pongo after all, later than PONGO_SECONDS: carry on with it.
+            if let Some(usb) = the_device(device, Mode::Pongo)? {
+                return Ok(usb);
+            }
             if the_device(device, Mode::Dfu)?.is_some() {
                 break true;
             }
