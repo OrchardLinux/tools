@@ -30,6 +30,15 @@ string. A column shows only when a listed device has something in it.
 `--json` gives `{"devices": […]}` with the same as fields. The board name
 comes from data already on disk: `devices` downloads nothing.
 
+A device that runs iOS or iPadOS says only "iPhone" or "iPad" on USB. The
+listing asks each one what it is and for its ECID, all at once, and waits
+0.3 s for the answers: one that answers is shown by its name ("iPad (6th
+generation)") with its board and ECID, so its ECID can go into `--ecid`
+before it is ever in DFU mode. One that has just been plugged in may not
+answer in time; it is shown as USB shows it, and the next listing knows it.
+Asking reads two values and changes nothing on the device. `--json` has the
+name as `name` and the product type (`iPad7,5`) as `model`.
+
 `--mode` lists only `dfu`, `recovery`, `pongo`, `m1n1` or `linux`.
 
 ## Naming a device

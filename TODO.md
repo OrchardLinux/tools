@@ -81,6 +81,7 @@ tests and the scripted demo only:
 - `--ecid` and `--location` for `install` and `launch`;
 - the lock in the runtime;
 - `ORCHARD_ENTRY=checkra1n`;
+- `devices` asking a device that runs iOS for its name and ECID;
 - `shell`, `exec`, `push` and `pull` (`crates/remote`): the serial console
   protocol is tested against a scripted console, the rest by what it
   refuses. No payload and no installed system has been reached with them.

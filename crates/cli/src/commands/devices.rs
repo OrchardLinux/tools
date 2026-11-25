@@ -8,9 +8,12 @@ use orchard_cache::Result;
 use orchard_device::deadline::Deadline;
 use orchard_device::select;
 use orchard_device::session::Session;
+use orchard_runtime::lockdown::{self, Answers};
+use orchard_runtime::usbmux;
 use orchard_usb::{Device, Host, Mode};
 use serde::Serialize;
-use std::time::Duration;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 #[derive(Serialize)]
 struct Devices {
@@ -26,6 +29,12 @@ struct Row {
     device: Device,
     /// The board from the orchard data, when data is set and it matches.
     board: Option<String>,
+    /// What the device is called, such as "iPad (6th generation)", when its
+    /// board is known.
+    name: Option<String>,
+    /// Its product type, such as `iPad7,5`, which a device running iOS says
+    /// when it is asked.
+    model: Option<String>,
     /// The serial port to open for a console: a Linux system's, m1n1's proxy.
     serial_port: Option<String>,
 }
@@ -66,7 +75,7 @@ impl Report for Devices {
         let rows: Vec<Vec<Cell>> = self
             .devices
             .iter()
-            .map(|Row { device: d, board, serial_port }| {
+            .map(|Row { device: d, board, serial_port, name, .. }| {
                 let id = &d.identity;
                 let mut row = vec![Cell::mode(d.mode.as_str())];
                 if systems {
@@ -88,7 +97,9 @@ impl Report for Devices {
                 if ports {
                     row.push(Cell::optional(serial_port.as_deref(), Style::Plain));
                 }
-                row.push(Cell::optional(d.product.as_deref(), Style::Plain));
+                // What it is called, where that is known: USB itself only
+                // says "iPhone" or "iPad".
+                row.push(Cell::optional(name.as_deref().or(d.product.as_deref()), Style::Plain));
                 row
             })
             .collect();
@@ -119,6 +130,49 @@ pub fn wait(global: &Global, mode: Mode, timeout: Duration) -> Result<Output> {
     report(global, vec![device], true)
 }
 
+/// How long a listing waits for devices running iOS to say who they are.
+/// One that has just been plugged in answers a moment later; the listing
+/// then shows it as USB does and the next one knows it.
+const ASKING: Duration = Duration::from_millis(300);
+
+/// Asks every device running iOS for its product type and ECID, all at
+/// once, and returns what came back in time, by UDID. It reads two values
+/// of the device and changes nothing on it.
+fn ask(devices: &[Device]) -> HashMap<String, Answers> {
+    let (sender, answers) = std::sync::mpsc::channel();
+    let mut asked = 0;
+    for udid in devices.iter().filter(|d| d.mode == Mode::Normal).filter_map(|d| d.identity.udid.clone()) {
+        asked += 1;
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            let said = lockdown::ask(std::path::Path::new(usbmux::SOCKET), &udid).ok();
+            let _ = sender.send((udid, said));
+        });
+    }
+    let (mut told, until) = (HashMap::new(), Instant::now() + ASKING);
+    while told.len() < asked {
+        match answers.recv_timeout(until.saturating_duration_since(Instant::now())) {
+            Ok((udid, Some(said))) => {
+                told.insert(udid, said);
+            }
+            Ok((_, None)) => asked -= 1,
+            Err(_) => break,
+        }
+    }
+    told
+}
+
+/// A device with what it said about itself: its ECID where USB gave none,
+/// and its product type.
+fn with_answers(mut device: Device, told: &HashMap<String, Answers>) -> (Device, Option<String>) {
+    let said = device.identity.udid.as_ref().and_then(|udid| told.get(udid));
+    if device.identity.ecid.is_none() {
+        device.identity.ecid = said.and_then(|s| s.ecid.clone());
+    }
+    let model = said.and_then(|s| s.product.clone());
+    (device, model)
+}
+
 fn report(global: &Global, devices: Vec<Device>, filtered: bool) -> Result<Output> {
     // Board names only from data already here: listing devices never downloads.
     let store = Store::open(global.cache.as_deref())?;
@@ -126,16 +180,19 @@ fn report(global: &Global, devices: Vec<Device>, filtered: bool) -> Result<Outpu
         board_data::existing(global.data.as_deref(), &store).and_then(|d| Catalog::open(&d).ok());
     let hex = |s: &Option<String>| s.as_deref().and_then(|s| u32::from_str_radix(s, 16).ok());
     let ports = orchard_usb::serial_ports(&devices);
+    let told = ask(&devices);
     let devices = devices
         .into_iter()
         .zip(ports)
         .map(|(device, port)| {
+            let (device, model) = with_answers(device, &told);
+            // By its chip and board numbers, or by the product type it said.
             let board = catalog.as_ref().and_then(|c| {
-                c.board_for(hex(&device.identity.chip)?, hex(&device.identity.board_id)?)
-                    .ok()
-                    .map(|b| b.name)
+                let numbers = || c.board_for(hex(&device.identity.chip)?, hex(&device.identity.board_id)?).ok();
+                numbers().or_else(|| c.board_for_product(model.as_deref()?).ok())
             });
-            Row { device, board, serial_port: port.map(|p| p.display().to_string()) }
+            let (name, board) = (board.as_ref().map(|b| b.display_name.clone()), board.map(|b| b.name));
+            Row { device, board, name, model, serial_port: port.map(|p| p.display().to_string()) }
         })
         .collect();
     Ok(Devices { devices, filtered }.into())
@@ -156,8 +213,34 @@ mod tests {
                 identity: Identity::parse(serial),
             },
             board: board.map(str::to_owned),
+            name: None,
+            model: None,
             serial_port: None,
         }
+    }
+
+    #[test]
+    fn a_device_running_ios_is_known_by_what_it_says() {
+        let mut phone = row(Mode::Normal, None, "", None).device;
+        phone.identity = Identity::from_udid("00008030-001A2B3C4D5E6F70");
+        phone.product = Some("iPhone".into());
+        let udid = phone.identity.udid.clone().unwrap();
+        let mut told = HashMap::new();
+        told.insert(udid, Answers { ecid: Some("1a2b3c4d5e6f70".into()), product: Some("iPhone9,3".into()) });
+        let (known, model) = with_answers(phone.clone(), &told);
+        assert_eq!(model.as_deref(), Some("iPhone9,3"));
+        assert!(known.identity.ecid.is_some());
+        // One that has not answered stays as USB shows it.
+        let (unknown, model) = with_answers(phone.clone(), &HashMap::new());
+        assert_eq!((model, unknown.identity.ecid.clone()), (None, phone.identity.ecid.clone()));
+        // The name stands where the product was; nothing but that changes.
+        let named = Row { device: known, board: Some("d10".into()), name: Some("iPhone 7".into()), model: Some("iPhone9,3".into()), serial_port: None };
+        let text = String::from_utf8(Devices { devices: vec![named], filtered: false }.human()).unwrap();
+        assert!(text.contains("iPhone 7") && text.contains("d10"), "{text}");
+        // With no device running iOS nobody is asked, and nothing is waited for.
+        let started = Instant::now();
+        assert!(ask(&[row(Mode::Dfu, None, "CPID:8010 BDID:0C ECID:1", None).device]).is_empty());
+        assert!(started.elapsed() < ASKING);
     }
 
     #[test]
