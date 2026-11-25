@@ -807,8 +807,8 @@ fn layout_of(total: u32, used: u32) -> Layout {
 fn the_suggested_split_is_half_with_room_for_ipados_and_the_minimum_for_omarchy() {
     assert_eq!(crate::suggested_size(&layout_of(128, 41)), 64, "50:50");
     assert_eq!(crate::suggested_size(&layout_of(128, 100)), 18, "iPadOS keeps 10 GB beyond what it uses");
-    assert_eq!(crate::suggested_size(&layout_of(32, 10)), 12, "never below the minimum");
-    assert_eq!(crate::suggested_size(&layout_of(128, 110)), 12, "the minimum, inside the hard limit");
+    assert_eq!(crate::suggested_size(&layout_of(32, 15)), crate::MIN_OMARCHY_GB, "never below the minimum");
+    assert_eq!(crate::suggested_size(&layout_of(128, 110)), crate::MIN_OMARCHY_GB, "the minimum, inside the hard limit");
 }
 
 #[test]

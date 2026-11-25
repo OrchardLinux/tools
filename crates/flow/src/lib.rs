@@ -111,8 +111,10 @@ impl Layout {
 
 /// Space iPadOS keeps free on top of what it uses.
 pub const HEADROOM_GB: u32 = 2;
-/// Placeholder until the release states its unpacked size.
-pub const MIN_OMARCHY_GB: u32 = 12;
+/// The least the install system takes, until the release states its unpacked
+/// size: orchard's install layout needs an 8 GiB root and a 1 GiB boot
+/// partition (9.7 GB).
+pub const MIN_OMARCHY_GB: u32 = 10;
 pub const RECOMMENDED_OMARCHY_GB: u32 = 32;
 /// Room iPadOS keeps beyond what it uses, in the suggested split (the hard
 /// limit is [`HEADROOM_GB`]).
