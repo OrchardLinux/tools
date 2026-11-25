@@ -26,8 +26,8 @@ nothing itself, so a payload's format is its producer's.
   always built here, from the editable tree (`ORCHARD_PUBLISHED=off` builds
   everything here). Which files make up a key is the recipes' to say:
   `producers/contract.toml` in the data lists them, with the version of the
-  kernel producers, and data that states more than this tool knows is
-  refused. Every file of an entry
+  kernel producers; data without the file, or that states more than this
+  tool knows, is refused. Every file of an entry
   is recorded with its hash and checked before each use. Identical files
   are stored once, as hard links.
 - **A miss says why**: entries keep their inputs (`key-inputs.json`), and a

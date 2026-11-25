@@ -284,6 +284,14 @@ pub(crate) mod tests {
             std::fs::create_dir_all(root.join(path).parent().unwrap()).unwrap();
             std::fs::write(root.join(path), text).unwrap();
         };
+        // What its recipes state about themselves: one file decides all.
+        write("producers/buildenv.py", "");
+        write(
+            crate::contract::NAME,
+            "schema = 1\nkernel-producer = 3\n[inputs]\nm1n1 = [\"producers/buildenv.py\"]\n\
+             tools = [\"producers/buildenv.py\"]\npongo = [\"producers/buildenv.py\"]\n\
+             cascadia = [\"producers/buildenv.py\", \"{profile}\"]\n",
+        );
         for (board, platform, chip) in [
             ("aa1", "wide", 0x8010),
             ("bb2", "wide", 0x8015),

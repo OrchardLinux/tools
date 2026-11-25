@@ -175,7 +175,7 @@ impl<'a> Build<'a> {
 
     /// A producer of orchard's, by the name of its file.
     pub fn producer(&self, name: &str) -> PathBuf {
-        self.root.join(contract::producer_path(&self.root, name))
+        self.root.join("producers").join(name)
     }
 
     /// Runs a producer and records it. Its output goes to the terminal as

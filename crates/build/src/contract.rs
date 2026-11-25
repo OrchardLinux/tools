@@ -3,9 +3,6 @@
 //! key is made from is theirs to state: which files decide m1n1, the static
 //! tools, Pongo and a Cascadia loader, and the version of the kernel
 //! producers. Recipes that state more than this tool knows are refused.
-//!
-//! Data from before the file has what orchard's Python had compiled in at
-//! that time ([`before`]); that goes once no such data is built from.
 use crate::{invalid, read_text};
 use orchard_cache::{Code, Error, Result};
 use std::path::Path;
@@ -59,7 +56,17 @@ impl Contract {
 pub fn read(root: &Path) -> Result<Contract> {
     let path = root.join(NAME);
     if !path.is_file() {
-        return before(root);
+        // A copy of a nightly is refreshed by the tool, a checkout by its owner.
+        let hint = match crate::snapshot::record(root) {
+            Some(_) => "orchard2 data update fetches orchard's newest recipes",
+            None => "update this orchard checkout, or leave --data out to use orchard's nightly",
+        };
+        return Err(Error::new(
+            Code::Unsupported,
+            format!("no {NAME}: these recipes are older than this orchard2 builds from"),
+        )
+        .context(root.display())
+        .hint(hint));
     }
     let bad = |what: String| invalid(format!("{}: {what}", path.display()));
     let file: toml::Table = toml::from_str(&read_text(&path)?)
@@ -136,74 +143,6 @@ fn newer(message: String) -> Error {
     Error::new(Code::Unsupported, message).hint("update orchard2")
 }
 
-/// A producer's place in the data, by the name of its file: `producers/`,
-/// and inside orchard's Python package in data from before it.
-pub fn producer_path(root: &Path, name: &str) -> String {
-    let new = format!("producers/{name}");
-    if root.join(&new).is_file() {
-        return new;
-    }
-    match name {
-        "buildenv.py" => "src/orchard/buildenv.py".into(),
-        _ => format!("src/orchard/image/{name}"),
-    }
-}
-
-/// The contract of data from before `producers/contract.toml`: what
-/// orchard's Python had compiled in, and its kernel producers' version from
-/// `src/orchard/build.py`.
-fn before(root: &Path) -> Result<Contract> {
-    let kernel_producer = std::fs::read_to_string(root.join("src/orchard/build.py"))
-        .ok()
-        .and_then(|text| {
-            text.lines()
-                .find_map(|line| line.strip_prefix("KERNEL_PRODUCER = "))
-                .and_then(|rest| rest.split_whitespace().next())
-                .and_then(|number| number.parse().ok())
-        })
-        .unwrap_or(KERNEL_PRODUCER);
-    if kernel_producer > KERNEL_PRODUCER {
-        return Err(newer(format!(
-            "these recipes make kernels of version {kernel_producer}; this orchard2 knows up to {KERNEL_PRODUCER}"
-        )));
-    }
-    let buildenv = producer_path(root, "buildenv.py");
-    let mut tools: Vec<String> = [
-        "build-tools",
-        "build-tools-in-container",
-        "Containerfile",
-        "Containerfile.arm",
-        "install-toolchain",
-        "upstream.lock",
-        "check-tools.py",
-        "orchard-write.c",
-        "orchard-install-usb.c",
-    ]
-    .iter()
-    .map(|name| format!("boot/initramfs/recovery/{name}"))
-    .collect();
-    tools.push(buildenv.clone());
-    Ok(Contract {
-        kernel_producer,
-        m1n1: vec![
-            "boot/m1n1".into(),
-            "boot/quiet/m1n1.patch".into(),
-            buildenv.clone(),
-        ],
-        tools,
-        pongo: vec![
-            "boot/quiet/build-pongo.py".into(),
-            "boot/quiet/pongo.patch".into(),
-        ],
-        cascadia: vec![
-            "boot/cascadia".into(),
-            producer_path(root, "cascadia.py"),
-            PROFILE.into(),
-            buildenv,
-        ],
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,24 +211,21 @@ mod tests {
     }
 
     #[test]
-    fn data_from_before_the_file_has_what_python_compiled_in() {
+    fn recipes_without_the_file_are_refused_with_what_to_do() {
         let dir = tempfile::tempdir().unwrap();
-        let old = read(dir.path()).unwrap();
-        assert_eq!(old.kernel_producer, KERNEL_PRODUCER);
-        assert_eq!(old.m1n1[2], "src/orchard/buildenv.py");
-        let script = dir.path().join("src/orchard/build.py");
-        std::fs::create_dir_all(script.parent().unwrap()).unwrap();
-        std::fs::write(&script, "import os\nKERNEL_PRODUCER = 2  # why\n").unwrap();
-        assert_eq!(read(dir.path()).unwrap().kernel_producer, 2);
+        let error = read(dir.path()).unwrap_err();
+        assert_eq!(error.code, Code::Unsupported);
+        assert!(error.hint.as_deref().unwrap().contains("checkout"));
         std::fs::write(
-            &script,
-            format!("KERNEL_PRODUCER = {}\n", KERNEL_PRODUCER + 1),
+            dir.path().join(crate::snapshot::RECORD),
+            "{\"tag\": \"nightly-x\"}",
         )
         .unwrap();
-        assert_eq!(read(dir.path()).unwrap_err().code, Code::Unsupported);
-        std::fs::create_dir_all(dir.path().join("producers")).unwrap();
-        std::fs::write(dir.path().join("producers/buildenv.py"), "").unwrap();
-        std::fs::remove_file(&script).unwrap();
-        assert_eq!(read(dir.path()).unwrap().tools[9], "producers/buildenv.py");
+        let error = read(dir.path()).unwrap_err();
+        assert!(error
+            .hint
+            .as_deref()
+            .unwrap()
+            .contains("orchard2 data update"));
     }
 }
