@@ -1,7 +1,7 @@
 # install
 
 ```sh
-orchard2 install omarchy-a
+orchard2 install NAME
 ```
 
 installs a distribution on the iPad or iPhone that is put in DFU mode. It is
@@ -14,7 +14,7 @@ the same questions, and takes an option where a script cannot answer.
 
 | SOURCE | Is |
 | --- | --- |
-| a name, `omarchy-a` | the newest release of `OrchardLinux/NAME` on GitHub (its `index.toml`) |
+| a distribution's name | the newest release of `OrchardLinux/NAME` on GitHub (its `index.toml`) |
 | an `https://` URL | a release index, or one release's manifest |
 | a file | the same, with the files it names read from beside it |
 | nothing, in a distribution checkout | the release its last `orchard2 build` made |
@@ -52,7 +52,7 @@ names the option: `--yes`, `--password-file`, `--pin-file`, `--split GB`.
 Resizing and SSH are off unless their options are given.
 
 ```sh
-orchard2 --json install omarchy-a --yes --no-ssh \
+orchard2 --json install NAME --yes --no-ssh \
     --password-file pw --pin-file pin --wait 600
 ```
 
