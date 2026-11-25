@@ -794,4 +794,178 @@ mod tests {
         authorized_keys(dir.path()).unwrap();
         assert_eq!(std::fs::read(&key).unwrap(), private);
     }
+
+    /// The assembly producers and the tools recipe, reduced: the initramfs
+    /// is a listing of the root, the image the names of what went in.
+    fn producers(root: &Path) {
+        let script = |path: &str, text: &str| {
+            std::fs::create_dir_all(root.join(path).parent().unwrap()).unwrap();
+            std::fs::write(root.join(path), text).unwrap();
+            std::fs::set_permissions(root.join(path), std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+        };
+        script(
+            "producers/initramfs.py",
+            r#"import pathlib, sys
+args = sys.argv[1:]
+root, output = pathlib.Path(args[args.index('--root') + 1]), pathlib.Path(args[args.index('--output') + 1])
+lines = ['%s %o' % (p.relative_to(root).as_posix(), p.stat().st_mode & 0o777) for p in sorted(root.rglob('*')) if p.is_file()]
+output.write_text('\n'.join(lines) + '\n')
+"#,
+        );
+        script(
+            "producers/assemble.py",
+            r#"import pathlib, sys
+args = sys.argv[1:]
+output = pathlib.Path(args[args.index('--output') + 1])
+named = [pathlib.Path(args[i + 1]).name for i, a in enumerate(args) if a in ('--loader', '--dtb', '--kernel', '--initramfs')]
+output.write_text(args[args.index('--bootargs') + 1] + '\n' + '\n'.join(named) + '\n')
+pathlib.Path(str(output) + '.json').write_text('{}\n')
+"#,
+        );
+        script(
+            "boot/initramfs/recovery/build-tools",
+            r#"#!/bin/sh
+set -eu
+mkdir -p "$OMA_RECOVERY_TOOLS_WORK/bin"
+"$ORCHARD_PYTHON" - "$OMA_RECOVERY_TOOLS_WORK/bin" <<'PY'
+import pathlib, struct, sys
+elf = bytearray(120)
+elf[:6] = b'\x7fELF\x02\x01'
+struct.pack_into('<H', elf, 18, 183)
+struct.pack_into('<Q', elf, 32, 64)
+struct.pack_into('<HH', elf, 54, 56, 1)
+struct.pack_into('<I', elf, 64, 1)
+for name in ('busybox', 'dropbear', 'dropbearkey', 'wpa_supplicant', 'wpa_cli', 'iw', 'orchard-write',
+             'orchard-install-usb', 'resize2fs', 'tune2fs'):
+    (pathlib.Path(sys.argv[1]) / name).write_bytes(bytes(elf) + name.encode())
+PY
+"#,
+        );
+        script("boot/initramfs/recovery/check-tools.py", "");
+    }
+
+    #[test]
+    fn a_payload_is_built_from_a_project_for_every_board_of_its_platform() {
+        let Some(fixture) = crate::kernel::tests::fixture() else {
+            return;
+        };
+        std::env::set_var("ORCHARD_PUBLISHED", "off");
+        producers(&fixture.root);
+        let say = |_: &str| {};
+        let build = Build::new(&fixture.root, &fixture.store, &say).unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let directory = project.path().join("my payload");
+        std::fs::create_dir_all(directory.join("rootfs/etc")).unwrap();
+        std::fs::write(directory.join("init"), "#!/bin/sh\n").unwrap();
+        std::fs::write(directory.join("rootfs/etc/motd"), "hello\n").unwrap();
+        std::fs::write(
+            directory.join("orchard.toml"),
+            "name = \"p\"\n[payload]\ntransport = false\nmodules = true\n",
+        )
+        .unwrap();
+        for name in ["pongo.bin", "m1n1.bin"] {
+            std::fs::write(project.path().join(name), name).unwrap();
+        }
+        let given = Given {
+            pongo: Some(project.path().join("pongo.bin")),
+            loader: Some(project.path().join("m1n1.bin")),
+            ..Given::default()
+        };
+        let choice = Choice {
+            device: Some("bb2"),
+            ..Choice::default()
+        };
+        let built = build_directory(&build, &directory, &choice, &given).unwrap();
+        assert_eq!(
+            (built.platform.as_str(), built.kernel_release.as_str()),
+            ("wide", "6.0-test")
+        );
+        assert_eq!(built.boards, ["aa1", "bb2"]);
+
+        // The image is for every board of the platform; the root is the
+        // project's files, the static tools and the kernel's modules.
+        let out = directory.canonicalize().unwrap().join("out/wide");
+        let image = std::fs::read_to_string(out.join("linux.bin")).unwrap();
+        assert_eq!(
+            image,
+            "console=tty0 loglevel=7 rdinit=/init\nm1n1.bin\nt32784-aa1.dtb\nt32789-bb2.dtb\nImage.gz\ninitramfs.cpio.gz\n"
+        );
+        let listing = std::fs::read_to_string(out.join("initramfs.cpio.gz")).unwrap();
+        for line in [
+            "bin/busybox 755",
+            "init 755",
+            "etc/hostname 644",
+            "etc/motd 644",
+            "usr/sbin/dropbear 755",
+            "usr/bin/wpa_cli 755",
+            "lib/modules/6.0-test/kernel/drivers/in-tree.ko 644",
+        ] {
+            assert!(
+                listing.lines().any(|l| l == line),
+                "{line} not in:\n{listing}"
+            );
+        }
+        assert!(!listing.contains("usb-session"), "{listing}");
+        assert_eq!(
+            std::fs::read_to_string(out.join("pongo.bin")).unwrap(),
+            "pongo.bin"
+        );
+
+        // The receipt pins the image and everything it was made from.
+        let receipt: Value =
+            serde_json::from_str(&std::fs::read_to_string(out.join("build.json")).unwrap())
+                .unwrap();
+        assert_eq!(receipt["kind"], "orchard.ram-build");
+        assert_eq!(receipt["boards"], json!(["aa1", "bb2"]));
+        assert_eq!(
+            receipt["files"]["linux.bin"],
+            digest(&out.join("linux.bin")).unwrap()
+        );
+        assert_eq!(receipt["assembly"]["dtbs"].as_array().unwrap().len(), 2);
+        assert!(receipt["sources"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .any(|k| k.ends_with("rootfs/etc/motd")));
+        assert_eq!(
+            receipt["overlay"]["sha256"],
+            recipes::key(&directory, &["rootfs"], &[]).unwrap()
+        );
+
+        // The kernel's board layer is the chosen board's, not the first's.
+        let names: Vec<String> = build.cache.entries().into_iter().map(|e| e.name).collect();
+        assert_eq!(names, ["kernel-base-wide", "kernel-bb2", "recovery-tools"]);
+
+        // What ran is written beside the image, as plain commands.
+        let commands = std::fs::read_to_string(&built.commands).unwrap();
+        for part in [
+            "kernel/build bb2 --resume",
+            "build-tools --arch arm64",
+            "producers/initramfs.py --root '",
+            "my payload/out/wide/",
+        ] {
+            assert!(commands.contains(part), "{part} not in:\n{commands}");
+        }
+
+        // Again: nothing is compiled, and the script still says how the
+        // reused entries were made.
+        crate::kernel::tests::ran(&fixture.root);
+        let again = Build::new(&fixture.root, &fixture.store, &say).unwrap();
+        build_directory(&again, &directory, &choice, &given).unwrap();
+        assert!(crate::kernel::tests::ran(&fixture.root).is_empty());
+        let commands = std::fs::read_to_string(&built.commands).unwrap();
+        assert!(
+            commands.contains("reused from the cache")
+                && commands.contains("kernel/build bb2 --resume"),
+            "{commands}"
+        );
+
+        // A project of another kind, or without init, is refused.
+        std::fs::remove_file(directory.join("init")).unwrap();
+        assert!(build_directory(&again, &directory, &choice, &given)
+            .unwrap_err()
+            .message
+            .contains("missing device startup script"));
+    }
 }

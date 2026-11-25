@@ -696,7 +696,7 @@ pub fn check_recipe(build: &Build, device: &str) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::platform::tests::data;
     use crate::sources::tests::{upstream, PATCH};
@@ -780,15 +780,15 @@ for source in sources:
         script("kernel/install-toolchain", "true\n");
     }
 
-    struct Fixture {
+    pub struct Fixture {
         _dirs: (tempfile::TempDir, tempfile::TempDir),
-        root: PathBuf,
-        store: Store,
+        pub root: PathBuf,
+        pub store: Store,
     }
 
     /// Data with the stub producers, an upstream repository and one real
     /// patch in the series; `None` where no Python runs the producers.
-    fn fixture() -> Option<Fixture> {
+    pub fn fixture() -> Option<Fixture> {
         crate::python().ok()?;
         let (data, other) = (data(), tempfile::tempdir().unwrap());
         let root = data.path().canonicalize().unwrap();
@@ -817,7 +817,7 @@ for source in sources:
 
     fn quiet(_: &str) {}
 
-    fn ran(root: &Path) -> Vec<String> {
+    pub fn ran(root: &Path) -> Vec<String> {
         let text = std::fs::read_to_string(root.join("kernel/ran")).unwrap_or_default();
         std::fs::write(root.join("kernel/ran"), "").unwrap();
         text.lines().map(str::to_owned).collect()
