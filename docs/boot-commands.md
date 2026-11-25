@@ -8,9 +8,7 @@ do not use them yet; they have a fixed path of their own.
 > `boot-paths.toml` and each board's chain recipes from its `boot.json`
 > (schema 2) in the orchard data. orchard's main branch does not carry
 > those yet (they are on its `boot-paths` branch), so with the default data
-> the commands find no path. Point `--data` at data that has them. The
-> `gaster` entry has no pinned release in this version, so a path that
-> needs it stops with `unsupported`.
+> the commands find no path. Point `--data` at data that has them.
 
 ## States
 

@@ -134,12 +134,43 @@ pub const CHECKRA1N: Entry = Entry {
     },
 };
 
-/// Orchard's external worker for entry and firmware key acquisition.
+/// Orchard's external worker for entry and firmware key acquisition,
+/// orchard-worker-v0.1.2: sizes and checksums from the release's
+/// `SHA256SUMS`.
 pub const GASTER: Entry = Entry {
     name: "gaster",
     how: How::Gaster {
-        release: "https://github.com/OrchardLinux/gaster/releases/download/orchard-worker-v0.1.0",
-        pins: &[],
+        release: "https://github.com/OrchardLinux/gaster/releases/download/orchard-worker-v0.1.2",
+        pins: &[
+            Pin {
+                os: "macos",
+                arch: "aarch64",
+                asset: "gaster-worker-macos-aarch64",
+                size: 90336,
+                hash: "82d0826ec1c62cb39450f6c21f910bad3b7c8aa650ec2c37640f2b0c2c02ddd6",
+            },
+            Pin {
+                os: "macos",
+                arch: "x86_64",
+                asset: "gaster-worker-macos-x86_64",
+                size: 57328,
+                hash: "efa588e89f3018b0af6853215adc2ecceb8ae1e2ad74192a12a74fbb4ab75461",
+            },
+            Pin {
+                os: "linux",
+                arch: "aarch64",
+                asset: "gaster-worker-linux-aarch64",
+                size: 35560,
+                hash: "7ac9be1a8470fbfbc4bf5c75bf114e2c55aca555c8fe9440b593a645e94f7f03",
+            },
+            Pin {
+                os: "linux",
+                arch: "x86_64",
+                asset: "gaster-worker-linux-x86_64",
+                size: 38520,
+                hash: "489b8b38323b1b321033391a61a7323f9cc45dbc8538ee08c20f6484ead067e3",
+            },
+        ],
     },
 };
 
@@ -179,12 +210,6 @@ impl Entry {
     pub fn available(&self) -> Result<()> {
         let os = std::env::consts::OS;
         let arch = std::env::consts::ARCH;
-        if matches!(self.how, How::Gaster { pins: [], .. })
-            && matches!(os, "macos" | "linux")
-            && matches!(arch, "aarch64" | "x86_64")
-        {
-            return Ok(());
-        }
         self.pin(os, arch).map(|_| ())
     }
 
@@ -350,6 +375,17 @@ mod tests {
             asset(&CHECKRA1N, "linux", "x86_64"),
             "checkra1n-linux-x86_64"
         );
+        for (os, arch) in [
+            ("macos", "aarch64"),
+            ("macos", "x86_64"),
+            ("linux", "aarch64"),
+            ("linux", "x86_64"),
+        ] {
+            assert_eq!(
+                asset(&GASTER, os, arch),
+                format!("gaster-worker-{os}-{arch}")
+            );
+        }
     }
 
     #[test]

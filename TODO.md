@@ -36,12 +36,6 @@ Until then:
 - **The boot paths' data** (`boot-paths.toml`, `boot.json` schema 2) is
   only on orchard's `boot-paths` branch, and the catalog is being
   rethought. Do not build on its present shape.
-- **gaster has no pinned release** (`crates/device/src/entry.rs`), so every
-  path through it, and `run`, stops as unsupported. There is nothing to pin
-  yet: OrchardLinux/gaster's tag `orchard-worker-v0.1.0` has no release,
-  because its build never got a macOS arm64 runner (run 45233948167; the
-  other three hosts built). Rerun it, publish, then pin the four files by
-  size and SHA-256.
 - **The USB session files' old place.** `build` reads `usb-session` and
   `usb-identity` from `boot/session/` in the data and still falls back to
   `src/orchard/` (`crates/build/src/ram.rs`). Drop the fallback once a
