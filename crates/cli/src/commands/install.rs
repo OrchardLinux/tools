@@ -32,7 +32,7 @@ enum Exit {
 
 #[derive(clap::Args)]
 pub struct InstallArgs {
-    /// The distribution: a name (omarchy-a), the URL of its release index or
+    /// The distribution: its name on OrchardLinux, the URL of its release index or
     /// of one release's manifest, or such a file; in a distribution checkout
     /// the default is its last build
     pub source: Option<String>,
@@ -746,7 +746,7 @@ pub fn install(global: &Global, args: &InstallArgs) -> ExitCode {
     let mut out = Out { term: Term::new(args.log.as_deref()), json: global.json };
     let given = args.index.as_deref().or(args.source.as_deref()).map(index_for);
     let Some(index) = given.or_else(last_build) else {
-        out.fail("Which system? orchard2 install omarchy-a (or --index URL)");
+        out.fail("Which system? orchard2 install NAME (a distribution's name, the URL of its release index, or a file)");
         return finish(&mut out, Exit::Usage, "usage", "no distribution given");
     };
     if let Some(Some(gb)) = args.split {
