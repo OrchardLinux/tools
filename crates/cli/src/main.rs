@@ -46,6 +46,7 @@ fn main() -> ExitCode {
         args::Command::Session { .. } | args::Command::Shell { .. } | args::Command::Exec { .. } => {
             unreachable!("handled above")
         }
+        args::Command::SshAccess { user } => commands::remote::ssh_access(&cli.global, user.as_deref()),
         args::Command::Push { local, remote, reach, serial } => {
             commands::remote::push(&cli.global, &reach, &local, &remote, serial)
         }

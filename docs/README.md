@@ -10,7 +10,7 @@ installer and the launcher are built on the same libraries; `install` and
 | install a distribution on a device | [install.md](install.md) |
 | start an installed system | [launch.md](launch.md) |
 | build a RAM payload or a distribution's release | [build.md](build.md) |
-| open a shell on a running system, run a command, copy a file | [remote.md](remote.md) |
+| open a shell on a running system, run a command, copy a file, allow SSH afterwards | [remote.md](remote.md) |
 | see or clean what is cached | [cache.md](cache.md) |
 | list devices, name one, keep one for several commands | [devices.md](devices.md) |
 | take a device through a boot chain by hand | [boot-commands.md](boot-commands.md) |

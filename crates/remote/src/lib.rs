@@ -11,6 +11,7 @@
 //! given by hand (`--host`) is trusted as `ssh` trusts a new one: on first
 //! use. Without SSH, a file up to 16 MiB goes over the serial console.
 //! Every file is checked by its SHA-256 after it is copied.
+pub mod access;
 pub mod serial;
 pub mod ssh;
 
@@ -227,6 +228,36 @@ pub fn connect(cache: &Path, reach: &Reach) -> Result<Vec<OsString>> {
     let argv = ssh::payload(&identity, &hosts, ssh::HOST, true);
     ssh::wait(&argv, &check, Duration::from_secs(20))?;
     Ok(argv)
+}
+
+/// The one running installed system on USB, for [`grant`], and the user an
+/// install here remembered for it, if any.
+pub fn installed(cache: &Path) -> Result<(Target, Option<String>)> {
+    let listed = orchard_usb::list().map_err(|e| Error::new(Code::Usb, e.to_string()))?;
+    let consoles = orchard_usb::serial_ports(&listed);
+    let systems: Vec<usize> = (0..listed.len()).filter(|&i| listed[i].mode == Mode::Linux && listed[i].system == Some(System::Installed)).collect();
+    let [one] = systems.as_slice() else {
+        return Err(Error::new(if systems.is_empty() { Code::NoDevice } else { Code::Ambiguous }, "connect exactly one running installed system"));
+    };
+    let target = Target { device: listed[*one].clone(), console: consoles.get(*one).cloned().flatten() };
+    let user = Keys::new(cache).user(None, target.device.identity.unit.as_deref()).ok();
+    Ok((target, user))
+}
+
+/// Whether `user` can be a user name on the system.
+pub fn valid_user(user: &str) -> bool {
+    ssh::valid_user(user)
+}
+
+/// Signs in as `user` with `password` on the installed system's serial
+/// console and adds `keys` to their `authorized_keys` ([`access`]).
+pub fn grant(target: &Target, user: &str, password: &str, keys: &[String]) -> Result<()> {
+    if !ssh::valid_user(user) {
+        return Err(Error::new(Code::InvalidInput, format!("{user:?} is not a user name")));
+    }
+    let port = target.console.as_deref().ok_or_else(|| Error::new(Code::NotFound, "the installed system shows no USB serial console here"))?;
+    target.check()?;
+    access::Login::new(Tty::open(port)?).grant(user, password, keys)
 }
 
 /// The payload's serial console, opened.

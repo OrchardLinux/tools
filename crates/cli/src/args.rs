@@ -144,6 +144,14 @@ pub enum Command {
         #[arg(long, conflicts_with_all = ["host", "ram"])]
         serial: bool,
     },
+    /// Let this computer sign in over SSH to an installed system that was
+    /// installed without it: signs in once on its USB serial console with
+    /// the user's password
+    SshAccess {
+        /// The installed system's user (default: the one remembered, else asked)
+        #[arg(long)]
+        user: Option<String>,
+    },
     /// Keep one device locked while a command runs; orchard2 commands in it
     /// work on that device
     Session {

@@ -43,6 +43,15 @@ A payload built with `transport = false`, or one whose init does not run
 A device that refuses the key says so, with what gives it the key. Keys
 that another tool made are not tried.
 
+## A system installed without SSH
+
+`orchard2 ssh-access` gives this computer its access afterwards. It signs in
+once on the system's USB serial console as its user, with the password you
+type, and adds this computer's keys to that user's `authorized_keys`, as
+`install --ssh` does. `--user NAME` names the user; without it, the one
+remembered for the device, else it asks. The password goes only to that
+login, over the cable; it is not kept.
+
 ## Files
 
 `push LOCAL REMOTE` writes the file beside its place (`REMOTE.part`), has

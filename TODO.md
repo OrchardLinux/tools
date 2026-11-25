@@ -73,6 +73,32 @@ kernel (`sgx543-from-kernelcache@1`); p105's real file has not been made.
 `install` refuses 32-bit boards before it gets there, so nobody meets this
 yet.
 
+## What orchard's Python still does
+
+Looked at on 2026-11-26, for the day the Python tool goes:
+
+- `run`, and `boot` (a release's recovery or an image, in RAM, without
+  installing): the half that boots what was built. It comes with the one
+  way of working on a device, above. Releases have had no recovery since
+  about 0.3 (Henrik), so the distribution-checkout form of both may have
+  nothing left to boot; check before porting it.
+- `capture-adt` (save a fresh recovery ADT privately): useful for bringing
+  up a board (Henrik). Not ported.
+- `python -m orchard.published keys`: orchard's build.yml writes
+  `component-keys.json` with it. `orchard2 component-keys` writes the same
+  document; the workflow has to call it instead (pr-master's).
+- `python -m orchard.installer release` and `core`: `install.sh` with
+  `orchard-install.pyz` in every distribution release, and
+  `orchard-core.pyz` for `orchard update`. They ship the Python tool and go
+  with it; before that, orchard2 needs its own way to be installed
+  (`curl | sh`, perhaps a brew tap) and to update itself. To be discussed
+  with Henrik; `adopt` goes with them.
+- `resolve` (verify a published release's inputs without a device): run by
+  orchard's verify-public.yml and named in omarchy-a's release checklist.
+  Not ported.
+- `mixin`, `setup-host`: no use found anywhere.
+- `distros`: undecided.
+
 ## Not run on a device yet
 
 These came in with the cut-over from orchard's Python and were checked with
@@ -89,6 +115,8 @@ tests and the scripted demo only:
   environment's serial has `ID:`, and that recovery's `SRNM` is the device
   tree's `serial-number`. If neither holds, a reinstalled unit's old host
   key stays and the error says which line to remove;
+- `ssh-access`: the login is tested against a scripted one, never against
+  a system's real serial login;
 - `shell`, `exec`, `push` and `pull` (`crates/remote`): the serial console
   protocol is tested against a scripted console, the rest by what it
   refuses. No payload and no installed system has been reached with them.

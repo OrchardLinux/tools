@@ -25,7 +25,7 @@ pub struct Console<W: Wire> {
     pending: Vec<u8>,
 }
 
-fn unknown(what: &str) -> Error {
+pub(crate) fn unknown(what: &str) -> Error {
     Error::new(Code::Io, format!("{what}; whether the command ran is not known"))
 }
 
@@ -40,7 +40,7 @@ fn prompt(data: &[u8]) -> Option<usize> {
 /// A marker line `NAME` after a line break: where the break starts and where
 /// the line ends. With `status`, the line is `NAME:CODE` and the code comes
 /// back too. `bare` takes only `\n` as the end, which binary data follows.
-fn marker(data: &[u8], name: &[u8], status: bool, bare: bool) -> Option<(usize, usize, u8)> {
+pub(crate) fn marker(data: &[u8], name: &[u8], status: bool, bare: bool) -> Option<(usize, usize, u8)> {
     let mut from = 0;
     while let Some(found) = find(&data[from..], name) {
         let at = from + found;
@@ -87,7 +87,7 @@ pub fn quote(word: &str) -> String {
 }
 
 /// A token no output will hold by accident.
-fn token() -> String {
+pub(crate) fn token() -> String {
     let mut bytes = [0u8; 12];
     let read = std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut bytes));
     if read.is_err() {
