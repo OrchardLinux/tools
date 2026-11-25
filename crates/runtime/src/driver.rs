@@ -312,7 +312,14 @@ impl<O: Observer> Driver<O> {
                                 only.is(d, ecid.as_deref()) || (ecid.is_none() && named_at.as_deref() == Some(d.location.as_str()))
                             })
                         });
-                        let unnamed: Vec<_> = unnamed.into_iter().filter(orchard_usb::apple_device).collect();
+                        // A device running iOS says who it is a moment after it
+                        // shows up: until then it is not known to be another.
+                        let asked = |d: &orchard_usb::Device| {
+                            d.mode == orchard_usb::Mode::Normal
+                                && self.only.as_ref().is_some_and(|only| only.ecid.is_some())
+                                && watcher.ecid(d).is_none()
+                        };
+                        let unnamed: Vec<_> = unnamed.into_iter().filter(|d| orchard_usb::apple_device(d) && !asked(d)).collect();
                         let seen_events = watcher.see(&catalog, &named);
                         // Other Apple devices besides the one being worked on:
                         // neither app goes on until they're gone.
