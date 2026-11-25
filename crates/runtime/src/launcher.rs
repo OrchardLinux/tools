@@ -30,11 +30,17 @@ pub fn spawn(executor: Executor, events: Sender<Event>) -> Sender<Job> {
                         // without the computer): Done right away. m1n1's answer,
                         // after loading, still reports a failure while the
                         // window is open.
+                        // Started only once the command is all out (the entry's
+                        // name in m1n1's memory, then the call): `orchard2
+                        // launch` ends on EntryStarted, and quitting mid-command
+                        // left m1n1 in its proxy with a black screen.
                         let sent = std::time::Instant::now();
-                        eprintln!("{} launcher: start command sent for {id}", crate::install::stamp());
-                        let _ = events.send(Event::EntryStarted);
-                        m.start(&id).map_err(|e| e.to_string()).map(|()| {
-                            eprintln!("{} launcher: m1n1 answered after {:.1}s", crate::install::stamp(), sent.elapsed().as_secs_f64());
+                        m.send_start(&id).map_err(|e| e.to_string()).and_then(|()| {
+                            eprintln!("{} launcher: start command sent for {id}", crate::install::stamp());
+                            let _ = events.send(Event::EntryStarted);
+                            m.started().map_err(|e| e.to_string()).map(|()| {
+                                eprintln!("{} launcher: m1n1 answered after {:.1}s", crate::install::stamp(), sent.elapsed().as_secs_f64());
+                            })
                         })
                     }
                     None => Err("m1n1 is not running".into()),

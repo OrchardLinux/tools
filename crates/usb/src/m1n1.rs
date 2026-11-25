@@ -106,12 +106,21 @@ impl Proxy {
         std::mem::take(&mut self.console)
     }
 
-    fn call_operation(
-        &mut self,
-        operation: u64,
-        args: &[u64],
-        deadline: &Deadline,
-    ) -> Result<u64, Fault> {
+    /// Sends one proxy operation without waiting for its result: once this
+    /// returns, the operation is on its way and runs on the device whatever
+    /// this computer does next. [`Proxy::answer`] reads the result.
+    pub fn send_call(&mut self, operation: u64, args: &[u64], timeout: Duration) -> Result<(), Error> {
+        self.send_operation(operation, args, &Deadline::after(timeout))
+            .during("m1n1 call")
+    }
+
+    /// The result of the operation [`Proxy::send_call`] sent.
+    pub fn answer(&mut self, operation: u64, timeout: Duration) -> Result<u64, Error> {
+        self.answer_operation(operation, &Deadline::after(timeout))
+            .during("m1n1 call")
+    }
+
+    fn send_operation(&mut self, operation: u64, args: &[u64], deadline: &Deadline) -> Result<(), Fault> {
         if args.len() > 6 {
             return Err(Fault::invalid("a proxy operation takes up to 6 arguments"));
         }
@@ -119,7 +128,20 @@ impl Proxy {
         for arg in args {
             payload.extend_from_slice(&arg.to_le_bytes());
         }
-        self.request(CALL, &payload, deadline)?;
+        self.request(CALL, &payload, deadline)
+    }
+
+    fn call_operation(
+        &mut self,
+        operation: u64,
+        args: &[u64],
+        deadline: &Deadline,
+    ) -> Result<u64, Fault> {
+        self.send_operation(operation, args, deadline)?;
+        self.answer_operation(operation, deadline)
+    }
+
+    fn answer_operation(&mut self, operation: u64, deadline: &Deadline) -> Result<u64, Fault> {
         let reply = self.reply(CALL, deadline)?;
         if le64(&reply[..8]) != operation {
             return Err(Fault::unexpected("the reply is for another operation"));

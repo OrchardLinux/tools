@@ -138,9 +138,22 @@ impl BootManager {
     /// Loads the entry from storage and boots it; m1n1 answers before the
     /// jump. On failure it stays in the proxy, the reason on its console.
     pub fn start(&mut self, id: &str) -> Result<(), Error> {
+        self.send_start(id)?;
+        self.started()
+    }
+
+    /// Sends the command that starts the entry `id`. When this returns, m1n1
+    /// has all of it and goes on by itself, also if this computer goes away.
+    pub fn send_start(&mut self, id: &str) -> Result<(), Error> {
         let name = self.string(id)?;
         let _ = self.proxy.take_console();
-        let failed_flag = self.proxy.call(BOOT_START, &[name, 0, 0], START_TIMEOUT)? as i64;
+        self.proxy.send_call(BOOT_START, &[name, 0, 0], START_TIMEOUT)
+    }
+
+    /// m1n1's answer to [`BootManager::send_start`], after it loaded the
+    /// entry: a failure, with its reason, or nothing.
+    pub fn started(&mut self) -> Result<(), Error> {
+        let failed_flag = self.proxy.answer(BOOT_START, START_TIMEOUT)? as i64;
         if failed_flag != 0 {
             let console = String::from_utf8_lossy(&self.proxy.take_console()).into_owned();
             let reasons: Vec<&str> = console
