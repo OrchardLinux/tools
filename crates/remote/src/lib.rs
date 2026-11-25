@@ -260,6 +260,42 @@ pub fn grant(target: &Target, user: &str, password: &str, keys: &[String]) -> Re
     access::Login::new(Tty::open(port)?).grant(user, password, keys)
 }
 
+/// Where `/proc/mtd` lists the partition named `adt`: its number and size.
+/// m1n1 gives every Linux it starts Apple's device tree as that partition.
+fn adt_partition(table: &str) -> Result<(u32, usize)> {
+    let mut found = table.lines().filter_map(|line| {
+        let mut words = line.split_whitespace();
+        let number = words.next()?.strip_prefix("mtd")?.strip_suffix(':')?.parse::<u32>().ok()?;
+        let size = usize::from_str_radix(words.next()?, 16).ok()?;
+        (words.nth(1)? == "\"adt\"" && words.next().is_none()).then_some((number, size))
+    });
+    match (found.next(), found.next()) {
+        (Some((number, size)), None) if (8..=serial::LIMIT).contains(&size) => Ok((number, size)),
+        (Some(_), None) => Err(Error::new(Code::Format, "the device tree's partition has a size that cannot be right")),
+        _ => Err(Error::new(Code::NotFound, "this system has not exactly one partition named adt")
+            .hint("m1n1 gives it to the Linux it starts; a 32-bit board's loader gives none")),
+    }
+}
+
+/// Apple's device tree as the running RAM payload has it, read over its USB
+/// serial console, and the device it came from. Nothing is written there.
+pub fn adt() -> Result<(Target, Vec<u8>)> {
+    let target = target()?;
+    if !target.payload() {
+        return Err(Error::new(Code::Unsupported, "an installed system's serial console is a login, not a shell")
+            .hint("capture the device tree from a RAM payload on the same device"));
+    }
+    let mut console = console(&target)?;
+    let (code, table) = console.run("cat /proc/mtd", Duration::from_secs(15))?;
+    if code != 0 {
+        return Err(Error::new(Code::NotFound, "the payload has no /proc/mtd"));
+    }
+    let (number, size) = adt_partition(&table)?;
+    let tree = console.capture_exact(&format!("cat /dev/mtd{number}"), size, Duration::from_secs(90))?;
+    target.check()?;
+    Ok((target, tree))
+}
+
 /// The payload's serial console, opened.
 fn console(target: &Target) -> Result<Console<Tty>> {
     if !target.payload() {
@@ -536,6 +572,19 @@ mod tests {
         for bad in [reach(None, None, true), reach(Some("tablet"), Some("10.0.0.5"), true), reach(None, Some("-oX=y"), true), reach(None, Some("10.0.0.5"), false)] {
             assert_eq!(connect(dir.path(), &bad).unwrap_err().code, Code::InvalidInput, "{bad:?}");
         }
+    }
+
+    #[test]
+    fn the_device_trees_partition_is_found_by_its_name() {
+        let table = "dev:    size   erasesize  name\nmtd0: 00100000 00001000 \"nvram\"\nmtd1: 00054000 00004000 \"adt\"\n";
+        assert_eq!(adt_partition(table).unwrap(), (1, 0x54000));
+        assert_eq!(adt_partition("mtd0: 00100000 00001000 \"nvram\"\n").unwrap_err().code, Code::NotFound);
+        let twice = format!("{table}mtd2: 00054000 00004000 \"adt\"\n");
+        assert_eq!(adt_partition(&twice).unwrap_err().code, Code::NotFound);
+        assert_eq!(adt_partition("mtd1: 00000004 00004000 \"adt\"\n").unwrap_err().code, Code::Format);
+        assert_eq!(adt_partition("mtd1: 02000000 00004000 \"adt\"\n").unwrap_err().code, Code::Format);
+        // A name that only starts or ends like it is another partition.
+        assert!(adt_partition("mtd1: 00054000 00004000 \"adt\" x\nmtd2: 00054000 00004000 \"adt2\"\n").is_err());
     }
 
     #[test]

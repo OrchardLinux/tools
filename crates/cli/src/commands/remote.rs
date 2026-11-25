@@ -122,3 +122,107 @@ pub fn ssh_access(global: &Global, user: Option<&str>) -> Result<Output> {
     orchard_runtime::ssh_keys::installed(&cache, &user, target.device.identity.unit.as_deref())?;
     Ok(Access { user, keys: keys.len() }.into())
 }
+
+#[derive(Serialize)]
+struct Captured {
+    saved: String,
+    bytes: usize,
+    ecid: String,
+    model: Option<String>,
+    /// Checks that could not be made or did not hold, none of which stops
+    /// the capture.
+    notes: Vec<String>,
+}
+
+impl Report for Captured {
+    fn human(&self) -> Vec<u8> {
+        let model = self.model.as_deref().unwrap_or("unknown model");
+        let mut text = format!("{} ({} bytes): {model}, ECID {}\n", self.saved, self.bytes, self.ecid);
+        for note in &self.notes {
+            text.push_str(&format!("Note: {note}\n"));
+        }
+        text.into_bytes()
+    }
+}
+
+/// What a captured tree says against what is known of the device: a wrong
+/// model or ECID refuses it, the rest are notes.
+fn adt_checks(
+    unit: &orchard_formats::adt::Unit,
+    wanted_ecid: Option<&str>,
+    products: Option<&[String]>,
+    usb_unit: Option<&str>,
+) -> Result<Vec<String>> {
+    use orchard_cache::{Code, Error};
+    let mut notes = Vec::new();
+    if let Some(wanted) = wanted_ecid {
+        let wanted = u64::from_str_radix(wanted.trim_start_matches("0x").trim_start_matches("0X"), 16)
+            .map_err(|_| Error::new(Code::InvalidInput, "--ecid is not a hex number"))?;
+        if wanted != unit.ecid {
+            return Err(Error::new(Code::DeviceChanged, format!("the device tree is of ECID {:x}, not the one named", unit.ecid)));
+        }
+    }
+    match (products, unit.model.as_deref()) {
+        (Some(products), Some(model)) if !products.iter().any(|p| p == model) => {
+            return Err(Error::new(Code::DeviceChanged, format!("the device tree is of a {model}, not of the board the payload says it runs on")));
+        }
+        (Some(_), Some(_)) => {}
+        _ => notes.push("the model was not checked against the board (no board data here, or none named)".to_owned()),
+    }
+    // The id the payload says on USB is made from the tree's serial number
+    // (orchard's usb-identity). Not yet seen to hold on a device: a note.
+    match (usb_unit, unit.serial_number.as_deref()) {
+        (Some(said), Some(serial)) if orchard_runtime::ssh_keys::unit(serial) != said => {
+            notes.push("the unit id the payload says on USB is not the one this tree gives".to_owned());
+        }
+        (Some(_), Some(_)) => {}
+        _ => notes.push("the tree was not checked against the unit id on USB (one of them has none)".to_owned()),
+    }
+    Ok(notes)
+}
+
+pub fn capture_adt(global: &Global, output: &Path) -> Result<Output> {
+    use orchard_cache::{Code, Context, Error};
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    if output.symlink_metadata().is_ok() {
+        return Err(Error::new(Code::InvalidInput, "the destination exists already").context(output.display()));
+    }
+    let (target, tree) = orchard_remote::adt()?;
+    let unit = orchard_formats::adt::unit(&tree).map_err(|e| Error::new(Code::Format, e.to_string()))?;
+    let store = Store::open(global.cache.as_deref())?;
+    let products = target.device.identity.board.as_deref().and_then(|board| {
+        let data = orchard_boards::data::board_data::existing(global.data.as_deref(), &store)?;
+        Some(orchard_boards::catalog::Catalog::open(&data).ok()?.board(board).ok()?.products)
+    });
+    let notes = adt_checks(&unit, global.device.ecid.as_deref(), products.as_deref(), target.device.identity.unit.as_deref())?;
+    if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent).context(parent.display())?;
+    }
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(output).context(output.display())?;
+    file.write_all(&tree).context(output.display())?;
+    Ok(Captured { saved: output.display().to_string(), bytes: tree.len(), ecid: format!("{:x}", unit.ecid), model: unit.model, notes }.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use orchard_formats::adt::Unit;
+
+    #[test]
+    fn a_tree_of_another_device_is_refused_and_the_rest_is_noted() {
+        let unit = Unit { ecid: 0xa45d028bbe0a6, model: Some("iPad7,5".into()), serial_number: Some("F4KXY12ZAB".into()) };
+        let products = ["iPad7,5".to_owned(), "iPad7,6".to_owned()];
+        let said = orchard_runtime::ssh_keys::unit("F4KXY12ZAB");
+        // All known and all as they should be: nothing to note.
+        assert!(adt_checks(&unit, Some("000A45D028BBE0A6"), Some(&products), Some(&said)).unwrap().is_empty());
+        assert!(adt_checks(&unit, Some("0xa45d028bbe0a6"), Some(&products), Some(&said)).unwrap().is_empty());
+        // Another ECID or another model: not this device's tree.
+        assert!(adt_checks(&unit, Some("1"), Some(&products), Some(&said)).is_err());
+        assert!(adt_checks(&unit, None, Some(&["iPad6,11".to_owned()]), Some(&said)).is_err());
+        // What cannot be checked, and a unit id that differs, are notes.
+        assert_eq!(adt_checks(&unit, None, None, None).unwrap().len(), 2);
+        let notes = adt_checks(&unit, None, Some(&products), Some("000000000000")).unwrap();
+        assert!(notes.len() == 1 && notes[0].contains("unit id"), "{notes:?}");
+    }
+}

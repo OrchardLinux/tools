@@ -152,6 +152,14 @@ pub enum Command {
         #[arg(long)]
         user: Option<String>,
     },
+    /// Save Apple's device tree (ADT) of the device a RAM payload runs on,
+    /// read over its USB serial console; for bringing up a board
+    CaptureAdt {
+        /// Where to save it; must not exist. The file names the unit: keep
+        /// it private
+        #[arg(long)]
+        output: std::path::PathBuf,
+    },
     /// Keep one device locked while a command runs; orchard2 commands in it
     /// work on that device
     Session {

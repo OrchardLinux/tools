@@ -52,6 +52,25 @@ type, and adds this computer's keys to that user's `authorized_keys`, as
 remembered for the device, else it asks. The password goes only to that
 login, over the cable; it is not kept.
 
+## Apple's device tree, for bringing up a board
+
+```sh
+orchard2 capture-adt --output private/j71b.adt
+```
+
+saves the device tree (ADT) iBoot made for the unit, which m1n1 hands on
+to the Linux it starts as a flash partition named `adt`. It is read from
+the running RAM payload over its USB serial console: no SSH, and nothing
+is written on the device.
+
+- The file must not exist; it is made readable by you only. It holds the
+  unit's serial number and ECID: do not publish it.
+- A tree whose model is not one of the board the payload says it runs on,
+  or whose ECID is not the `--ecid` given, is refused. What could not be
+  checked is said as a note.
+- Not from an installed system, whose console is a login, and not on a
+  32-bit board, whose loader hands on no such partition.
+
 ## Files
 
 `push LOCAL REMOTE` writes the file beside its place (`REMOTE.part`), has

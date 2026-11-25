@@ -3,6 +3,7 @@
 //! This crate has no dependencies on USB, network, files or the other
 //! orchard crates. Every function takes bytes and returns bytes or a parsed
 //! value that borrows from its input.
+pub mod adt;
 pub mod aop;
 pub mod apfs;
 pub mod bluetool;

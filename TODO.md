@@ -82,8 +82,6 @@ Looked at on 2026-11-26, for the day the Python tool goes:
   way of working on a device, above. Releases have had no recovery since
   about 0.3 (Henrik), so the distribution-checkout form of both may have
   nothing left to boot; check before porting it.
-- `capture-adt` (save a fresh recovery ADT privately): useful for bringing
-  up a board (Henrik). Not ported.
 - `python -m orchard.published keys`: orchard's build.yml writes
   `component-keys.json` with it, and keeps doing so: CI does not use
   orchard2 (Henrik, 2026-11-26). orchard2 reads that document, and its
@@ -100,11 +98,6 @@ Looked at on 2026-11-26, for the day the Python tool goes:
   workflow is stale (old wheel pair, renamed repositories, expects a
   recovery) and CI does not use orchard2. Not ported; the installer does
   the same work only with a device attached.
-- `capture-adt` reads the flash partition `adt`, which m1n1 gives every
-  Linux it starts, but through a helper only the old recovery has. On a
-  running payload `orchard2 exec -- cat /proc/mtd` and `orchard2 pull
-  /dev/mtdN FILE` get the same bytes (untried on a device); a command of
-  its own would add finding the partition and checking model and ECID.
 - `mixin`, `setup-host`: no use found anywhere.
 - `distros`: undecided.
 
@@ -124,6 +117,10 @@ tests and the scripted demo only:
   environment's serial has `ID:`, and that recovery's `SRNM` is the device
   tree's `serial-number`. If neither holds, a reinstalled unit's old host
   key stays and the error says which line to remove;
+- `capture-adt`: the parser and the partition lookup are tested on made
+  trees and tables; no real tree was captured. Its check of the unit id
+  on USB against the tree's serial number is a note, not a refusal, until
+  one capture shows it holds;
 - `ssh-access`: the login is tested against a scripted one, never against
   a system's real serial login;
 - `shell`, `exec`, `push` and `pull` (`crates/remote`): the serial console
