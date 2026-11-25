@@ -390,13 +390,13 @@ pub struct Other {
 }
 
 impl Flow {
-    /// Whether the installer refuses to go on because other Apple devices
-    /// are on USB: from waiting for DFU mode up to the install system (the
-    /// install itself runs over its own connection).
-    pub fn refusing(&self, app: App) -> bool {
+    /// Whether the app refuses to go on because other Apple devices are on
+    /// USB: from waiting for DFU mode up to the install system (the install
+    /// itself runs over its own connection), or in the launcher up to the
+    /// installed system starting.
+    pub fn refusing(&self) -> bool {
         use State::*;
-        app == App::Installer
-            && !self.others.is_empty()
+        !self.others.is_empty()
             && matches!(
                 self.state,
                 WaitingForDfu { .. }
@@ -409,7 +409,18 @@ impl Flow {
                     | NotPrepared { .. }
                     | InstallFailed { .. }
                     | CreateAccount { env: None, .. }
+                    | ChooseSystem { .. }
+                    | NothingInstalled { .. }
             )
+    }
+
+    /// Whether a held start of the device still applies: the flow still
+    /// waits for what it starts.
+    fn starting(&self, app: App) -> bool {
+        match app {
+            App::Installer => matches!(self.state, State::WaitingForIpados { .. } | State::CreateAccount { env: None, .. }),
+            App::Launcher => matches!(self.state, State::Found { .. }),
+        }
     }
 
     pub fn new() -> Flow {
@@ -557,11 +568,14 @@ fn step_inner(app: App, mut flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
             out.extend(fetch(flow.assets.start(first)));
             return (flow, out);
         }
+        // Nothing the user confirms goes on while other devices are on USB
+        // (the screen that asks is covered by "More than one device").
+        Event::Continue if flow.refusing() => return (flow, out),
         Event::Others(others) => {
             flow.others = others;
             if flow.others.is_empty() {
                 let held = std::mem::take(&mut flow.held);
-                route(app, &mut flow, held, &mut out);
+                route(&mut flow, held, &mut out);
             }
             return (flow, out);
         }
@@ -569,7 +583,7 @@ fn step_inner(app: App, mut flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
             flow.assets.set(asset, AssetState::Ready);
             if flow.boot_waiting.is_some() && flow.assets.ready_to_boot_ipados() {
                 let waiting: Vec<Effect> = flow.boot_waiting.take().into_iter().collect();
-                route(app, &mut flow, waiting, &mut out);
+                route(&mut flow, waiting, &mut out);
             }
             if flow.write_waiting && flow.assets.ready_to_write() {
                 flow.write_waiting = false;
@@ -715,7 +729,7 @@ fn step_inner(app: App, mut flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
     if !matches!(flow.state, State::WaitingForIpados { .. }) {
         flow.boot_waiting = None;
     }
-    if !booting_screen {
+    if !flow.starting(app) {
         flow.held.clear();
     }
     // The board is known from Found on: start its assets once.
@@ -723,18 +737,18 @@ fn step_inner(app: App, mut flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
     if app == App::Installer && flow.state.device().is_some() && !matches!(flow.state, State::Unsupported { .. }) {
         out.extend(fetch(flow.assets.start(&assets::WITH_BOARD)));
     }
-    route(app, &mut flow, effects, &mut out);
+    route(&mut flow, effects, &mut out);
     (flow, out)
 }
 
 /// Sends the effects of a step, holding back what must wait: a boot of iPadOS
 /// before its overlay is built, a write before its files are in, and any
 /// start of the device while other Apple devices are on USB.
-fn route(app: App, flow: &mut Flow, effects: Vec<Effect>, out: &mut Vec<Effect>) {
+fn route(flow: &mut Flow, effects: Vec<Effect>, out: &mut Vec<Effect>) {
     let fetch = |assets: Vec<Asset>| assets.into_iter().map(Effect::Fetch);
     for effect in effects {
         match effect {
-            Effect::BootIpadosWithOverlay(_) | Effect::BootInstallEnv(_) if app == App::Installer && !flow.others.is_empty() => {
+            Effect::BootIpadosWithOverlay(_) | Effect::BootInstallEnv(_) | Effect::ListEntries(_) if !flow.others.is_empty() => {
                 if matches!(effect, Effect::BootIpadosWithOverlay(_)) {
                     out.extend(fetch(flow.assets.start(&[Asset::Overlay])));
                 }

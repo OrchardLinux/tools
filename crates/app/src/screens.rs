@@ -644,7 +644,11 @@ const SUPPORTED_DEVICES: &str = "https://github.com/OrchardLinux/orchard/blob/ma
 
 /// 1.8: several devices in DFU.
 /// Every Apple device on USB, by name and what it runs (1.3).
-fn several(devices: &[(String, String)]) -> Div {
+fn several(devices: &[(String, String)], app: orchard_flow::App) -> Div {
+    let hint = match app {
+        orchard_flow::App::Installer => "Disconnect all but the one you want to install on.",
+        orchard_flow::App::Launcher => "Disconnect all but the one you want to start.",
+    };
     let mut list = div().w_full().flex().flex_col().bg(c(PANEL)).border_1().border_color(c(PANEL_LINE));
     for (i, (name, mode)) in devices.iter().enumerate() {
         let mut row = div()
@@ -669,7 +673,7 @@ fn several(devices: &[(String, String)]) -> Div {
             .flex_col()
             .gap(px(14.))
             .child(list)
-            .child(div().text_size(px(14.)).text_color(c(SUBTITLE)).child("Disconnect all but the one you want to install on.")),
+            .child(div().text_size(px(14.)).text_color(c(SUBTITLE)).child(hint)),
     )
 }
 
@@ -820,15 +824,15 @@ fn skip_dialog(focus: &gpui::FocusHandle, cx: &mut Context<Installer>) -> Div {
 }
 
 pub fn text_column(installer: &mut Installer, kind: ScreenKind, cx: &mut Context<Installer>) -> AnyElement {
+    // Other Apple devices on USB: nothing goes on until they're gone.
+    if installer.flow.refusing() {
+        let rows: Vec<(String, String)> = installer.flow.others.iter().map(|o| (o.name.clone(), o.mode.clone())).collect();
+        return several(&rows, installer.app).into_any_element();
+    }
     if installer.app == orchard_flow::App::Launcher {
         if let Some(screen) = launcher_column(installer, cx) {
             return screen;
         }
-    }
-    // Other Apple devices on USB: nothing goes on until they're gone.
-    if installer.flow.refusing(installer.app) {
-        let rows: Vec<(String, String)> = installer.flow.others.iter().map(|o| (o.name.clone(), o.mode.clone())).collect();
-        return several(&rows).into_any_element();
     }
     if let Some(screen) = crate::install_screens::text_column(installer, cx) {
         return screen;
@@ -891,7 +895,7 @@ pub fn text_column(installer: &mut Installer, kind: ScreenKind, cx: &mut Context
         (State::Unsupported { device }, _) => unsupported(device, cx).into_any_element(),
         (State::SeveralInDfu { devices }, _) => {
             let rows: Vec<(String, String)> = devices.iter().map(|d| (d.name.clone(), "dfu".to_owned())).collect();
-            several(&rows).into_any_element()
+            several(&rows, installer.app).into_any_element()
         }
         // Not drawn yet: the screen's name, so the flow can be followed.
         (_, kind) => column().child(div().text_size(px(24.)).text_color(c(TITLE)).child(format!("{kind:?}"))).into_any_element(),

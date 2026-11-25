@@ -80,7 +80,7 @@ pub enum ScreenKind {
 /// one device" screen while the installer refuses to go on because of
 /// other devices on USB (Flow::refusing).
 pub fn view_flow(app: App, flow: &crate::Flow) -> (DeviceView, ScreenKind) {
-    if flow.refusing(app) {
+    if flow.refusing() {
         return view(app, &State::SeveralInDfu { devices: Vec::new() });
     }
     view(app, &flow.state)

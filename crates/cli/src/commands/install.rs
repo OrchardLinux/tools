@@ -426,6 +426,98 @@ fn idle(out: &mut Out, last: &str, waiting: &mut Waiting, wait: u64) -> Option<E
     None
 }
 
+/// What the installer's and the launcher's loops share for each new flow: a
+/// failed download, other devices on USB, the step's first sighting, the
+/// stalled start, several devices in DFU and waiting for DFU mode.
+struct Shared {
+    app: App,
+    /// The step shown last (its state name).
+    last: String,
+    waiting: Waiting,
+    stalled: bool,
+    /// The devices last listed for "More than one device connected".
+    others_said: Vec<orchard_flow::Other>,
+}
+
+enum Next {
+    /// Nothing else to do for this flow (the other devices are listed).
+    Skip,
+    Exit(ExitCode),
+    /// Go on with the step; `first` when it shows for the first time.
+    Go { first: bool },
+}
+
+impl Shared {
+    fn new(app: App) -> Shared {
+        Shared { app, last: String::new(), waiting: Waiting::new(), stalled: false, others_said: Vec::new() }
+    }
+
+    /// "Unplug the ones you don't want to install on." and the launcher's own.
+    fn unplug_hint(&self) -> &'static str {
+        match self.app {
+            App::Installer => "Unplug the ones you don't want to install on.",
+            App::Launcher => "Unplug the ones you don't want to start.",
+        }
+    }
+
+    fn see(&mut self, out: &mut Out, flow: &Flow) -> Next {
+        if let Some(why) = failed_asset(flow) {
+            out.term.live(None);
+            out.fail("A download didn't work. Check the internet connection, then try again.");
+            out.muted(&why);
+            return Next::Exit(finish(out, Exit::Network, "download", &why));
+        }
+        // Other Apple devices on USB: nothing goes on until they're gone, then
+        // the current step is shown again.
+        if flow.refusing() {
+            if flow.others != self.others_said {
+                self.others_said = flow.others.clone();
+                out.term.live(None);
+                out.event(json!({"event": "needs", "action": "disconnect-others", "devices": flow.others.iter().map(|o| json!({"name": o.name, "mode": o.mode})).collect::<Vec<_>>()}));
+                out.warn(orchard_flow::SEVERAL_TITLE);
+                for other in &flow.others {
+                    out.sub(format!("{} · {}", other.name, other.mode));
+                }
+                out.sub(self.unplug_hint());
+                out.term.live_restart(vec![s("Waiting for one device", SUB)]);
+            }
+            return Next::Skip;
+        }
+        if !self.others_said.is_empty() {
+            self.others_said.clear();
+            self.last.clear();
+        }
+        let name_now = state_name(&flow.state);
+        let first = name_now != self.last;
+        if first {
+            out.event(json!({"event": "state", "state": name_now}));
+            if name_now != "waiting-for-dfu" && name_now != "dfu-again" {
+                out.term.keys(false);
+            }
+            self.last = name_now;
+        }
+        if flow.boot_stalled && !self.stalled {
+            self.stalled = true;
+            out.event(json!({"event": "needs", "action": "replug"}));
+            out.warn(orchard_flow::for_device("Reconnect the cable at your iPad"));
+            out.sub(orchard_flow::for_device("Starting it has stalled. Unplugging the cable at your iPad and plugging it back in usually fixes this. It continues by itself."));
+        } else if !flow.boot_stalled {
+            self.stalled = false;
+        }
+        match &flow.state {
+            State::WaitingForDfu { .. } if first => self.waiting = Waiting::new(),
+            State::SeveralInDfu { .. } if first => {
+                out.term.live(None);
+                out.warn(orchard_flow::SEVERAL_TITLE);
+                out.sub(self.unplug_hint());
+                out.term.live_restart(vec![s("Waiting for one device in DFU mode", SUB)]);
+            }
+            _ => {}
+        }
+        Next::Go { first }
+    }
+}
+
 pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
     let mut out = Out { term: Term::new(args.log.as_deref()), json };
     let Some(index) = args.index.clone().or_else(|| args.source.as_deref().map(index_for)) else {
@@ -479,8 +571,7 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
     let send = |e: Event| {
         let _ = handle.events.send(e);
     };
-    let mut last = String::new();
-    let mut waiting = Waiting::new();
+    let mut shared = Shared::new(App::Installer);
     let mut found = false;
     let mut split_done = false;
     let mut erase_done = false;
@@ -491,23 +582,21 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
     let mut reported = 0u8;
     let mut step_said: Option<String> = None;
     let mut ssh_chosen = false;
-    let mut stalled = false;
     let mut slow_said = false;
     let mut lost_said = false;
     let mut ctrl_c_said = false;
     let mut attempt_said = 1u32;
     let mut stage_said: Option<&'static str> = None;
-    let mut others_said: Vec<orchard_flow::Other> = Vec::new();
     loop {
         out.term.tick();
-        waiting_keys(&mut out, &mut waiting, args.wait);
+        waiting_keys(&mut out, &mut shared.waiting, args.wait);
         let flow = match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(flow) => Some(flow),
             Err(RecvTimeoutError::Timeout) => None,
             Err(RecvTimeoutError::Disconnected) => return finish(&mut out, Exit::Failed, "driver", "the installer stopped"),
         };
         let interrupts = INTERRUPTS.load(Ordering::SeqCst);
-        let busy = last == "splitting" || last == "installing";
+        let busy = shared.last == "splitting" || shared.last == "installing";
         if interrupts > 0 {
             if busy && interrupts == 1 {
                 if !ctrl_c_said {
@@ -522,72 +611,22 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
             }
         }
         let Some(flow) = flow else {
-            if let Some(code) = idle(&mut out, &last, &mut waiting, args.wait) {
+            if let Some(code) = idle(&mut out, &shared.last, &mut shared.waiting, args.wait) {
                 return code;
             }
             continue;
         };
-        if let Some(why) = failed_asset(&flow) {
-            out.term.live(None);
-            out.fail("A download didn't work. Check the internet connection, then try again.");
-            out.muted(&why);
-            return finish(&mut out, Exit::Network, "download", &why);
-        }
-        // Other Apple devices on USB: nothing goes on until they're gone, then
-        // the current step is shown again.
-        if flow.refusing(orchard_flow::App::Installer) {
-            if flow.others != others_said {
-                others_said = flow.others.clone();
-                out.term.live(None);
-                out.event(json!({"event": "needs", "action": "disconnect-others", "devices": flow.others.iter().map(|o| json!({"name": o.name, "mode": o.mode})).collect::<Vec<_>>()}));
-                out.warn(orchard_flow::SEVERAL_TITLE);
-                for other in &flow.others {
-                    out.sub(format!("{} · {}", other.name, other.mode));
-                }
-                out.sub("Unplug the ones you don't want to install on.");
-                out.term.live_restart(vec![s("Waiting for one device", SUB)]);
-            }
-            continue;
-        }
-        if !others_said.is_empty() {
-            others_said.clear();
-            last.clear();
-        }
-        let name_now = state_name(&flow.state);
-        let first = name_now != last;
-        if first {
-            out.event(json!({"event": "state", "state": name_now}));
-            if name_now != "waiting-for-dfu" && name_now != "dfu-again" {
-                out.term.keys(false);
-            }
-            last = name_now.clone();
-        }
-        if flow.boot_stalled && !stalled {
-            stalled = true;
-            out.event(json!({"event": "needs", "action": "replug"}));
-            out.warn(orchard_flow::for_device("Reconnect the cable at your iPad"));
-            out.sub(orchard_flow::for_device("Starting it has stalled. Unplugging the cable at your iPad and plugging it back in usually fixes this. It continues by itself."));
-        } else if !flow.boot_stalled {
-            stalled = false;
-        }
+        let first = match shared.see(&mut out, &flow) {
+            Next::Skip => continue,
+            Next::Exit(code) => return code,
+            Next::Go { first } => first,
+        };
         match &flow.state {
-            State::WaitingForDfu { .. } => {
-                if first {
-                    waiting = Waiting::new();
-                }
-            }
+            State::WaitingForDfu { .. } | State::SeveralInDfu { .. } => {}
             State::UsbAccessNeeded => {
                 if first {
                     out.warn("This computer needs to allow USB access for the device. Approving it asks for your password.");
                     send(Event::Continue);
-                }
-            }
-            State::SeveralInDfu { .. } => {
-                if first {
-                    out.term.live(None);
-                    out.warn(orchard_flow::SEVERAL_TITLE);
-                    out.sub("Unplug the ones you don't want to install on.");
-                    out.term.live_restart(vec![s("Waiting for one device in DFU mode", SUB)]);
                 }
             }
             State::Unsupported { device } => {
@@ -599,7 +638,7 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
             State::Found { device, .. } => {
                 if !found {
                     found = true;
-                    waiting.shown = false;
+                    shared.waiting.shown = false;
                     out.term.live(None);
                     out.ok(format!("{} in DFU mode", device.name));
                     // Resizing is opt-in: --split, or yes to the question.
@@ -762,7 +801,7 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
                     attempt_said = 1;
                     stage_said = None;
                     dfu_block(&mut out, &title, Some(&sub), device.sequence, Some(&device.name), args.wait);
-                    waiting = Waiting { since: Instant::now(), shown: true, sequence: Some(device.sequence) };
+                    shared.waiting = Waiting { since: Instant::now(), shown: true, sequence: Some(device.sequence) };
                 }
             }
             State::NotPrepared { .. } => {
@@ -779,10 +818,10 @@ pub fn install(json: bool, args: &InstallArgs) -> ExitCode {
                     account_sent = true;
                     out.term.live(None);
                     // In DFU mode again (or the first time, into the existing split).
-                    if waiting.shown || !found {
+                    if shared.waiting.shown || !found {
                         found = true;
                         out.ok(format!("{} in DFU mode", flow.state.device().map(|d| d.name.as_str()).unwrap_or("Your device")));
-                        waiting.shown = false;
+                        shared.waiting.shown = false;
                     }
                     let Some(account) = make_account(&mut out, &user, password.clone(), pin.clone(), args) else {
                         send(Event::Quit);
@@ -960,13 +999,11 @@ pub fn launch(json: bool, args: &LaunchArgs) -> ExitCode {
     let send = |e: Event| {
         let _ = handle.events.send(e);
     };
-    let mut last = String::new();
-    let mut waiting = Waiting::new();
+    let mut shared = Shared::new(App::Launcher);
     let mut chosen = false;
-    let mut stalled = false;
     loop {
         out.term.tick();
-        waiting_keys(&mut out, &mut waiting, args.wait);
+        waiting_keys(&mut out, &mut shared.waiting, args.wait);
         let flow = match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(flow) => Some(flow),
             Err(RecvTimeoutError::Timeout) => None,
@@ -976,40 +1013,23 @@ pub fn launch(json: bool, args: &LaunchArgs) -> ExitCode {
             return finish(&mut out, Exit::Interrupted, "interrupted", "Ctrl-C");
         }
         let Some(flow) = flow else {
-            if let Some(code) = idle(&mut out, &last, &mut waiting, args.wait) {
+            if let Some(code) = idle(&mut out, &shared.last, &mut shared.waiting, args.wait) {
                 return code;
             }
             continue;
         };
-        if let Some(why) = failed_asset(&flow) {
-            out.term.live(None);
-            out.fail("A download didn't work. Check the internet connection, then try again.");
-            out.muted(&why);
-            return finish(&mut out, Exit::Network, "download", &why);
-        }
         if let Some(problem) = &flow.launch_problem {
             out.term.live(None);
             out.fail(orchard_flow::for_device("Orchard couldn't start your iPad"));
             out.muted(problem);
             return finish(&mut out, Exit::Failed, "start-failed", problem);
         }
-        let name_now = state_name(&flow.state);
-        let first = name_now != last;
-        if first {
-            out.event(json!({"event": "state", "state": name_now}));
-            if name_now != "waiting-for-dfu" {
-                out.term.keys(false);
-            }
-            last = name_now;
-        }
-        if flow.boot_stalled && !stalled {
-            stalled = true;
-            out.event(json!({"event": "needs", "action": "replug"}));
-            out.warn(orchard_flow::for_device("Reconnect the cable at your iPad"));
-            out.sub(orchard_flow::for_device("Starting it has stalled. Unplugging the cable at your iPad and plugging it back in usually fixes this. It continues by itself."));
-        }
+        let first = match shared.see(&mut out, &flow) {
+            Next::Skip => continue,
+            Next::Exit(code) => return code,
+            Next::Go { first } => first,
+        };
         match &flow.state {
-            State::WaitingForDfu { .. } if first => waiting = Waiting::new(),
             State::Unsupported { device } => {
                 out.term.live(None);
                 out.fail(format!("This {} isn't supported yet", device.name));

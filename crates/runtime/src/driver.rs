@@ -291,9 +291,9 @@ impl<O: Observer> Driver<O> {
                             flow = self.feed(flow, Event::Unresponsive(silent));
                         }
                         let seen_events = watcher.see(&catalog, &devices);
-                        // Other Apple devices besides the one being installed on:
-                        // the installer refuses to go on until they're gone.
-                        if self.app == App::Installer {
+                        // Other Apple devices besides the one being worked on:
+                        // neither app goes on until they're gone.
+                        {
                             let target = flow.state.device().map(|d| d.id.clone());
                             let others = if watcher.others(&devices, target.as_ref()).is_empty() {
                                 Vec::new()

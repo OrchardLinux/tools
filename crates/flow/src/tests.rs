@@ -860,7 +860,7 @@ fn another_device_holds_the_start_until_it_is_gone() {
     let mut flow = Flow::new();
     flow.state = State::DfuAgain { device: ipad6(), why: Again::Install, seen: None };
     let (flow, _) = step(app, flow, Event::Others(vec![Other { name: "iPad (6th generation)".into(), mode: "dfu".into() }, iphone()]));
-    assert!(flow.refusing(app));
+    assert!(flow.refusing());
     assert_eq!(view_flow(app, &flow).1, ScreenKind::SeveralInDfu);
     // The iPad arrives in DFU: the install system's start waits.
     let (flow, effects) = step(app, flow, dfu(ipad6()));
@@ -869,7 +869,7 @@ fn another_device_holds_the_start_until_it_is_gone() {
     // The iPhone is unplugged: the start goes.
     let (flow, effects) = step(app, flow, Event::Others(Vec::new()));
     assert!(effects.iter().any(|e| matches!(e, Effect::BootInstallEnv(_))), "{effects:?}");
-    assert!(!flow.refusing(app) && flow.held.is_empty());
+    assert!(!flow.refusing() && flow.held.is_empty());
 }
 
 #[test]
@@ -893,9 +893,33 @@ fn once_the_install_system_is_up_others_dont_stop_it() {
     let mut flow = Flow::new();
     flow.state = State::CreateAccount { device: ipad6(), account: Account::default(), env: Some(fresh()), erase_approved: false, slow: false };
     let (flow, _) = step(app, flow, Event::Others(vec![iphone(), iphone()]));
-    assert!(!flow.refusing(app));
-    // The launcher is left alone.
-    let mut flow = Flow::new();
-    flow.others = vec![iphone(), iphone()];
-    assert!(!flow.refusing(App::Launcher));
+    assert!(!flow.refusing());
+}
+
+#[test]
+fn the_launcher_holds_its_start_too_and_lets_go_once_the_system_starts() {
+    let app = App::Launcher;
+    let (flow, _) = step(app, Flow::new(), Event::Others(vec![iphone(), iphone()]));
+    assert!(flow.refusing());
+    assert_eq!(view_flow(app, &flow).1, ScreenKind::SeveralInDfu);
+    // The iPad in DFU: m1n1 isn't started yet.
+    let (flow, effects) = step(app, flow, dfu(ipad6()));
+    assert!(!effects.iter().any(|e| matches!(e, Effect::ListEntries(_))), "{effects:?}");
+    // Choosing waits as well.
+    let (flow, effects) = step(app, flow, Event::Others(Vec::new()));
+    assert!(effects.iter().any(|e| matches!(e, Effect::ListEntries(_))), "{effects:?}");
+    let entries = vec![
+        Entry { id: "a".into(), title: "A".into(), kernel: "6.1".into(), default: true },
+        Entry { id: "b".into(), title: "B".into(), kernel: "6.1".into(), default: false },
+    ];
+    let (flow, _) = step(app, flow, Event::EntriesListed(entries));
+    let (flow, _) = step(app, flow, Event::Others(vec![iphone(), iphone()]));
+    let (flow, effects) = step(app, flow, Event::Continue);
+    assert!(effects.is_empty() && matches!(flow.state, State::ChooseSystem { .. }));
+    let (flow, _) = step(app, flow, Event::Others(Vec::new()));
+    let (flow, effects) = step(app, flow, Event::Continue);
+    assert!(matches!(effects[..], [Effect::BootEntry(_)]), "{effects:?}");
+    // Starting: the launcher is done with the device.
+    let (flow, _) = step(app, flow, Event::Others(vec![iphone(), iphone()]));
+    assert!(!flow.refusing());
 }
