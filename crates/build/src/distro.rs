@@ -7,7 +7,7 @@
 //! ENTRY --version VERSION --output out/releases/VERSION [--platform NAME ...]
 //! ```
 //!
-//! with `ORCHARD_CHECKOUT` naming orchard's data and producers, `ORCHARD`
+//! with `ORCHARD_CHECKOUT` naming orchard's data and producers, `ORCHARD_TOOL`
 //! this tool and `ORCHARD_PYTHON` the Python for a `.py` entry. The entry
 //! builds what is missing and writes a release directory with the
 //! `index.toml` that pins it. The index and every file it pins are then
@@ -145,7 +145,7 @@ pub fn build(build: &Build, root: &Path, distro: &Release, request: &Request) ->
         .env("ORCHARD_PYTHON", &build.python)
         .env("ORCHARD_CHECKOUT", &build.root)
         .env("ORCHARD_CACHE_DIR", build.cache.root())
-        .env("ORCHARD", &tool);
+        .env("ORCHARD_TOOL", &tool);
     let mut shown = String::new();
     if let Some(tree) = &request.kernel_tree {
         // The inputs command, which the entry runs, builds the kernels from this tree.
@@ -178,7 +178,7 @@ pub fn build(build: &Build, root: &Path, distro: &Release, request: &Request) ->
             "#!/bin/sh\n# What orchard build ran for this release (--explain prints it); the build script\n\
              # runs orchard's producers itself, from the data ORCHARD_CHECKOUT names; how each component was\n\
              # got (built, reused, or downloaded from a nightly) is in the inputs document, under \"produced\".\n\
-             set -eu\ncd {}\n{shown}ORCHARD_CHECKOUT={} ORCHARD={} {}\n",
+             set -eu\ncd {}\n{shown}ORCHARD_CHECKOUT={} ORCHARD_TOOL={} {}\n",
             quote(&root.to_string_lossy()),
             quote(&build.root.to_string_lossy()),
             quote(&tool.to_string_lossy()),
@@ -456,5 +456,100 @@ mod tests {
             .unwrap_err()
             .message
             .contains("SHA-256 differs"));
+    }
+
+    /// A build entry that writes a release of `name` and records what it
+    /// was given.
+    const ENTRY: &str = r#"
+import hashlib, os, pathlib, sys
+args = sys.argv[1:]
+version, out = args[args.index('--version') + 1], pathlib.Path(args[args.index('--output') + 1])
+if os.environ.get('FAIL'):
+    sys.exit(3)
+out.mkdir(parents=True)
+def pin(name, data):
+    (out / name).write_bytes(data)
+    return '{ file = "%s", bytes = %d, sha256 = "%s" }' % (name, len(data), hashlib.sha256(data).hexdigest())
+manifest = 'schema = 2\nkind = "orchard.install"\ndistro = "NAME"\nversion = "%s"\nroot = %s\n' % (version, pin('root', b'r'))
+(out / 'index.toml').write_text('schema = 2\nkind = "orchard.index"\ndistro = "NAME"\nrelease = %s\n'
+                                % pin('release.toml', manifest.encode()))
+given = [os.environ['ORCHARD_CHECKOUT'], os.environ['ORCHARD_TOOL'], os.environ.get('ORCHARD_KERNEL_TREE', '-'), ' '.join(args[4:])]
+(out / 'given').write_text('\n'.join(given))
+"#;
+
+    #[test]
+    fn a_distributions_entry_builds_its_release() {
+        if crate::python().is_err() {
+            return;
+        }
+        let data = crate::platform::tests::data();
+        let (cache, checkout) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let store = orchard_cache::store::Store::open(Some(cache.path())).unwrap();
+        let say = |_: &str| {};
+        let build = Build::new(data.path(), &store, &say).unwrap();
+        let root = checkout.path().canonicalize().unwrap();
+        std::fs::write(root.join("build.py"), ENTRY.replace("NAME", "demo")).unwrap();
+        let distro = |name: &str, selects_platform: bool| Release {
+            name: name.to_owned(),
+            build: root.join("build.py"),
+            selects_platform,
+        };
+        let request = Request {
+            version: Some("1.0".into()),
+            platforms: Some(Platforms::Named(vec!["small".into(), "wide".into()])),
+            kernel_tree: Some(PathBuf::from("/trees/linux")),
+            packages: None,
+        };
+        let built = super::build(&build, &root, &distro("demo", true), &request).unwrap();
+        assert_eq!(built.index, root.join("out/releases/1.0/index.toml"));
+        assert_eq!(latest(&root).unwrap(), built.index);
+        let given = std::fs::read_to_string(root.join("out/releases/1.0/given")).unwrap();
+        let given: Vec<&str> = given.lines().collect();
+        assert_eq!(given[0], build.root.to_string_lossy());
+        assert!(Path::new(given[1]).is_file());
+        assert_eq!(
+            &given[2..],
+            ["/trees/linux", "--platform small --platform wide"]
+        );
+        let commands = std::fs::read_to_string(&built.commands).unwrap();
+        assert!(
+            commands.contains("ORCHARD_KERNEL_TREE=/trees/linux ORCHARD_CHECKOUT="),
+            "{commands}"
+        );
+
+        // A version is built once; a development version is new every time.
+        assert!(super::build(&build, &root, &distro("demo", true), &request)
+            .unwrap_err()
+            .message
+            .contains("exists"));
+        // The release has to be the distribution's own.
+        let other = Request {
+            version: Some("2.0".into()),
+            ..request.clone()
+        };
+        let error = super::build(&build, &root, &distro("other", true), &other).unwrap_err();
+        assert!(
+            error.message.contains("orchard.toml names \"other\""),
+            "{error}"
+        );
+        // An entry that builds every platform takes no selection, and one that selects needs one.
+        let every = Request {
+            version: Some("3.0".into()),
+            ..request.clone()
+        };
+        assert!(super::build(&build, &root, &distro("demo", false), &every)
+            .unwrap_err()
+            .message
+            .contains("takes no --platform"));
+        let none = Request {
+            version: Some("4.0".into()),
+            platforms: None,
+            ..request.clone()
+        };
+        assert!(super::build(&build, &root, &distro("demo", true), &none)
+            .unwrap_err()
+            .message
+            .contains("selects its platforms"));
+        assert_eq!(latest(&root).unwrap(), built.index);
     }
 }

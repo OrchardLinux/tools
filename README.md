@@ -27,6 +27,7 @@ aarch64).
 | `crates/boards` | Device descriptions and firmware recipes |
 | `crates/formats` | File formats Apple devices and Linux boots use |
 | `crates/cache` | Pinned downloads and the cache |
+| `crates/build` | `build`: the component cache and orchard's producers |
 | `crates/device`, `crates/cli` | The command line |
 | `companion` | The iPad app that splits the storage, with its helper |
 | `packaging` | Release builds, stamping (`stamp.py`) and `install.sh` |

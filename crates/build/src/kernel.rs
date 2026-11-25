@@ -694,3 +694,271 @@ pub fn prepare(build: &Build, device: &str, tree: Option<&Path>) -> Result<PathB
 pub fn check_recipe(build: &Build, device: &str) -> Result<()> {
     descriptor(&build.root, device).map(|_| ())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::platform::tests::data;
+    use crate::sources::tests::{upstream, PATCH};
+    use orchard_cache::store::Store;
+    use std::os::unix::fs::PermissionsExt;
+
+    const SECOND_PATCH: &str = "--- a/Makefile\n+++ b/Makefile\n@@ -1 +1,2 @@\n all:\n+\t@true\n";
+
+    /// The kernel producers, reduced to what the layering sees: a build
+    /// that turns the source into an image, device trees, a module and the
+    /// files of an SDK, and a staging step that collects the modules. Each
+    /// appends its name to `ran`.
+    fn producers(root: &Path) {
+        let script = |path: &str, text: &str| {
+            std::fs::write(root.join(path), text).unwrap();
+            std::fs::set_permissions(root.join(path), std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+        };
+        script(
+            "kernel/build",
+            r#"#!/bin/sh
+set -eu
+here=$(cd "$(dirname "$0")" && pwd)
+shift
+tree=
+while [ $# -gt 0 ]; do
+  case $1 in
+    --resume) shift;;
+    --work-dir) work=$2; shift 2;;
+    --kernel-tree) tree=$2; shift 2;;
+    --output) out=$2; shift 2;;
+  esac
+done
+echo build >> "$here/ran"
+test "$ORCHARD_KERNEL_WORK_LOCKED" = "$work"
+source=${tree:-$work/source}
+build=$work/output
+mkdir -p "$out/dtbs" "$build/include/config" "$build/include/generated" "$build/scripts/basic" \
+  "$build/scripts/mod" "$build/arch/arm64/include" "$build/arch/arm64/boot/dts" "$build/drivers"
+cat "$source/file.c" "$source/Makefile" > "$out/Image.gz"
+echo 6.0-test > "$out/kernel.release"
+echo tree > "$out/dtbs/t32784-aa1.dtb"
+echo tree > "$out/dtbs/t32789-bb2.dtb"
+echo 6.0-test > "$build/include/config/kernel.release"
+cp "$here/configs/wide/config" "$build/.config"
+for file in Makefile Module.symvers modules.builtin modules.builtin.modinfo modules.order \
+    include/config/auto.conf include/generated/autoconf.h include/generated/utsrelease.h \
+    scripts/basic/fixdep scripts/mod/modpost arch/arm64/include/header arch/arm64/boot/dts/x; do
+  echo "$file" > "$build/$file"
+done
+echo module > "$build/drivers/in-tree.ko"
+"#,
+        );
+        script(
+            "kernel/stage-modules.py",
+            r#"import pathlib, shutil, sys
+args = sys.argv[1:]
+build = pathlib.Path(args[args.index('--build') + 1])
+output = pathlib.Path(args[args.index('--output') + 1])
+target = output / 'lib/modules/6.0-test/kernel'
+with open(pathlib.Path(__file__).parent / 'ran', 'a') as log:
+    log.write('stage\n')
+sources = [build] + [pathlib.Path(args[i + 1]) for i, a in enumerate(args) if a == '--external']
+for source in sources:
+    for module in sorted(source.rglob('*.ko')):
+        place = target / module.relative_to(source)
+        place.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(module, place)
+(target.parent / 'modules.dep').write_text('')
+"#,
+        );
+        script(
+            "kernel/build-modules",
+            "#!/bin/sh\nset -eu\nhere=$(cd \"$(dirname \"$0\")\" && pwd)\necho modules >> \"$here/ran\"\n\
+             while [ $# -gt 0 ]; do case $1 in --output) out=$2; shift 2;; *) shift;; esac; done\n\
+             mkdir -p \"$out\"\necho external > \"$out/external.ko\"\n",
+        );
+        std::fs::create_dir_all(root.join("producers")).unwrap();
+        script("producers/buildenv.py", "");
+        script("kernel/Containerfile", "FROM scratch\n");
+        script("kernel/install-toolchain", "true\n");
+    }
+
+    struct Fixture {
+        _dirs: (tempfile::TempDir, tempfile::TempDir),
+        root: PathBuf,
+        store: Store,
+    }
+
+    /// Data with the stub producers, an upstream repository and one real
+    /// patch in the series; `None` where no Python runs the producers.
+    fn fixture() -> Option<Fixture> {
+        crate::python().ok()?;
+        let (data, other) = (data(), tempfile::tempdir().unwrap());
+        let root = data.path().canonicalize().unwrap();
+        let (url, commit) = upstream(other.path());
+        std::fs::write(
+            root.join("kernel/upstream.lock"),
+            format!("url={url}\ncommit={commit}\n"),
+        )
+        .unwrap();
+        for stale in [
+            "common/0002-b.patch",
+            "common/sub/0000-z.patch",
+            "boards/x/0001-x.patch",
+        ] {
+            std::fs::remove_file(root.join("kernel").join(stale)).unwrap();
+        }
+        std::fs::write(root.join("kernel/common/0001-a.patch"), PATCH).unwrap();
+        producers(&root);
+        let store = Store::open(Some(&other.path().join("cache"))).unwrap();
+        Some(Fixture {
+            _dirs: (data, other),
+            root,
+            store,
+        })
+    }
+
+    fn quiet(_: &str) {}
+
+    fn ran(root: &Path) -> Vec<String> {
+        let text = std::fs::read_to_string(root.join("kernel/ran")).unwrap_or_default();
+        std::fs::write(root.join("kernel/ran"), "").unwrap();
+        text.lines().map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn a_kernel_is_built_once_per_platform_and_layered_per_board() {
+        let Some(fixture) = fixture() else { return };
+        let build = Build::new(&fixture.root, &fixture.store, &quiet).unwrap();
+        let first = prepare(&build, "aa1", None).unwrap();
+        assert_eq!(ran(&fixture.root), ["build", "stage", "stage"]);
+        // The source has the series applied; the image is made from it.
+        assert_eq!(
+            std::fs::read_to_string(first.join("Image.gz")).unwrap(),
+            "int a;\nint b;\nall:\n"
+        );
+        assert!(first.join("aa1.dtb").is_file() && first.join("dtbs/t32789-bb2.dtb").is_file());
+        assert!(first
+            .join("lib/modules/6.0-test/kernel/drivers/in-tree.ko")
+            .is_file());
+
+        // The same again runs nothing; another board of the platform
+        // reuses the compiled base and only stages its own layer.
+        assert_eq!(prepare(&build, "aa1", None).unwrap(), first);
+        assert!(ran(&fixture.root).is_empty());
+        let second = prepare(&build, "bb2", None).unwrap();
+        assert_eq!(ran(&fixture.root), ["stage"]);
+        assert!(second.join("bb2.dtb").is_file());
+        let names: Vec<String> = build.cache.entries().into_iter().map(|e| e.name).collect();
+        assert_eq!(names, ["kernel-aa1", "kernel-base-wide", "kernel-bb2"]);
+
+        // A board's external modules are built against the base and are
+        // part of its layer only.
+        std::fs::create_dir_all(fixture.root.join("kernel/modules/bb2")).unwrap();
+        std::fs::write(fixture.root.join("kernel/modules/bb2/probe.c"), "").unwrap();
+        let with_modules = prepare(&build, "bb2", None).unwrap();
+        assert_eq!(ran(&fixture.root), ["modules", "stage"]);
+        assert!(with_modules
+            .join("lib/modules/6.0-test/kernel/external.ko")
+            .is_file());
+        assert_eq!(prepare(&build, "aa1", None).unwrap(), first);
+    }
+
+    #[test]
+    fn a_changed_series_moves_the_tree_and_edits_block_it() {
+        let Some(fixture) = fixture() else { return };
+        let build = Build::new(&fixture.root, &fixture.store, &quiet).unwrap();
+        let first = prepare(&build, "aa1", None).unwrap();
+        let source = work_directory(&build, "aa1", None).unwrap().join("source");
+        let untouched = std::fs::metadata(source.join("file.c"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        ran(&fixture.root);
+
+        // A patch more: the tree gets the difference, and files the new
+        // patch does not touch keep their times for the compiler.
+        std::fs::write(
+            fixture.root.join("kernel/common/0002-b.patch"),
+            SECOND_PATCH,
+        )
+        .unwrap();
+        let second = prepare(&build, "aa1", None).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(ran(&fixture.root), ["build", "stage", "stage"]);
+        assert_eq!(
+            std::fs::read_to_string(second.join("Image.gz")).unwrap(),
+            "int a;\nint b;\nall:\n\t@true\n"
+        );
+        assert_eq!(
+            std::fs::metadata(source.join("file.c"))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            untouched
+        );
+
+        // Back to the first series: its kernel is still in the cache.
+        std::fs::remove_file(fixture.root.join("kernel/common/0002-b.patch")).unwrap();
+        assert_eq!(prepare(&build, "aa1", None).unwrap(), first);
+        assert!(ran(&fixture.root).is_empty());
+
+        // A local edit is part of the key, and is never discarded: with it
+        // in the tree, a series change is refused.
+        prepare(&build, "aa1", None).unwrap();
+        std::fs::write(
+            fixture.root.join("kernel/common/0002-b.patch"),
+            SECOND_PATCH,
+        )
+        .unwrap();
+        prepare(&build, "aa1", None).unwrap();
+        ran(&fixture.root);
+        std::fs::write(source.join("file.c"), "int a;\nint b;\nint edit;\n").unwrap();
+        let edited = prepare(&build, "aa1", None).unwrap();
+        assert!(std::fs::read_to_string(edited.join("Image.gz"))
+            .unwrap()
+            .contains("int edit;"));
+        std::fs::remove_file(fixture.root.join("kernel/common/0002-b.patch")).unwrap();
+        let error = prepare(&build, "aa1", None).unwrap_err();
+        assert!(error.message.contains("local edits"), "{error}");
+        assert!(std::fs::read_to_string(source.join("file.c"))
+            .unwrap()
+            .contains("int edit;"));
+    }
+
+    #[test]
+    fn a_developers_tree_is_built_as_it_is_inside_itself() {
+        let Some(fixture) = fixture() else { return };
+        let build = Build::new(&fixture.root, &fixture.store, &quiet).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let (url, _) = upstream(dir.path());
+        let tree = PathBuf::from(url.trim_start_matches("file://"));
+        assert!(check_tree(&build, "aa1", &tree)
+            .unwrap_err()
+            .message
+            .contains("is not a kernel tree"));
+        std::fs::create_dir_all(tree.join("arch/arm64/configs")).unwrap();
+        std::fs::write(
+            tree.join("arch/arm64/configs/orchard_wide_defconfig"),
+            "CONFIG_X=y\n",
+        )
+        .unwrap();
+        let tree = check_tree(&build, "aa1", &tree).unwrap();
+
+        let first = prepare(&build, "aa1", Some(&tree)).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(first.join("Image.gz")).unwrap(),
+            "int a;\nall:\n"
+        );
+        assert!(tree.join(OUT).join("wide/output/.config").is_file());
+        // Its output is not part of its identity, so nothing is built again.
+        assert_eq!(prepare(&build, "aa1", Some(&tree)).unwrap(), first);
+        assert_eq!(ran(&fixture.root), ["build", "stage", "stage"]);
+        // It is cached apart from orchard's own kernel, and an edit is a new kernel.
+        let names: Vec<String> = build.cache.entries().into_iter().map(|e| e.name).collect();
+        assert_eq!(names, ["kernel-tree-aa1", "kernel-tree-base-wide"]);
+        std::fs::write(tree.join("file.c"), "int changed;\n").unwrap();
+        let second = prepare(&build, "aa1", Some(&tree)).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(second.join("Image.gz")).unwrap(),
+            "int changed;\nall:\n"
+        );
+    }
+}
