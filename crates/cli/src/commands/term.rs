@@ -266,11 +266,7 @@ impl Term {
             let key = match terminal_byte() {
                 None => break None,
                 Some(0x1b) if !waiting_byte() => Key::Leave,
-                Some(0x1b) => match (terminal_byte(), terminal_byte()) {
-                    (Some(b'[' | b'O'), Some(b'A')) => Key::Up,
-                    (Some(b'[' | b'O'), Some(b'B')) => Key::Down,
-                    _ => Key::Other,
-                },
+                Some(0x1b) => sequence(&mut terminal_byte),
                 Some(byte) => key_of(byte),
             };
             match moved(at, rows.len(), key) {
@@ -409,6 +405,29 @@ fn key_of(byte: u8) -> Key {
     }
 }
 
+/// The key of a sequence after its Esc, read to its end: a key with a
+/// modifier or a number in it (Shift and an arrow, Page Up) is more bytes,
+/// and a digit of it is not the number of a row.
+fn sequence(next: &mut dyn FnMut() -> Option<u8>) -> Key {
+    let last = match next() {
+        Some(b'O') => next(),
+        Some(b'[') => {
+            let first = next();
+            let mut byte = first;
+            while !matches!(byte, Some(0x40..=0x7e) | None) {
+                byte = next();
+            }
+            first
+        }
+        _ => None,
+    };
+    match last {
+        Some(b'A') => Key::Up,
+        Some(b'B') => Key::Down,
+        _ => Key::Other,
+    }
+}
+
 /// Where a key takes the mark from row AT of COUNT; the ends don't wrap.
 fn moved(at: usize, count: usize, key: Key) -> Move {
     match key {
@@ -487,6 +506,16 @@ mod tests {
         assert_eq!(moved(1, 3, key_of(b'4')), Move::To(1));
         assert_eq!(moved(1, 3, key_of(b'x')), Move::To(1));
         assert_eq!(moved(1, 3, key_of(b'q')), Move::Leave);
+        let key = |bytes: &'static [u8]| {
+            let mut bytes = bytes.iter().copied();
+            let key = sequence(&mut || bytes.next());
+            (key, bytes.len())
+        };
+        assert_eq!(key(b"[A"), (Key::Up, 0));
+        assert_eq!(key(b"OB"), (Key::Down, 0));
+        // Shift and Up, Page Up: read to the end, and no row 2 or 5.
+        assert_eq!(key(b"[1;2A"), (Key::Other, 0));
+        assert_eq!(key(b"[5~"), (Key::Other, 0));
         assert_eq!((key_of(b'j'), key_of(b'k'), key_of(b'\r')), (Key::Down, Key::Up, Key::Enter));
     }
 }
