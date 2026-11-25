@@ -134,7 +134,8 @@ stored once.
   everything here; `ORCHARD_KERNEL=local` only the kernels.
 - `orchard2 component-keys --output FILE [PLATFORM…]` writes those keys
   as CI publishes them (`component-keys.json`), from the data's files
-  alone. It is for the nightly's workflow and is not listed in `--help`.
+  alone, for comparing with what CI published. CI itself does not use
+  orchard2. It is not listed in `--help`.
 - **Pongo** needs macOS with Xcode to build and is the same for every
   device: an unchanged recipe uses the released binary.
 

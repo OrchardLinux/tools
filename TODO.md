@@ -85,17 +85,26 @@ Looked at on 2026-11-26, for the day the Python tool goes:
 - `capture-adt` (save a fresh recovery ADT privately): useful for bringing
   up a board (Henrik). Not ported.
 - `python -m orchard.published keys`: orchard's build.yml writes
-  `component-keys.json` with it. `orchard2 component-keys` writes the same
-  document; the workflow has to call it instead (pr-master's).
+  `component-keys.json` with it, and keeps doing so: CI does not use
+  orchard2 (Henrik, 2026-11-26). orchard2 reads that document, and its
+  hidden `component-keys` writes the same one, for comparing.
 - `python -m orchard.installer release` and `core`: `install.sh` with
   `orchard-install.pyz` in every distribution release, and
   `orchard-core.pyz` for `orchard update`. They ship the Python tool and go
   with it; before that, orchard2 needs its own way to be installed
   (`curl | sh`, perhaps a brew tap) and to update itself. To be discussed
   with Henrik; `adopt` goes with them.
-- `resolve` (verify a published release's inputs without a device): run by
-  orchard's verify-public.yml and named in omarchy-a's release checklist.
-  Not ported.
+- `resolve` (download and verify what a published release needs for a
+  board, without a device): named in omarchy-a's release checklist for a
+  person to run. orchard's verify-public.yml also runs it, but that
+  workflow is stale (old wheel pair, renamed repositories, expects a
+  recovery) and CI does not use orchard2. Not ported; the installer does
+  the same work only with a device attached.
+- `capture-adt` reads the flash partition `adt`, which m1n1 gives every
+  Linux it starts, but through a helper only the old recovery has. On a
+  running payload `orchard2 exec -- cat /proc/mtd` and `orchard2 pull
+  /dev/mtdN FILE` get the same bytes (untried on a device); a command of
+  its own would add finding the partition and checking model and ECID.
 - `mixin`, `setup-host`: no use found anywhere.
 - `distros`: undecided.
 
