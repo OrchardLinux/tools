@@ -47,6 +47,17 @@ Until then:
   `src/orchard/` (`crates/build/src/ram.rs`). Drop the fallback once a
   nightly has them in `boot/session/`.
 
+## Firmware of the 32-bit boards
+
+`fw build p105 --type peripheral` stops at its first input: a 32-bit
+restore image's root filesystem is an encrypted disk image and its kernel
+an encrypted IMG3, and both need the board's firmware keys. orchard's
+Python reads them (`legacy_images.py`: `Encrcdsa`, `img3_kernelcache`,
+with its key store); here only the step that follows is ported
+(`sgx543-from-kernelcache@1`, checked against Python on a made-up kernel).
+`install` refuses 32-bit boards before it gets there, so nobody meets it
+yet. It belongs to bringing Cascadia into the installer.
+
 ## Not run on a device yet
 
 These came in with the cut-over from orchard's Python and were checked with
