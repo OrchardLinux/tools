@@ -48,9 +48,15 @@ pub fn run(app: App, mut observer: impl Observer, input: Receiver<Event>, _event
     let mut flow = Flow::new();
     let mut omarchy_gb = 32;
     // The opening: plugged in running iPadOS, then the DFU combination.
-    due.push((at(1.5), attached(UsbMode::Normal)));
-    due.push((at(4.), Event::Detached { id: ipad().id }));
-    due.push((at(6.), attached(UsbMode::Dfu)));
+    // ORCHARD_DEMO_UNPLUGGED=1: nothing is connected at first, to see the
+    // steps for a device nobody has seen yet.
+    if std::env::var_os("ORCHARD_DEMO_UNPLUGGED").is_some() {
+        due.push((at(9.), attached(UsbMode::Dfu)));
+    } else {
+        due.push((at(1.5), attached(UsbMode::Normal)));
+        due.push((at(4.), Event::Detached { id: ipad().id }));
+        due.push((at(6.), attached(UsbMode::Dfu)));
+    }
     let mut feed = |flow: Flow, event: Event, due: &mut Vec<(Instant, Event)>, omarchy_gb: &mut u32| -> Flow {
         let (next, effects) = step(app, flow, event);
         for effect in effects {

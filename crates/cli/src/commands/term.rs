@@ -153,6 +153,14 @@ impl Term {
         self.draw_live();
     }
 
+    /// Takes back the last LINES permanent lines, to draw them anew in place.
+    pub fn erase(&mut self, lines: usize) {
+        if self.tty && lines > 0 {
+            self.clear_live();
+            let _ = write!(self.out, "\x1b[{lines}A\r\x1b[J");
+        }
+    }
+
     pub fn blank(&mut self) {
         self.line(vec![]);
     }
