@@ -155,6 +155,132 @@ fn agx_g9p_image(constant: &[u8]) -> Result<&[u8]> {
     Ok(image)
 }
 
+/// The size of the A9 GPU firmware this version knows: the C0 image of
+/// iPadOS 16.7.10. The driver's firmware layout belongs to that one image.
+pub const AGX_G5P_SIZE: u64 = 119_112;
+/// Its SHA-256.
+pub const AGX_G5P_SHA256: &str = "33ae20cbbe2498e4f119ba4e9a55467e4e0192d4c86d5bf1903adce63ffa5dca";
+
+/// A9 GPU firmware: all of AGXFirmwareKextG5P's `__TEXT.__const`, a META LDR
+/// the driver loads into the GPU's own processor. The LDR has no header to
+/// check here, so the caller checks [`AGX_G5P_SHA256`].
+pub fn agx_g5p<'a>(kc: &Kernelcache<'a>) -> Result<&'a [u8]> {
+    let sections = kc.kext("com.apple.AGXFirmwareKextG5P")?;
+    let section = kc.section("__TEXT", "__const", &sections)?;
+    if section.size != AGX_G5P_SIZE {
+        return Err(Error("unsupported G5P C0 firmware size"));
+    }
+    kc.read(section.addr, section.size)
+}
+
+/// The first word of a META LDR.
+const LDR_MAGIC: u32 = 0x01AA_5500;
+/// The A8 GPU's border colour table: its size, and its first nonzero word
+/// with that word's offset.
+const G4P_BORDER_SIZE: usize = 0x800;
+const G4P_BORDER_MARK: (usize, u32) = (0x440, 0x0204_0000);
+
+/// A8 GPU firmware candidates: every META LDR in the decoded kernel whose
+/// records walk cleanly (AGXFirmwareKextG4P holds one). The iOS 12
+/// kernelcaches have no per-kext load addresses in their prelink info, so
+/// the image is found by its structure; the recipe's hash picks it.
+pub fn agx_g4p_ldrs(kernel: &[u8]) -> Vec<&[u8]> {
+    let magic = LDR_MAGIC.to_le_bytes();
+    let mut found = Vec::new();
+    let mut at = 0;
+    while let Some(offset) = find(&kernel[at..], &magic) {
+        let start = at + offset;
+        if let Ok(length) = ldr_length(&kernel[start..]) {
+            found.push(&kernel[start..(start + length).min(kernel.len())]);
+        }
+        at = start + magic.len();
+    }
+    found
+}
+
+/// The A8 GPU's border colour table candidates: 0x800 bytes of AGXG4P's
+/// data that open with 0x440 zero bytes and then the word 0x02040000.
+pub fn agx_g4p_borders(kernel: &[u8]) -> Vec<&[u8]> {
+    let (offset, word) = G4P_BORDER_MARK;
+    let needle = word.to_le_bytes();
+    let mut found = Vec::new();
+    let mut at = 0;
+    while let Some(hit) = find(&kernel[at..], &needle) {
+        let mark = at + hit;
+        if let Some(start) = mark.checked_sub(offset) {
+            if start % 4 == 0
+                && start + G4P_BORDER_SIZE <= kernel.len()
+                && kernel[start..mark].iter().all(|b| *b == 0)
+            {
+                found.push(&kernel[start..start + G4P_BORDER_SIZE]);
+            }
+        }
+        at = mark + 1;
+    }
+    found
+}
+
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+/// The length of the META LDR at the start of `blob`: the end of its last
+/// L1 record or L2 block, at least its header and code offset.
+fn ldr_length(blob: &[u8]) -> Result<usize> {
+    let u16_at = |at: usize| -> Option<usize> {
+        Some(u16::from_le_bytes(blob.get(at..at + 2)?.try_into().ok()?) as usize)
+    };
+    let u32_at = |at: usize| -> Option<usize> {
+        Some(u32::from_le_bytes(blob.get(at..at + 4)?.try_into().ok()?) as usize)
+    };
+    if blob.len() < 16 {
+        return Err(Error("truncated LDR header"));
+    }
+    if u32_at(0) != Some(LDR_MAGIC as usize) {
+        return Err(Error("not a META LDR"));
+    }
+    let (code, mut pos) = (u32_at(4).unwrap(), u32_at(8).unwrap());
+    let mut end = code.max(16);
+    let mut seen = std::collections::HashSet::new();
+    while pos != 0xFFFF_FFFF {
+        if !seen.insert(pos) || pos + 8 > blob.len() {
+            return Err(Error("bad LDR record list"));
+        }
+        let (command, size, following) = (
+            u16_at(pos).unwrap(),
+            u16_at(pos + 2).unwrap(),
+            u32_at(pos + 4).unwrap(),
+        );
+        if size < 12 || size % 4 != 0 || pos + size > blob.len() {
+            return Err(Error("bad LDR L1 record"));
+        }
+        let words = (size - 12) / 4;
+        let index = if command & 0x10 != 0 || command == 3 || command == 5 {
+            0
+        } else if command == 0 {
+            1
+        } else if command == 4 {
+            2
+        } else {
+            return Err(Error("unknown LDR L1 command"));
+        };
+        if words <= index {
+            return Err(Error("bad LDR L1 record"));
+        }
+        let block = u32_at(pos + 8 + 4 * index).unwrap();
+        if block + 4 > blob.len() {
+            return Err(Error("bad LDR L2 offset"));
+        }
+        let block_size = u16_at(block + 2).unwrap();
+        if block_size < 6 || block + block_size > blob.len() {
+            return Err(Error("bad LDR L2 block"));
+        }
+        end = end.max(pos + size).max(block + block_size);
+        pos = following;
+    }
+    Ok(end)
+}
+
 /// VXD (DEVA) video decoder firmware from AppleD5500. Its `__DATA.__data`
 /// holds a record {name, build date, decoder memory size, image size, image}
 /// whose pointers lead into `__TEXT.__cstring` and `__TEXT.__const`; the
@@ -220,6 +346,74 @@ mod tests {
         for malformed in [b"".as_slice(), b"\0\0", b"Release", b"\x01\0", b"Release\0"] {
             assert!(agx_g9p_image(malformed).is_err());
         }
+    }
+
+    /// A META LDR: header, one L1 record (command 0) and its L2 block.
+    fn ldr(fill: &[u8]) -> Vec<u8> {
+        let mut v = Vec::new();
+        for word in [LDR_MAGIC, 16, 16] {
+            v.extend(word.to_le_bytes());
+        }
+        v.extend([0; 4]);
+        // 20 bytes: command 0, the next record (none), and the L2 block at 36.
+        v.extend([0, 0, 20, 0]);
+        for word in [0xFFFF_FFFF, 0, 36, 0] {
+            v.extend(u32::to_le_bytes(word));
+        }
+        v.extend([0x00, 0x80]);
+        v.extend(((4 + fill.len()) as u16).to_le_bytes());
+        v.extend(fill);
+        v
+    }
+
+    fn border(seed: usize) -> Vec<u8> {
+        let (offset, word) = G4P_BORDER_MARK;
+        let mut v = vec![0; offset];
+        v.extend(word.to_le_bytes());
+        v.extend((0..G4P_BORDER_SIZE - offset - 4).map(|i| ((seed + i) % 251 + 1) as u8));
+        v
+    }
+
+    #[test]
+    fn every_ldr_whose_records_walk_is_a_candidate() {
+        let (one, two) = (ldr(b"firmware one"), ldr(b"firmware two, longer"));
+        let mut kernel = vec![0xff; 7];
+        kernel.extend(&one);
+        kernel.extend([0; 9]);
+        kernel.extend(&two);
+        kernel.extend(b"tail");
+        assert_eq!(agx_g4p_ldrs(&kernel), vec![&one[..], &two[..]]);
+
+        let mut unknown = one.clone();
+        unknown[16] = 7; // an unknown L1 command
+        let mut looped = one.clone();
+        looped[20..24].copy_from_slice(&16u32.to_le_bytes()); // the record points at itself
+        let mut outside = one.clone();
+        outside[28..32].copy_from_slice(&1000u32.to_le_bytes()); // its L2 block lies beyond the end
+        for broken in [unknown, looped, outside, one[..one.len() - 1].to_vec()] {
+            assert!(agx_g4p_ldrs(&broken).is_empty());
+        }
+    }
+
+    #[test]
+    fn the_border_table_is_found_by_its_structure() {
+        let (table, other) = (border(3), border(9));
+        let mut kernel = vec![1; 12];
+        kernel.extend(&table);
+        kernel.extend([1; 4]);
+        kernel.extend(&other);
+        assert_eq!(agx_g4p_borders(&kernel), vec![&table[..], &other[..]]);
+        // A marker after nonzero bytes, off a word boundary, or too close to
+        // the end is not a table.
+        let (offset, word) = G4P_BORDER_MARK;
+        let mut marked = vec![1; offset];
+        marked.extend(word.to_le_bytes());
+        marked.extend(vec![0; G4P_BORDER_SIZE]);
+        assert!(agx_g4p_borders(&marked).is_empty());
+        let mut shifted = vec![0; 2];
+        shifted.extend(&table);
+        assert!(agx_g4p_borders(&shifted).is_empty());
+        assert!(agx_g4p_borders(&table[..G4P_BORDER_SIZE - 1]).is_empty());
     }
 
     #[test]

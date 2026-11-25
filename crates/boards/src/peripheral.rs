@@ -33,6 +33,12 @@ enum Step {
     },
     Vxd,
     AgxG9p,
+    /// A9 GPU firmware, the one C0 image the driver knows.
+    AgxG5p,
+    /// A8 GPU firmware and its border colour table; the recipe's hash picks
+    /// each from the candidates in the kernel.
+    AgxG4pLdr,
+    AgxG4pBorder,
     AopImage {
         coprocessor: String,
     },
@@ -169,24 +175,33 @@ fn run(
             Step::AgxG9p => {
                 kernelcache::agx_g9p(&Kernelcache::new(kernel(kernels, first, &data)?)?)?.to_vec()
             }
+            Step::AgxG5p => {
+                let image =
+                    kernelcache::agx_g5p(&Kernelcache::new(kernel(kernels, first, &data)?)?)?;
+                if !sha256(image).eq_ignore_ascii_case(kernelcache::AGX_G5P_SHA256) {
+                    return Err(Error::new(
+                        Code::Format,
+                        "the kernelcache's G5P firmware is not the C0 image the driver knows",
+                    ));
+                }
+                image.to_vec()
+            }
+            Step::AgxG4pLdr => pinned(
+                output,
+                kernelcache::agx_g4p_ldrs(kernel(kernels, first, &data)?),
+                "A8 GPU firmware",
+            )?,
+            Step::AgxG4pBorder => pinned(
+                output,
+                kernelcache::agx_g4p_borders(kernel(kernels, first, &data)?),
+                "A8 GPU border colour table",
+            )?,
             Step::AopImage { coprocessor } => aop::image(&data, coprocessor)?,
             Step::Touch { profile, kind } => touch(&data, profile, kind)?,
             Step::Copy => data,
+            // BlueTool holds several streams; the recipe's hash picks one.
             Step::BluetoolHcd => {
-                // BlueTool holds several streams; the recipe's hash picks one.
-                let Check::Sha256(expected) = &output.check else {
-                    unreachable!("pending outputs are not built")
-                };
-                bluetool::hcd_streams(&data)
-                    .into_iter()
-                    .find(|s| sha256(s).eq_ignore_ascii_case(expected))
-                    .ok_or_else(|| {
-                        Error::new(
-                            Code::Format,
-                            "no Bluetooth firmware with the recipe's hash in BlueTool",
-                        )
-                    })?
-                    .to_vec()
+                pinned(output, bluetool::hcd_streams(&data), "Bluetooth firmware")?
             }
             Step::TrxAddNvram { nvram } => {
                 trx::add_nvram(&data, &inputs.get(nvram, MAX_FILE)?.bytes, PLACEHOLDER_MAC)?
@@ -232,6 +247,18 @@ fn touch(data: &[u8], profile: &str, kind: &Touch) -> Result<Vec<u8>> {
         Touch::Mtfw { otp_preflight } => z2fw::from_mtfw(data, profile, *otp_preflight)?,
         Touch::Hidspi => z2fw::hidspi_from_mtfw(data, profile)?,
     })
+}
+
+/// The candidate with the output's pinned hash.
+fn pinned(output: &Output, candidates: Vec<&[u8]>, what: &str) -> Result<Vec<u8>> {
+    let Check::Sha256(expected) = &output.check else {
+        unreachable!("pending outputs are not built")
+    };
+    candidates
+        .into_iter()
+        .find(|c| sha256(c).eq_ignore_ascii_case(expected))
+        .map(<[u8]>::to_vec)
+        .ok_or_else(|| Error::new(Code::Format, format!("no {what} with the recipe's hash")))
 }
 
 /// The decoded kernel for input `name`, decoding it the first time.
@@ -358,6 +385,9 @@ fn parse(raw: &catalog::Step, recipe: &Recipe) -> Result<Option<Step>> {
         }
         "vxd-firmware-from-kernelcache@1" => (Step::Vxd, &[]),
         "agx-g9p-firmware-from-kernelcache@1" => (Step::AgxG9p, &[]),
+        "agx-g5p-ldr-from-kernelcache@1" => (Step::AgxG5p, &[]),
+        "agx-g4p-ldr-from-kernelcache@1" => (Step::AgxG4pLdr, &[]),
+        "agx-g4p-border-from-kernelcache@1" => (Step::AgxG4pBorder, &[]),
         "aop-image@1" => (
             Step::AopImage {
                 coprocessor: string("coprocessor")?,
@@ -490,6 +520,85 @@ mod tests {
         let plan = Plan::new(&recipe).unwrap();
         assert!(plan.unsupported.is_empty());
         assert_eq!(plan.build[0].1, [Step::AgxG9p]);
+    }
+
+    #[test]
+    fn a8_and_a9_gpu_firmware_steps_are_supported_without_parameters() {
+        let steps = [
+            ("agx-g5p-ldr-from-kernelcache@1", Step::AgxG5p),
+            ("agx-g4p-ldr-from-kernelcache@1", Step::AgxG4pLdr),
+            ("agx-g4p-border-from-kernelcache@1", Step::AgxG4pBorder),
+        ];
+        let outputs = steps
+            .iter()
+            .enumerate()
+            .map(|(i, (name, _))| {
+                output(
+                    &format!("lib/firmware/apple/{i}.bin"),
+                    b"gpu",
+                    vec![step(name, Some("kernelcache"), &[])],
+                )
+            })
+            .collect();
+        let recipe = recipe(&[("kernelcache", b"kernel")], outputs);
+        let plan = Plan::new(&recipe).unwrap();
+        assert!(plan.unsupported.is_empty());
+        let built: Vec<_> = plan.build.iter().map(|(_, s)| s[0].clone()).collect();
+        assert_eq!(built, steps.map(|(_, s)| s));
+        let extra = step(
+            "agx-g4p-ldr-from-kernelcache@1",
+            Some("kernelcache"),
+            &[("x", "1")],
+        );
+        let recipe = self::recipe(
+            &[("kernelcache", b"kernel")],
+            vec![output("lib/a", b"a", vec![extra])],
+        );
+        assert_eq!(Plan::new(&recipe).unwrap_err().code, Code::Format);
+    }
+
+    /// Every board of an orchard checkout, where `ORCHARD_TEST_DATA` names
+    /// one: its peripheral recipe parses, and every GPU firmware output has
+    /// steps this version runs.
+    #[test]
+    fn every_board_of_an_orchard_checkout_gets_its_gpu_firmware() {
+        let Ok(dir) = std::env::var("ORCHARD_TEST_DATA") else {
+            eprintln!("ORCHARD_TEST_DATA is not set; no orchard checkout to read");
+            return;
+        };
+        let catalog = Catalog::open(Path::new(&dir)).unwrap();
+        let mut failed = Vec::new();
+        for name in catalog.boards().unwrap() {
+            let board = catalog.board(&name).unwrap();
+            let recipe = match board.recipe(crate::catalog::Kind::Peripheral) {
+                Ok(recipe) => recipe,
+                Err(e) if e.code == Code::NotFound => continue,
+                Err(e) => {
+                    failed.push(format!("{name}: {e}"));
+                    continue;
+                }
+            };
+            match Plan::new(&recipe) {
+                Ok(plan) => failed.extend(
+                    plan.unsupported
+                        .iter()
+                        .filter(|(dest, _)| dest.starts_with("lib/firmware/apple/gfx-"))
+                        .map(|(dest, step)| format!("{name}: {dest} needs {step}")),
+                ),
+                Err(e) => failed.push(format!("{name}: {e}")),
+            }
+        }
+        assert!(failed.is_empty(), "\n{}", failed.join("\n"));
+    }
+
+    #[test]
+    fn the_output_hash_picks_the_candidate() {
+        let out = output("lib/b", b"two", vec![]);
+        let candidates = || vec![&b"one"[..], &b"two"[..]];
+        assert_eq!(pinned(&out, candidates(), "x").unwrap(), b"two");
+        let other = output("lib/b", b"three", vec![]);
+        let e = pinned(&other, candidates(), "A8 GPU firmware").unwrap_err();
+        assert_eq!(e.message, "no A8 GPU firmware with the recipe's hash");
     }
 
     #[test]
