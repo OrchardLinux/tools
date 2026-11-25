@@ -14,7 +14,7 @@ use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::term::{s, Span, BLUE, FG, GREEN, MUTED, RED, SUB, TITLE, YELLOW};
+use crate::table::{self, Cell, Style};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -49,122 +49,63 @@ pub struct Doctor {
     done: Vec<String>,
 }
 
-/// How a check reads to a person: what it is for (the heading it stands
-/// under), what it is called, and why that needs it.
-fn words(name: &str) -> (&'static str, &'static str, &'static str) {
+/// How a check reads in the table: its name, and what it is for.
+fn words(name: &str) -> (&'static str, &'static str) {
     match name {
-        "usb" => ("For working on a device", "USB access", "Your account has to be allowed to open the device."),
-        "python" => ("For building", "Python", "orchard's recipes are Python scripts."),
-        "git" => ("For building", "git", "A build fetches the kernel's source with it."),
-        "podman" => ("For building", "Podman", "The recipes compile in its containers."),
-        "disk" => ("For building", "Free space", "A build that runs out of space leaves broken work behind."),
-        "ssh" => ("For signing in over SSH", "ssh-keygen", "It makes this computer's key."),
-        _ => ("Other", "", ""),
+        "usb" => ("USB access", "devices"),
+        "python" => ("Python", "building"),
+        "git" => ("git", "building"),
+        "podman" => ("Podman", "building"),
+        "disk" => ("Free space", "building"),
+        "ssh" => ("ssh-keygen", "SSH"),
+        _ => ("", ""),
     }
 }
-
-/// The purposes, in the order they are shown.
-const PURPOSES: [&str; 3] = ["For working on a device", "For building", "For signing in over SSH"];
 
 impl Check {
-    /// What was found, in a word or two, for a check that is ready.
-    fn found(&self) -> String {
-        match self.name {
-            "python" => Path::new(&self.detail).file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned()),
-            "disk" => self.detail.split(" free").next().unwrap_or("").to_owned(),
-            _ => String::new(),
-        }
-    }
-
-    /// `orchard2 setup NAME`, without what it runs.
-    fn command(&self) -> Option<&str> {
-        self.setup.as_deref().map(|setup| setup.split_once("  (").map_or(setup, |(command, _)| command))
-    }
-}
-
-impl Doctor {
-    /// The report in the installer's look. What is there takes one short
-    /// line; what is not says what is wrong, why it is needed and the
-    /// command that gets it. The last line is what to do.
-    fn lines(&self) -> Vec<Vec<Span>> {
-        const NAME: usize = 13;
-        let under = " ".repeat(6 + NAME);
-        let mut lines: Vec<Vec<Span>> = Vec::new();
-        for line in &self.done {
-            lines.push(vec![s("✓ ", GREEN), s(line.clone(), FG)]);
-        }
-        if !self.done.is_empty() {
-            lines.push(Vec::new());
-        }
-        lines.push(vec![s("This computer", TITLE)]);
-        for purpose in PURPOSES {
-            let of: Vec<&Check> = self.checks.iter().filter(|c| words(c.name).0 == purpose).collect();
-            if of.is_empty() {
-                continue;
+    /// The table's last two cells: the state, and how to get what is not
+    /// there. `detail` is "what is wrong; what to do" where both are known.
+    fn cells(&self) -> (String, String) {
+        let parts: Vec<&str> = self.detail.split("; ").collect();
+        match self.state {
+            State::Ready if self.name == "disk" => (format!("ready, {}", self.detail.split(" free").next().unwrap_or("")), String::new()),
+            State::Ready => ("ready".into(), String::new()),
+            // The command, without what it runs.
+            State::Missing => {
+                let setup = self.setup.as_deref().unwrap_or("");
+                (parts[parts.len() - 1].to_owned(), setup.split_once("  (").map_or(setup, |(command, _)| command).to_owned())
             }
-            lines.push(Vec::new());
-            lines.push(vec![s(format!("  {purpose}"), SUB)]);
-            for check in of {
-                let (_, label, why) = words(check.name);
-                let name = format!("{label:<NAME$}");
-                match check.state {
-                    State::Ready => lines.push(vec![s("    ✓ ", GREEN), s(name, FG), s(check.found(), MUTED)]),
-                    state => {
-                        let (mark, color) = if state == State::Missing { ("!", YELLOW) } else { ("✕", RED) };
-                        lines.push(vec![s(format!("    {mark} "), color), s(name, color), s(check.detail.clone(), color)]);
-                        lines.push(vec![s(format!("{under}{why}"), MUTED)]);
-                        if let Some(command) = check.command() {
-                            lines.push(vec![s(format!("{under}{command}"), BLUE)]);
-                        }
-                    }
-                }
-            }
+            State::Yours if parts.len() > 1 => (parts[parts.len() - 2].to_owned(), parts[parts.len() - 1].to_owned()),
+            State::Yours => (self.detail.clone(), String::new()),
         }
-        lines.push(Vec::new());
-        // One command gets everything orchard2 can get.
-        let missing: Vec<&str> = self.checks.iter().filter(|c| c.state == State::Missing).map(|c| c.name).collect();
-        let yours = self.checks.iter().filter(|c| c.state == State::Yours).count();
-        let things = |n: usize| if n == 1 { "1 thing".to_owned() } else { format!("{n} things") };
-        if !missing.is_empty() {
-            lines.push(vec![s(format!("{} to get:  ", things(missing.len())), FG), s(format!("orchard2 setup {}", missing.join(" ")), BLUE)]);
-        }
-        if yours > 0 {
-            lines.push(vec![s(format!("{} for you to do, marked ✕", things(yours)), RED)]);
-        }
-        if missing.is_empty() && yours == 0 {
-            lines.push(vec![s("✓ ", GREEN), s("Everything is there", FG)]);
-        }
-        lines
     }
-}
-
-/// Lines as text, in the terminal's colours when it is one.
-fn paint(lines: &[Vec<Span>], color: bool) -> String {
-    let mut text = String::new();
-    for line in lines {
-        let mut row = String::new();
-        for (part, rgb) in line {
-            match color && !part.is_empty() {
-                true => {
-                    let _ = write!(row, "\x1b[38;2;{};{};{}m{part}", rgb >> 16, (rgb >> 8) & 0xff, rgb & 0xff);
-                }
-                false => row.push_str(part),
-            }
-        }
-        if color && !line.is_empty() {
-            row.push_str("\x1b[0m");
-        }
-        text.push_str(row.trim_end());
-        text.push('\n');
-    }
-    text
 }
 
 impl Report for Doctor {
     fn human(&self) -> Vec<u8> {
-        use std::io::IsTerminal;
-        let color = std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none();
-        paint(&self.lines(), color).into_bytes()
+        let mut text = String::new();
+        for line in &self.done {
+            let _ = writeln!(text, "{line}");
+        }
+        // What is for the same thing stands together.
+        let mut checks: Vec<&Check> = self.checks.iter().collect();
+        checks.sort_by_key(|check| ["devices", "building", "SSH"].iter().position(|p| *p == words(check.name).1));
+        let cells: Vec<(String, String)> = checks.iter().map(|check| check.cells()).collect();
+        let rows: Vec<Vec<Cell>> = checks
+            .iter()
+            .zip(&cells)
+            .map(|(check, (state, get))| {
+                let (name, purpose) = words(check.name);
+                let (colour, how) = match check.state {
+                    State::Ready => (Style::Board, Style::Plain),
+                    State::Missing => (Style::Number, Style::Mode),
+                    State::Yours => (Style::Bad, Style::Plain),
+                };
+                vec![Cell::plain(name), Cell::plain(purpose), Cell::styled(state, colour), Cell::styled(get, how)]
+            })
+            .collect();
+        let _ = writeln!(text, "{}", table::render_list(&["Check", "For", "State", "Get it"], &rows));
+        text.into_bytes()
     }
 }
 
@@ -316,7 +257,7 @@ fn checks(cache: &Path) -> Vec<Check> {
             name: "disk",
             state: State::Yours,
             needed_for: DISK,
-            detail: format!("{free:.1} GB free at {}; a build needs {needed:.0} (orchard2 cache prune frees some)", cache.display()),
+            detail: format!("{free:.1} GB free of the {needed:.0} a build needs; orchard2 cache prune"),
             setup: None,
         },
         Err(e) => Check { name: "disk", state: State::Yours, needed_for: DISK, detail: e.to_string(), setup: None },
@@ -418,9 +359,24 @@ mod tests {
             assert!(!check.needed_for.is_empty() && !check.detail.is_empty(), "{}", check.name);
             assert_eq!(check.state == State::Missing, check.setup.is_some(), "{}", check.name);
         }
-        let text = paint(&Doctor { ready: false, checks: found, done: vec!["ran: x".into()] }.lines(), false);
-        assert!(text.starts_with("✓ ran: x\n\nThis computer\n"), "{text}");
-        assert!(text.contains("\n  For building\n") && text.contains("    ✓ git\n"), "{text}");
-        assert!(!text.contains('\x1b'), "{text}");
+        let text = String::from_utf8(Doctor { ready: false, checks: found, done: vec!["ran: x".into()] }.human()).unwrap();
+        assert!(text.starts_with("ran: x\n┌"), "{text}");
+        assert!(text.contains("│ Check ") && text.contains("│ git ") && text.contains("│ building │"), "{text}");
+    }
+
+    #[test]
+    fn a_check_reads_as_a_state_and_how_to_get_it() {
+        let check = |state, detail: &str, setup: Option<&str>| Check { name: "podman", state, needed_for: "x", detail: detail.into(), setup: setup.map(str::to_owned) };
+        assert_eq!(check(State::Ready, "/usr/bin/podman", None).cells(), ("ready".into(), String::new()));
+        assert_eq!(
+            check(State::Missing, "its VM is stopped", Some("orchard2 setup podman  (podman machine start)")).cells(),
+            ("its VM is stopped".into(), "orchard2 setup podman".into())
+        );
+        assert_eq!(
+            check(State::Yours, "it does not answer; its VM may hang: podman machine stop, then start", None).cells(),
+            ("it does not answer".into(), "its VM may hang: podman machine stop, then start".into())
+        );
+        let disk = Check { name: "disk", state: State::Ready, needed_for: "x", detail: "30 GB free at /cache".into(), setup: None };
+        assert_eq!(disk.cells().0, "ready, 30 GB");
     }
 }

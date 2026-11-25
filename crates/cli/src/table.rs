@@ -9,6 +9,8 @@ pub enum Style {
     Number,
     Mode,
     Board,
+    /// Something that is wrong.
+    Bad,
 }
 
 #[derive(Clone, Copy)]
@@ -30,6 +32,10 @@ impl<'a> Cell<'a> {
             text,
             style: Style::Number,
         }
+    }
+
+    pub fn styled(text: &'a str, style: Style) -> Self {
+        Self { text, style }
     }
 
     pub fn mode(text: &'a str) -> Self {
@@ -60,10 +66,17 @@ fn styling_enabled() -> bool {
 pub fn render(headers: &[&str], rows: &[Vec<Cell<'_>>]) -> String {
     let mut cells = vec![headers.iter().map(|s| Cell::plain(s)).collect()];
     cells.extend_from_slice(rows);
-    render_cells(&cells, styling_enabled())
+    render_cells(&cells, styling_enabled(), true)
 }
 
-fn render_cells(rows: &[Vec<Cell<'_>>], styled: bool) -> String {
+/// The same for a list of short rows: one rule, under the headings.
+pub fn render_list(headers: &[&str], rows: &[Vec<Cell<'_>>]) -> String {
+    let mut cells = vec![headers.iter().map(|s| Cell::plain(s)).collect()];
+    cells.extend_from_slice(rows);
+    render_cells(&cells, styling_enabled(), false)
+}
+
+fn render_cells(rows: &[Vec<Cell<'_>>], styled: bool, ruled: bool) -> String {
     // Strings from a device must not move the cursor or break lines.
     let rows: Vec<Vec<(String, Style)>> = rows
         .iter()
@@ -92,7 +105,7 @@ fn render_cells(rows: &[Vec<Cell<'_>>], styled: bool) -> String {
     };
     let mut lines = vec![rule("┌", "┬", "┐")];
     for (row_index, row) in rows.iter().enumerate() {
-        if row_index > 0 {
+        if row_index == 1 || (ruled && row_index > 0) {
             lines.push(rule("├", "┼", "┤"));
         }
         let mut line = String::from("│");
@@ -105,6 +118,7 @@ fn render_cells(rows: &[Vec<Cell<'_>>], styled: bool) -> String {
                 Style::Number => Some("\x1b[33m"),
                 Style::Mode => Some("\x1b[34m"),
                 Style::Board => Some("\x1b[32m"),
+                Style::Bad => Some("\x1b[31m"),
             };
             line.push(' ');
             line.push_str(code.unwrap_or(""));
@@ -133,9 +147,23 @@ mod tests {
             vec![Cell::plain("abc"), Cell::plain("2\n3")],
         ];
         assert_eq!(
-            render_cells(rows, false),
+            render_cells(rows, false, true),
             "┌──────┬───────┐\n│ Name │ Value │\n├──────┼───────┤\n│ 猫   │ 1     │\n├──────┼───────┤\n│ abc  │ 2 3   │\n└──────┴───────┘"
         );
+    }
+
+    #[test]
+    fn a_list_has_one_rule_under_its_headings() {
+        let rows = &[
+            vec![Cell::plain("Check"), Cell::plain("State")],
+            vec![Cell::plain("git"), Cell::plain("ready")],
+            vec![Cell::plain("Podman"), Cell::styled("stopped", Style::Bad)],
+        ];
+        assert_eq!(
+            render_cells(rows, false, false),
+            "┌────────┬─────────┐\n│ Check  │ State   │\n├────────┼─────────┤\n│ git    │ ready   │\n│ Podman │ stopped │\n└────────┴─────────┘"
+        );
+        assert!(render_cells(rows, true, false).contains("\x1b[31mstopped\x1b[0m"));
     }
 
     #[test]
@@ -148,13 +176,13 @@ mod tests {
                 Cell::optional(Some("j1"), Style::Board),
             ],
         ];
-        let styled = render_cells(rows, true);
+        let styled = render_cells(rows, true, true);
         assert!(styled.contains("\x1b[1mMode\x1b[0m"));
         assert!(styled.contains("\x1b[34mdfu\x1b[0m"));
         assert!(styled.contains("\x1b[33m0x123\x1b[0m"));
         assert!(styled.contains("\x1b[2m—\x1b[0m"));
         assert!(styled.contains("\x1b[32mj1\x1b[0m"));
-        let plain = render_cells(rows, false);
+        let plain = render_cells(rows, false, true);
         assert!(!plain.contains('\x1b'));
         assert!(plain.contains("│ dfu  │ 0x123    │"));
     }

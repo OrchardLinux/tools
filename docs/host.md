@@ -10,29 +10,23 @@ the computer is little, and `doctor` lists it with what each is for.
 orchard2 doctor
 ```
 
-changes nothing. It lists what orchard2 takes from the computer under what
-it is for, each with what it does there:
+changes nothing. It lists what orchard2 takes from the computer, what each
+is for, whether it is there, and for what is not the command that gets it:
 
 ```
-This computer
-
-  For building
-    ✓ Python       python3.14
-    ✓ git
-    ! Podman       its VM is stopped
-                   The recipes compile in its containers.
-                   orchard2 setup podman
-    ✓ Free space   33 GB
-
-  For signing in over SSH
-    ✓ ssh-keygen
-
-1 thing to get:  orchard2 setup podman
+┌────────────┬──────────┬───────────────────┬───────────────────────┐
+│ Check      │ For      │ State             │ Get it                │
+├────────────┼──────────┼───────────────────┼───────────────────────┤
+│ Python     │ building │ ready             │                       │
+│ git        │ building │ ready             │                       │
+│ Podman     │ building │ its VM is stopped │ orchard2 setup podman │
+│ Free space │ building │ ready, 30 GB      │                       │
+│ ssh-keygen │ SSH      │ ready             │                       │
+└────────────┴──────────┴───────────────────┴───────────────────────┘
 ```
 
-What is there takes one line. What is not says what is wrong, why it is
-needed, and the command that gets it: `!` when orchard2 can, `✕` when only
-you can. The last line is one command for everything orchard2 can get.
+A state in yellow is missing and orchard2 can get it with the command
+beside it. One in red is for you to do, and the last cell says what.
 In `--json`
 these are the states `ready`, `missing` and `yours`.
 
