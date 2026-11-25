@@ -72,7 +72,9 @@ pub fn executable(package: &Path, pin: &Pin) -> Result<Vec<u8>> {
 /// and returns its path. An executable already unpacked is reused.
 pub fn install(package: &Path, pin: &Pin, dir: &Path) -> Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
-    let path = dir.join(format!("palera1n-{}", &pin.sha256[..16]));
+    // Named after the tool: the release file's name up to its host part.
+    let tool = pin.asset.split('-').next().unwrap_or("tool");
+    let path = dir.join(format!("{tool}-{}", &pin.sha256[..16]));
     if path.is_file() {
         return Ok(path);
     }
@@ -98,6 +100,23 @@ mod tests {
     fn local(name: &str) -> Option<PathBuf> {
         let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../installer-app").join(name);
         p.is_file().then_some(p)
+    }
+
+    #[test]
+    fn a_bare_tool_is_installed_under_its_own_name() {
+        let dir = std::env::temp_dir().join(format!("orchard-tools-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let package = dir.join("download");
+        std::fs::write(&package, b"#!/bin/sh\n").unwrap();
+        for host in [("macos", "aarch64"), ("macos", "x86_64"), ("linux", "aarch64"), ("linux", "x86_64")] {
+            let pin = orchard_flow::assets::checkra1n_pin(host.0, host.1).unwrap();
+            let path = install(&package, pin, &dir.join("tools")).unwrap();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            assert_eq!(name, format!("checkra1n-{}", &pin.sha256[..16]));
+        }
+        let pin = palera1n_pin("linux", "x86_64").unwrap();
+        assert_eq!(pin.asset.split('-').next(), Some("palera1n"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

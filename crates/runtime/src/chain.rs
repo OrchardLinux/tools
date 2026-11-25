@@ -86,14 +86,38 @@ fn run_palera1n(executor: &Executor, device: &Device, args: &[std::ffi::OsString
 fn run_palera1n_from(executor: &Executor, device: &Device, from: Mode, args: &[std::ffi::OsString], seconds: u64) -> Result<()> {
     let (pin, release) = crate::flags::palera1n_pin().ok_or_else(|| fail("palera1n publishes no build for this computer"))?;
     let palera1n = executor.palera1n(pin, release)?;
+    run_tool(executor, device, from, "palera1n", &palera1n, args, seconds)
+}
+
+/// The tool that takes this device from DFU mode to Pongo: what its board's
+/// data prefers, or ORCHARD_ENTRY.
+fn entry_for(executor: &Executor, device: &Device) -> crate::flags::Entry {
+    let board = executor.data().ok().and_then(|data| orchard_boards::catalog::Catalog::open(&data).ok()).and_then(|catalog| catalog.board(&device.board).ok());
+    crate::flags::entry(board.as_ref().map_or(&[][..], |board| &board.entries))
+}
+
+/// checkra1n's exploit and Pongo with `pongo_image`,
+/// with the arguments orchard's Python CLI runs it with.
+fn run_checkra1n(executor: &Executor, device: &Device, pongo_image: &std::path::Path, seconds: u64) -> Result<()> {
+    let (pin, release) = crate::flags::checkra1n_pin().ok_or_else(|| fail("checkra1n publishes no build for this computer"))?;
+    let checkra1n = executor.palera1n(pin, release)?;
+    let args: Vec<std::ffi::OsString> = ["-E", "-p", "-v", "-n", "-k"].iter().map(Into::into).chain([pongo_image.as_os_str().to_owned()]).collect();
+    run_tool(executor, device, Mode::Dfu, "checkra1n", &checkra1n, &args, seconds)
+}
+
+/// One run of the tool that takes the device on from `from`, its output in
+/// a log of its own and followed while it runs.
+fn run_tool(executor: &Executor, device: &Device, from: Mode, name: &str, palera1n: &std::path::Path, args: &[std::ffi::OsString], seconds: u64) -> Result<()> {
     let Some(found) = the_device(device, from)? else {
         return Err(fail(if from == Mode::Dfu { "the device is no longer in DFU mode" } else { "the device is not in Pongo" }));
     };
     // Resolved while the device is present: its sysfs node goes away after checkm8.
-    let control = (from == Mode::Dfu)
+    // checkra1n is not helped by the port reset (orchard's Python CLI runs
+    // it without).
+    let control = (from == Mode::Dfu && name == "palera1n")
         .then(|| crate::replug::port_control(&found.location, std::path::Path::new("/sys/bus/usb/devices")))
         .flatten();
-    let (log, log_path) = executor.log_file("palera1n")?;
+    let (log, log_path) = executor.log_file(name)?;
     // ORCHARD_PORT_RESET_SECONDS=0: no reset.
     let reset_off = crate::flags::port_reset().is_some_and(|w| w.is_zero());
     let replug = control.filter(|_| !reset_off).map(|c| crate::replug::Watcher::start(log_path.clone(), c));
@@ -142,7 +166,7 @@ fn run_palera1n_from(executor: &Executor, device: &Device, from: Mode, args: &[s
             Ok(None) if Instant::now() > deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
-                break Err(fail("palera1n did not finish"));
+                break Err(fail(format!("{name} did not finish")));
             }
             // From DFU mode, iOS on USB means the device restarted normally:
             // this start can't work any more, whatever palera1n still waits for.
@@ -172,7 +196,7 @@ fn run_palera1n_from(executor: &Executor, device: &Device, from: Mode, args: &[s
     progress.finish();
     let status = status?;
     if !status.success() {
-        return Err(fail(last_error(&log_path).unwrap_or_else(|| format!("palera1n failed ({status})"))));
+        return Err(fail(last_error(&log_path).unwrap_or_else(|| format!("{name} failed ({status})"))));
     }
     Ok(())
 }
@@ -255,7 +279,11 @@ fn into_pongo(executor: &Executor, device: &Device, pongo_image: &std::path::Pat
     let _awake = crate::flags::stay_awake();
     loop {
         let args = [std::ffi::OsString::from("-p"), "-k".into(), pongo_image.as_os_str().to_owned()];
-        let failed = match run_palera1n(executor, device, &args, PALERA1N_SECONDS) {
+        let ran = match entry_for(executor, device) {
+            crate::flags::Entry::Checkra1n => run_checkra1n(executor, device, pongo_image, PALERA1N_SECONDS),
+            crate::flags::Entry::Palera1n => run_palera1n(executor, device, &args, PALERA1N_SECONDS),
+        };
+        let failed = match ran {
             Ok(()) => {
                 let deadline = Instant::now() + Duration::from_secs(PONGO_SECONDS);
                 loop {

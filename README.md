@@ -28,7 +28,7 @@ aarch64).
 | `crates/formats` | File formats Apple devices and Linux boots use |
 | `crates/cache` | Pinned downloads and the cache |
 | `crates/build` | `build`: the component cache and orchard's producers |
-| `crates/device`, `crates/cli` | The command line |
+| `crates/device`, `crates/cli` | The command line ([`crates/cli/README.md`](crates/cli/README.md)) |
 | `companion` | The iPad app that splits the storage, with its helper |
 | `packaging` | Release builds, stamping (`stamp.py`) and `install.sh` |
 | `vendor` | Patched or pinned third-party code (see each `PATCHED.md`) |

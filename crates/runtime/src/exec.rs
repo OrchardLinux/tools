@@ -148,6 +148,8 @@ impl Executor {
                 // The one that runs (ORCHARD_PALERA1N_BETA=0: v2.4).
                 let (pin, release) = crate::flags::palera1n_pin()
                     .ok_or_else(|| Error::new(Code::NotFound, "palera1n publishes no build for this computer"))?;
+                // checkra1n is fetched when a board's start needs it (the
+                // board is not known yet, and it is a megabyte).
                 self.palera1n(pin, release).map(drop)
             }
             Asset::KernelPackage => {
@@ -210,6 +212,8 @@ impl Executor {
     }
 
     /// The palera1n executable, unpacked from its verified package.
+    /// A pinned tool's executable (palera1n, checkra1n), downloaded and
+    /// unpacked once.
     pub fn palera1n(&self, pin: &orchard_flow::assets::Pin, release: &str) -> Result<PathBuf> {
         let receipt = Receipt {
             url: format!("{release}/{}", pin.asset),

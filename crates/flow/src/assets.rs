@@ -243,6 +243,60 @@ pub const PALERA1N_2_PINS: &[Pin] = &[
     },
 ];
 
+pub const CHECKRA1N_RELEASE: &str = "https://assets.checkra.in/downloads/preview/0.1337.3";
+
+/// checkra1n 0.1337.3, the unpatched official build (palera1n embeds the
+/// same version with patches of its own): bare executables, with the sizes
+/// and SHA-256 orchard's Python CLI pins. Run for the exploit and Pongo
+/// only when asked for (ORCHARD_CHECKRA1N=1).
+pub const CHECKRA1N_PINS: &[Pin] = &[
+    Pin {
+        os: "macos",
+        arch: "aarch64",
+        asset: "checkra1n-macos",
+        size: 1_161_528,
+        sha256: "3bc1a0247dd9782b18de8945e3bb3b2dc740208b8c78f78634b80a7804a9f9be",
+        package: Package::Bare,
+        member: None,
+        executable_sha256: None,
+    },
+    Pin {
+        os: "macos",
+        arch: "x86_64",
+        asset: "checkra1n-macos",
+        size: 1_161_528,
+        sha256: "3bc1a0247dd9782b18de8945e3bb3b2dc740208b8c78f78634b80a7804a9f9be",
+        package: Package::Bare,
+        member: None,
+        executable_sha256: None,
+    },
+    Pin {
+        os: "linux",
+        arch: "aarch64",
+        asset: "checkra1n-linux-arm64",
+        size: 550_664,
+        sha256: "078053c11e9a301f0e71b87b6b854e6c8a69c87972325dd0c90deeeba1c3cb70",
+        package: Package::Bare,
+        member: None,
+        executable_sha256: None,
+    },
+    Pin {
+        os: "linux",
+        arch: "x86_64",
+        asset: "checkra1n-linux-x86_64",
+        size: 554_232,
+        sha256: "53154d87594cf67c56659f24547f1b5bb5336f84ea58c2d42f25a7b2df81a964",
+        package: Package::Bare,
+        member: None,
+        executable_sha256: None,
+    },
+];
+
+/// The checkra1n pin for a host.
+pub fn checkra1n_pin(os: &str, arch: &str) -> Option<&'static Pin> {
+    CHECKRA1N_PINS.iter().find(|p| p.os == os && p.arch == arch)
+}
+
 /// The v2.4 pin for a host.
 pub fn palera1n_2_pin(os: &str, arch: &str) -> Option<&'static Pin> {
     PALERA1N_2_PINS.iter().find(|p| p.os == os && p.arch == arch)
