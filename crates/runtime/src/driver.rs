@@ -325,7 +325,7 @@ impl<O: Observer> Driver<O> {
                         // One piece of work on a device at a time: a device in
                         // DFU mode is taken before the flow hears of it, and one
                         // that other work holds is left to it.
-                        let working_at = flow.state.device().and_then(|d| watcher.location(&d.id)).map(str::to_owned);
+                        let working_at = flow.state.working().and_then(|d| watcher.location(&d.id)).map(str::to_owned);
                         let in_dfu: Vec<&str> = named.iter().filter(|d| d.mode == orchard_usb::Mode::Dfu).map(|d| d.location.as_str()).collect();
                         let look = held.look(&in_dfu, working_at.as_deref());
                         // A device the flow took up as it found it running.

@@ -799,6 +799,17 @@ impl State {
     }
 
     /// The device this state is about, if any.
+    /// The device work goes on on. One whose work is over (its system
+    /// starts by itself, nothing can be done on it, or it begins again from
+    /// DFU mode) is the screen's, but free for other work.
+    pub fn working(&self) -> Option<&Device> {
+        use State::*;
+        match self {
+            Unsupported { .. } | InstallFailed { .. } | NothingInstalled { .. } | Starting { .. } => None,
+            _ => self.device(),
+        }
+    }
+
     pub fn device(&self) -> Option<&Device> {
         use State::*;
         match self {

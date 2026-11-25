@@ -955,3 +955,19 @@ fn the_launchers_failed_start_is_the_installers() {
     let (flow, _) = step(app, flow, Event::ChainFailed("m1n1 is not running".into()));
     assert!(matches!(flow.state, State::DfuAgain { why: Again::Retry, .. }));
 }
+
+#[test]
+fn a_device_whose_work_is_over_is_free_for_other_work() {
+    let device = ipad6();
+    for over in [
+        State::Starting { device: device.clone(), title: "System".into() },
+        State::InstallFailed { device: device.clone() },
+        State::NothingInstalled { device: device.clone() },
+        State::Unsupported { device: device.clone() },
+    ] {
+        assert!(over.device().is_some() && over.working().is_none(), "{over:?}");
+    }
+    let found = State::Found { device: device.clone(), confirm_skip: false };
+    assert_eq!(found.working(), Some(&device));
+    assert!(State::start().working().is_none());
+}
