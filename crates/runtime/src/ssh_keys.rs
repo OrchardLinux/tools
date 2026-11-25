@@ -47,6 +47,21 @@ fn identity(cache: &Path) -> Result<PathBuf> {
 /// system itself makes it for its USB serial (orchard's
 /// boot/session/usb-identity): the first 12 hex digits of
 /// SHA-256("orchard-SERIAL").
+///
+/// Where the system's serial number comes from, in orchard:
+/// - 64-bit boards: m1n1 copies `serial-number` from Apple's device tree,
+///   which iBoot filled, into the Linux one (m1n1's kboot.c). No tool on
+///   the computer supplies it.
+/// - 32-bit boards (Cascadia): there is no such copy; orchard's Python puts
+///   the `SRNM` of the device's USB serial into the tree
+///   (`install_direct.cascadia_payload`, `boot.py`), and without one the
+///   tree has none and the system falls back to its per-boot identity.
+///
+/// So on a 64-bit board this function gives the system's id only if the
+/// `SRNM` iBoot says on USB (recovery mode; DFU mode says none there, seen
+/// on a j71b) is the string iBoot wrote into the tree. That is expected and
+/// not checked on a device, which is why the install prefers the id the
+/// install environment itself says on USB and uses this only without one.
 pub fn unit(serial_number: &str) -> String {
     use sha2::{Digest, Sha256};
     let digest = Sha256::digest(format!("orchard-{serial_number}").as_bytes());
