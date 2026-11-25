@@ -24,9 +24,6 @@ pub struct Board {
     pub board: u32,
     /// Support status, such as `supported` or `experimental`.
     pub status: String,
-    /// How the board prefers to be taken from DFU mode (`[boot] entries`),
-    /// such as `checkra1n`; empty when it names none.
-    pub entries: Vec<String>,
     /// Kernel platform and DTB name.
     pub platform: Option<String>,
     pub dtb: Option<String>,
@@ -482,15 +479,7 @@ struct DeviceFile {
     #[serde(default)]
     support: SupportSection,
     #[serde(default)]
-    boot: BootSection,
-    #[serde(default)]
     features: toml::Table,
-}
-
-#[derive(Deserialize, Default)]
-struct BootSection {
-    #[serde(default)]
-    entries: Vec<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -539,7 +528,6 @@ fn load(name: &str, dir: &Path) -> Result<Board> {
         chip: file.matching.dfu.chip,
         board: file.matching.dfu.board,
         status: file.support.status,
-        entries: file.boot.entries,
         platform: file.kernel.platform,
         dtb: file.kernel.dtb,
         features: file

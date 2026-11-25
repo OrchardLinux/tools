@@ -7,8 +7,8 @@
 //! - `ORCHARD_PALERA1N_BETA=0`: runs palera1n v2.4 (pinned, checked like the
 //!   beta) instead of the 3.0 beta.
 //! - `ORCHARD_ENTRY=palera1n` or `checkra1n`: the tool that runs the exploit
-//!   and starts Pongo, instead of the one the board's data names. What
-//!   follows from Pongo is the same.
+//!   and starts Pongo; palera1n without it. What follows from Pongo is the
+//!   same.
 //! - `ORCHARD_KEEP_AWAKE=1`: keeps the CPU out of its deep sleep states while
 //!   the exploit runs (Linux, `/dev/cpu_dma_latency`, which must be writable:
 //!   root's by default), for hosts where checkm8 only succeeds under load.
@@ -39,14 +39,12 @@ pub fn palera1n_pin() -> Option<(&'static orchard_flow::assets::Pin, &'static st
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Entry {
     Palera1n,
-    /// The unpatched official checkra1n: for the boards palera1n does not
-    /// list (A7), and those that start better with it.
+    /// The unpatched official checkra1n.
     Checkra1n,
 }
 
 impl Entry {
-    /// The entry a name stands for. The names are closed here: the board
-    /// data says which of them a board prefers, never what is run.
+    /// The entry a name stands for.
     fn named(name: &str) -> Option<Entry> {
         match name {
             "palera1n" => Some(Entry::Palera1n),
@@ -56,18 +54,13 @@ impl Entry {
     }
 }
 
-/// The entry for a board: ORCHARD_ENTRY when it names one, else the first
-/// the board's data prefers (`[boot] entries`) that this tool has, else
-/// palera1n.
-pub fn entry(preferred: &[String]) -> Entry {
-    entry_from(var("ORCHARD_ENTRY").as_deref(), preferred)
+/// The entry: palera1n, on every board, unless ORCHARD_ENTRY names another.
+pub fn entry() -> Entry {
+    entry_from(var("ORCHARD_ENTRY").as_deref())
 }
 
-fn entry_from(asked: Option<&str>, preferred: &[String]) -> Entry {
-    asked
-        .and_then(Entry::named)
-        .or_else(|| preferred.iter().find_map(|name| Entry::named(name)))
-        .unwrap_or(Entry::Palera1n)
+fn entry_from(asked: Option<&str>) -> Entry {
+    asked.and_then(Entry::named).unwrap_or(Entry::Palera1n)
 }
 
 /// The checkra1n to run on this computer.
@@ -126,15 +119,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_board_names_its_entry_and_the_environment_goes_first() {
-        let names = |list: &[&str]| list.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
-        assert_eq!(entry_from(None, &[]), Entry::Palera1n);
-        assert_eq!(entry_from(None, &names(&["checkra1n"])), Entry::Checkra1n);
-        // A name this tool has no entry for is passed over, never run.
-        assert_eq!(entry_from(None, &names(&["pico-checkm8", "kdfu"])), Entry::Palera1n);
-        assert_eq!(entry_from(None, &names(&["kdfu", "checkra1n", "palera1n"])), Entry::Checkra1n);
-        assert_eq!(entry_from(Some("palera1n"), &names(&["checkra1n"])), Entry::Palera1n);
-        assert_eq!(entry_from(Some("checkra1n"), &[]), Entry::Checkra1n);
-        assert_eq!(entry_from(Some("1"), &names(&["checkra1n"])), Entry::Checkra1n);
+    fn palera1n_unless_the_environment_names_the_other() {
+        assert_eq!(entry_from(None), Entry::Palera1n);
+        assert_eq!(entry_from(Some("palera1n")), Entry::Palera1n);
+        assert_eq!(entry_from(Some("checkra1n")), Entry::Checkra1n);
+        assert_eq!(entry_from(Some("1")), Entry::Palera1n);
     }
 }

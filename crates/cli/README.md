@@ -66,18 +66,16 @@ tool that enters the device cannot be pointed at one of two.
 
 ## How the device is entered
 
-From DFU mode a tool runs the boot ROM exploit and starts Pongo: palera1n,
-or checkra1n for the boards whose data names it (`[boot] entries` in
-`devices/BOARD/device.toml`: the A7 boards, which palera1n does not list).
-Both are pinned by size and SHA-256 and fetched into the cache. The board
-data can only prefer one of these two names; it never says what is run.
+From DFU mode palera1n runs the boot ROM exploit and starts Pongo, on every
+board; checkra1n does with `ORCHARD_ENTRY=checkra1n`. Both are pinned by size
+and SHA-256 and fetched into the cache.
 
 Switches from the environment, for trying a variant without a new build
 (each one set is written to the log):
 
 | Variable | What it does |
 | --- | --- |
-| `ORCHARD_ENTRY=palera1n` or `checkra1n` | that tool enters the device, whatever its board prefers |
+| `ORCHARD_ENTRY=palera1n` or `checkra1n` | that tool enters the device; palera1n without it |
 | `ORCHARD_PALERA1N_BETA=0` | palera1n v2.4 instead of the 3.0 beta |
 | `ORCHARD_PORT_RESET_SECONDS=N` | seconds before the USB port reset after the exploit (Linux); 0: none |
 | `ORCHARD_KEEP_AWAKE=1` | keeps the CPU out of deep sleep while the exploit runs (Linux) |

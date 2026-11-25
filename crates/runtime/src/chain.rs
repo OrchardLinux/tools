@@ -89,13 +89,6 @@ fn run_palera1n_from(executor: &Executor, device: &Device, from: Mode, args: &[s
     run_tool(executor, device, from, "palera1n", &palera1n, args, seconds)
 }
 
-/// The tool that takes this device from DFU mode to Pongo: what its board's
-/// data prefers, or ORCHARD_ENTRY.
-fn entry_for(executor: &Executor, device: &Device) -> crate::flags::Entry {
-    let board = executor.data().ok().and_then(|data| orchard_boards::catalog::Catalog::open(&data).ok()).and_then(|catalog| catalog.board(&device.board).ok());
-    crate::flags::entry(board.as_ref().map_or(&[][..], |board| &board.entries))
-}
-
 /// checkra1n's exploit and Pongo with `pongo_image`,
 /// with the arguments orchard's Python CLI runs it with.
 fn run_checkra1n(executor: &Executor, device: &Device, pongo_image: &std::path::Path, seconds: u64) -> Result<()> {
@@ -279,7 +272,7 @@ fn into_pongo(executor: &Executor, device: &Device, pongo_image: &std::path::Pat
     let _awake = crate::flags::stay_awake();
     loop {
         let args = [std::ffi::OsString::from("-p"), "-k".into(), pongo_image.as_os_str().to_owned()];
-        let ran = match entry_for(executor, device) {
+        let ran = match crate::flags::entry() {
             crate::flags::Entry::Checkra1n => run_checkra1n(executor, device, pongo_image, PALERA1N_SECONDS),
             crate::flags::Entry::Palera1n => run_palera1n(executor, device, &args, PALERA1N_SECONDS),
         };

@@ -148,8 +148,7 @@ impl Executor {
                 // The one that runs (ORCHARD_PALERA1N_BETA=0: v2.4).
                 let (pin, release) = crate::flags::palera1n_pin()
                     .ok_or_else(|| Error::new(Code::NotFound, "palera1n publishes no build for this computer"))?;
-                // checkra1n is fetched when a board's start needs it (the
-                // board is not known yet, and it is a megabyte).
+                // checkra1n is fetched when a start needs it (ORCHARD_ENTRY).
                 self.palera1n(pin, release).map(drop)
             }
             Asset::KernelPackage => {
