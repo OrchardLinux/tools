@@ -69,6 +69,8 @@ impl Check {
         let parts: Vec<&str> = self.detail.split("; ").collect();
         match self.state {
             State::Ready if self.name == "disk" => (self.detail.split(" free").next().unwrap_or("").to_owned(), String::new()),
+            // The version, where there is one to say.
+            State::Ready if self.name == "python" => (self.detail.split(" at ").next().filter(|v| !v.is_empty()).unwrap_or("ready").to_owned(), String::new()),
             State::Ready => ("ready".into(), String::new()),
             // The command, without what it runs.
             State::Missing => {
@@ -210,7 +212,12 @@ fn checks(cache: &Path) -> Vec<Check> {
     }
     const PYTHON: &str = "build, inputs: orchard's recipes are Python scripts (3.11 or newer)";
     found.push(match orchard_build::python() {
-        Ok(python) => Check { name: "python", state: State::Ready, needed_for: PYTHON, detail: python.display().to_string(), setup: None },
+        Ok(python) => {
+            // Its version, which the search above found to be new enough.
+            let asked = Command::new(&python).args(["-c", "import sys; print('%d.%d.%d' % sys.version_info[:3])"]).output();
+            let version = asked.ok().filter(|out| out.status.success()).map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned()).unwrap_or_default();
+            Check { name: "python", state: State::Ready, needed_for: PYTHON, detail: format!("{version} at {}", python.display()), setup: None }
+        }
         Err(e) => match install_command("python") {
             Ok(argv) => Check {
                 name: "python",
@@ -378,5 +385,7 @@ mod tests {
         );
         let disk = Check { name: "disk", state: State::Ready, needed_for: "x", detail: "30 GB free at /cache".into(), setup: None };
         assert_eq!(disk.cells().0, "30 GB");
+        let python = Check { name: "python", state: State::Ready, needed_for: "x", detail: "3.14.0 at /usr/bin/python3.14".into(), setup: None };
+        assert_eq!(python.cells().0, "3.14.0");
     }
 }

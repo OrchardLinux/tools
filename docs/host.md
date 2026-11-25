@@ -17,7 +17,7 @@ is for, whether it is there, and for what is not the command that gets it:
 ┌────────────┬──────────┬────────────┬───────────────────────┐
 │ Check      │ For      │ State      │ Get it                │
 ├────────────┼──────────┼────────────┼───────────────────────┤
-│ Python     │ building │ ready      │                       │
+│ Python     │ building │ 3.14.0     │                       │
 │ git        │ building │ ready      │                       │
 │ Podman     │ building │ VM stopped │ orchard2 setup podman │
 │ Free space │ building │ 30 GB      │                       │
