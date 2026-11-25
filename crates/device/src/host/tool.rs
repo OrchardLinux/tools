@@ -263,7 +263,10 @@ mod tests {
         for expected in [4, 6] {
             let error = reply(&tool, LIMIT, expected, &|_| Ok(())).unwrap_err();
             assert_eq!(error.code, Code::Format);
-            assert_eq!(error.message, "invalid device key reply (values suppressed)");
+            assert_eq!(
+                error.message,
+                "invalid device key reply (values suppressed)"
+            );
         }
     }
 

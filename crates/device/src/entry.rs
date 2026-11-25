@@ -455,10 +455,14 @@ mod tests {
     #[test]
     fn a_damaged_cached_tool_is_not_returned() {
         let (_dir, store) = store();
-        GASTER.cached(&store, &PIN, || Ok(b"tool".to_vec())).unwrap();
+        GASTER
+            .cached(&store, &PIN, || Ok(b"tool".to_vec()))
+            .unwrap();
         let entry = store.entries().unwrap().pop().unwrap();
         std::fs::write(store.dir().join("files").join(entry.name), b"nope").unwrap();
-        let bytes = GASTER.cached(&store, &PIN, || Ok(b"tool".to_vec())).unwrap();
+        let bytes = GASTER
+            .cached(&store, &PIN, || Ok(b"tool".to_vec()))
+            .unwrap();
         assert_eq!(bytes, b"tool");
     }
 }
