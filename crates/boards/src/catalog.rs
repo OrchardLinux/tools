@@ -30,9 +30,6 @@ pub struct Board {
     /// Feature states (`working`, `untested`, `missing`, `none`), in the
     /// order of the board file.
     pub features: Vec<(String, String)>,
-    /// The entries (outside tools such as `checkra1n`) the board takes into
-    /// its boot chain, in order of preference; empty for the default.
-    pub entries: Vec<String>,
     dir: PathBuf,
     peripheral_recipe: Option<String>,
 }
@@ -497,15 +494,7 @@ struct DeviceFile {
     #[serde(default)]
     support: SupportSection,
     #[serde(default)]
-    boot: BootSection,
-    #[serde(default)]
     features: toml::Table,
-}
-
-#[derive(Deserialize, Default)]
-struct BootSection {
-    #[serde(default)]
-    entries: Vec<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -561,7 +550,6 @@ fn load(name: &str, dir: &Path) -> Result<Board> {
             .into_iter()
             .filter_map(|(k, v)| Some((k, v.as_str()?.to_owned())))
             .collect(),
-        entries: file.boot.entries,
         dir: dir.to_owned(),
         peripheral_recipe: file.firmware.recipe,
     })
@@ -1002,7 +990,6 @@ mod tests {
         let b = catalog.board("x1").unwrap();
         assert_eq!((b.chip, b.board), (0x8010, 0x18));
         assert_eq!(b.products, ["Test1,24"]);
-        assert_eq!(b.entries, ["checkra1n"]);
         assert_eq!(catalog.board_for(0x8011, 0x0a).unwrap().name, "x2");
         assert_eq!(catalog.board("x9").unwrap_err().code, Code::NotFound);
         assert_eq!(catalog.board("../x1").unwrap_err().code, Code::NotFound);
