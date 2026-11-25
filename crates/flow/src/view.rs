@@ -52,6 +52,8 @@ pub struct DeviceView {
 pub enum ScreenKind {
     WaitingForDfu,
     WrongMode,
+    /// In recovery mode, with the guided run into DFU mode (R.1i–R.5i).
+    Recovery,
     SeveralInDfu,
     Unsupported,
     Found,
@@ -107,7 +109,13 @@ pub fn view(app: App, state: &State) -> (DeviceView, ScreenKind) {
     let m = model(state).unwrap_or(Model::IpadHome);
 
     match state {
-        S::WaitingForDfu { tab, seen, leaving } => {
+        // In recovery mode: the guided run (R.1i–R.5i). Its waves only while
+        // it waits for Start; the buttons' glow follows the run (the app's).
+        S::WaitingForDfu { recovery: Some(run), .. } => {
+            let rings = !run.phase.running();
+            (DeviceView { rings, ..waiting(run.device.model, run.device.sequence) }, ScreenKind::Recovery)
+        }
+        S::WaitingForDfu { tab, seen, leaving, .. } => {
             // A known device draws as itself, also while it is leaving for
             // DFU; otherwise the tab picks the drawing.
             let (m, kind) = match seen.first().or(leaving.as_ref()) {
@@ -143,7 +151,11 @@ pub fn view(app: App, state: &State) -> (DeviceView, ScreenKind) {
         S::Splitting { reopened: true, .. } => (lit(m, G::Spinner), ScreenKind::SplittingReopened),
         S::Splitting { .. } => (lit(m, G::Spinner), ScreenKind::Splitting),
         S::SplitDone { .. } => (DeviceView { visible: false, ..lit(m, G::None) }, ScreenKind::SplitDone),
-        S::DfuAgain { device, why, seen } => {
+        // 3.1 with the guided run in place of its steps (its own header stays).
+        S::DfuAgain { device, recovery: Some(run), .. } => {
+            (DeviceView { rings: !run.phase.running(), ..waiting(m, device.sequence) }, ScreenKind::DfuAgain)
+        }
+        S::DfuAgain { device, why, seen, .. } => {
             let v = waiting(m, device.sequence);
             // The device passing through another mode on its way to DFU
             // (it restarts) keeps 3.1: it asks for the same thing as 1.2, and

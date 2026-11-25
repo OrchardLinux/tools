@@ -95,12 +95,12 @@ fn dfu_found_lights_the_screen_with_a_check() {
 }
 
 #[test]
-fn device_in_recovery_selects_its_tab_and_keeps_waiting() {
+fn device_in_recovery_selects_its_tab_and_offers_the_guided_run() {
     let mut iphone7 = ipad6();
     iphone7.sequence = Sequence::VolumeDownSide;
     iphone7.model = Model::IphoneHome;
     let (s, _) = update(App::Installer, State::start(), Event::Attached { device: iphone7, mode: UsbMode::Recovery });
-    assert_eq!(kind(App::Installer, &s), ScreenKind::WrongMode);
+    assert_eq!(kind(App::Installer, &s), ScreenKind::Recovery);
     assert!(matches!(s, State::WaitingForDfu { tab: Sequence::VolumeDownSide, .. }));
 }
 
@@ -656,9 +656,10 @@ fn a_device_leaving_for_dfu_keeps_its_screen_for_a_while() {
     // It comes back in DFU: found.
     let (found, _) = update(App::Installer, s.clone(), dfu(ipad6()));
     assert_eq!(kind(App::Installer, &found), ScreenKind::Found);
-    // It comes back in another mode: 1.2 for that mode, the grace period over.
+    // It comes back in another mode: that mode's screen, the grace period
+    // over (recovery mode: the guided run, waiting for Start).
     let (other, _) = update(App::Installer, s.clone(), Event::Attached { device: ipad6(), mode: UsbMode::Recovery });
-    assert_eq!(kind(App::Installer, &other), ScreenKind::WrongMode);
+    assert_eq!(kind(App::Installer, &other), ScreenKind::Recovery);
     assert!(matches!(&other, State::WaitingForDfu { leaving: None, seen, .. } if seen[0].mode == UsbMode::Recovery));
     assert!(crate::timeout(&other).is_none());
     // It doesn't: back to 1.1.
@@ -905,7 +906,7 @@ fn palera1n_2_pins_cover_every_supported_host() {
 
 #[test]
 fn the_no_home_button_tab_draws_the_iphone_beside_the_ipad_until_a_device_is_known() {
-    let waiting = |tab| State::WaitingForDfu { tab, seen: Vec::new(), leaving: None };
+    let waiting = |tab| State::WaitingForDfu { tab, seen: Vec::new(), leaving: None, recovery: None };
     assert!(view::view(App::Installer, &waiting(Sequence::VolumeSequence)).0.pair);
     assert!(!view::view(App::Installer, &waiting(Sequence::HomePower)).0.pair);
     assert!(!view::view(App::Installer, &waiting(Sequence::VolumeDownSide)).0.pair);
@@ -919,7 +920,7 @@ fn iphone() -> Other {
 fn another_device_holds_the_start_until_it_is_gone() {
     let app = App::Installer;
     let mut flow = Flow::new();
-    flow.state = State::DfuAgain { device: ipad6(), why: Again::Install, seen: None };
+    flow.state = State::DfuAgain { device: ipad6(), why: Again::Install, seen: None, recovery: None };
     let (flow, _) = step(app, flow, Event::Others(vec![Other { name: "iPad (6th generation)".into(), mode: "dfu".into(), held_by: None }, iphone()]));
     assert!(flow.refusing());
     assert_eq!(view_flow(app, &flow).1, ScreenKind::SeveralInDfu);
@@ -937,7 +938,7 @@ fn another_device_holds_the_start_until_it_is_gone() {
 fn a_held_start_is_dropped_when_the_flow_moves_on() {
     let app = App::Installer;
     let mut flow = Flow::new();
-    flow.state = State::DfuAgain { device: ipad6(), why: Again::Install, seen: None };
+    flow.state = State::DfuAgain { device: ipad6(), why: Again::Install, seen: None, recovery: None };
     let (flow, _) = step(app, flow, Event::Others(vec![iphone(), iphone()]));
     let (flow, _) = step(app, flow, dfu(ipad6()));
     assert_eq!(flow.held.len(), 1);
@@ -971,7 +972,7 @@ fn the_launcher_holds_its_start_too_and_lets_go_once_the_system_starts() {
     assert!(!effects.iter().any(|e| matches!(e, Effect::ListEntries(_))), "{effects:?}");
     // Starting again after a failure (no press) is held until they're gone.
     let mut again = flow.clone();
-    again.state = State::DfuAgain { device: ipad6(), why: Again::Retry, seen: None };
+    again.state = State::DfuAgain { device: ipad6(), why: Again::Retry, seen: None, recovery: None };
     let (again, _) = step(app, again, Event::Others(vec![iphone(), iphone()]));
     let (again, effects) = step(app, again, dfu(ipad6()));
     assert!(!effects.iter().any(|e| matches!(e, Effect::ListEntries(_))), "{effects:?}");
@@ -1062,4 +1063,164 @@ fn space_that_is_there_is_measured_in_bytes_against_orchards_least() {
     assert!(layout(0).has_room());
     let small = Layout { total_gb: 64, ipados_gb: 55, ipados_used_gb: 20, outside: vec![], outside_bytes: 0 };
     assert!(!small.has_room());
+}
+
+// ---- From recovery mode into DFU mode (R.1i–R.5i) ----
+
+fn recovery(device: Device) -> Event {
+    Event::Attached { device, mode: UsbMode::Recovery }
+}
+
+fn phase(s: &State) -> Option<recovery::Phase> {
+    s.recovery().map(|r| r.phase.clone())
+}
+
+#[test]
+fn the_guided_run_from_recovery_mode_into_dfu_mode() {
+    use recovery::Phase;
+    let app = App::Installer;
+    let (s, e) = update(app, State::start(), recovery(ipad6()));
+    assert!(e.is_empty(), "nothing is sent before Start");
+    assert_eq!(phase(&s), Some(Phase::ready()));
+    assert_eq!(crate::timer(&s), None);
+    // Start: the device is told to start normally if the run is given up.
+    let (s, e) = update(app, s, Event::Continue);
+    assert_eq!(e, vec![Effect::PrepareRecovery(ipad6().id)]);
+    assert_eq!(phase(&s), Some(Phase::GetReady));
+    assert_eq!(crate::timer(&s), Some(("recovery-get-ready", recovery::GET_READY)));
+    let (s, e) = update(app, s, Event::Timeout);
+    assert!(e.is_empty());
+    assert_eq!((phase(&s), crate::timer(&s).map(|t| t.0)), (Some(Phase::Hold), Some("recovery-hold")));
+    // The restart goes out at the end of the hold.
+    let (s, e) = update(app, s, Event::Timeout);
+    assert_eq!(e, vec![Effect::RestartFromRecovery(ipad6().id)]);
+    assert_eq!(phase(&s), Some(Phase::Restarted));
+    // Off USB: expected; the run stays, and the state notes the device gone.
+    let (s, _) = update(app, s, Event::Detached { id: ipad6().id });
+    assert_eq!(phase(&s), Some(Phase::Restarted));
+    assert!(matches!(&s, State::WaitingForDfu { seen, .. } if seen.is_empty()));
+    let (s, _) = update(app, s, Event::Timeout);
+    assert_eq!((phase(&s), crate::timer(&s).map(|t| t.0)), (Some(Phase::LetGo), Some("recovery-let-go")));
+    assert_eq!(kind(app, &s), ScreenKind::Recovery);
+    // DFU mode: found, as from the DFU steps.
+    let (s, _) = update(app, s, dfu(ipad6()));
+    assert!(matches!(s, State::Found { .. }));
+}
+
+/// The run of the iPad 6 just after its restart.
+fn restarted() -> State {
+    let s = run(App::Installer, State::start(), vec![recovery(ipad6()), Event::Continue, Event::Timeout, Event::Timeout, Event::Detached { id: ipad6().id }]).0;
+    assert_eq!(phase(&s), Some(recovery::Phase::Restarted));
+    s
+}
+
+#[test]
+fn a_run_that_comes_back_in_recovery_mode_offers_it_again() {
+    let (s, _) = update(App::Installer, restarted(), Event::Timeout);
+    let (s, e) = update(App::Installer, s, recovery(ipad6()));
+    assert!(e.is_empty());
+    assert_eq!(phase(&s), Some(recovery::Phase::Ready { again: true, problem: None }));
+    assert_eq!(kind(App::Installer, &s), ScreenKind::Recovery);
+    // And again from Start.
+    let (s, e) = update(App::Installer, s, Event::Continue);
+    assert_eq!((phase(&s), e), (Some(recovery::Phase::GetReady), vec![Effect::PrepareRecovery(ipad6().id)]));
+}
+
+#[test]
+fn a_run_that_starts_ipados_instead_leaves_the_run() {
+    let (s, _) = update(App::Installer, restarted(), Event::Attached { device: ipad6(), mode: UsbMode::Normal });
+    assert_eq!(phase(&s), None);
+    assert_eq!(kind(App::Installer, &s), ScreenKind::WrongMode);
+}
+
+#[test]
+fn a_run_that_shows_nothing_for_long_ends() {
+    let s = run(App::Installer, restarted(), vec![Event::Timeout, Event::Timeout]).0;
+    assert_eq!(phase(&s), None);
+    // Still gone: the DFU steps again, after the usual grace for a device that left.
+    let (s, _) = update(App::Installer, s, Event::Timeout);
+    assert_eq!(kind(App::Installer, &s), ScreenKind::WaitingForDfu);
+}
+
+#[test]
+fn stop_goes_back_to_start_until_the_restart_went_out() {
+    let app = App::Installer;
+    let ready = update(app, State::start(), recovery(ipad6())).0;
+    let get_ready = update(app, ready.clone(), Event::Continue).0;
+    assert_eq!(phase(&update(app, get_ready.clone(), Event::Cancel).0), Some(recovery::Phase::ready()));
+    let hold = update(app, get_ready, Event::Timeout).0;
+    let (stopped, e) = update(app, hold, Event::Cancel);
+    assert!(e.is_empty(), "no restart after Stop");
+    assert_eq!(phase(&stopped), Some(recovery::Phase::ready()));
+    // After the restart there is no Stop.
+    assert_eq!(phase(&update(app, restarted(), Event::Cancel).0), Some(recovery::Phase::Restarted));
+}
+
+#[test]
+fn unplugged_before_the_restart_the_run_is_over() {
+    let app = App::Installer;
+    let hold = run(app, State::start(), vec![recovery(ipad6()), Event::Continue, Event::Timeout]).0;
+    let (s, e) = update(app, hold, Event::Detached { id: ipad6().id });
+    assert!(e.is_empty(), "no restart for a device that is gone");
+    assert_eq!(phase(&s), None);
+    assert_eq!(crate::timer(&s).map(|t| t.0), Some("dfu-leaving"));
+}
+
+#[test]
+fn a_command_that_fails_shows_why_and_offers_start_again() {
+    let app = App::Installer;
+    let get_ready = run(app, State::start(), vec![recovery(ipad6()), Event::Continue]).0;
+    let (s, _) = update(app, get_ready, Event::RecoveryFailed("the device did not answer".into()));
+    assert_eq!(phase(&s), Some(recovery::Phase::Ready { again: false, problem: Some("the device did not answer".into()) }));
+}
+
+#[test]
+fn another_device_before_the_restart_goes_back_to_start() {
+    let app = App::Installer;
+    let mut flow = Flow::new();
+    for event in [recovery(ipad6()), Event::Continue, Event::Timeout] {
+        flow = step(app, flow, event).0;
+    }
+    assert_eq!(phase(&flow.state), Some(recovery::Phase::Hold));
+    let (flow, _) = step(app, flow, Event::Others(vec![iphone(), iphone()]));
+    assert_eq!(phase(&flow.state), Some(recovery::Phase::ready()));
+    // Start doesn't go through while it is there.
+    let (flow, e) = step(app, flow, Event::Continue);
+    assert!(e.is_empty() && phase(&flow.state) == Some(recovery::Phase::ready()));
+}
+
+#[test]
+fn two_devices_get_no_run() {
+    let (s, _) = run(App::Installer, State::start(), vec![recovery(ipad6()), Event::Attached { device: ipad7(), mode: UsbMode::Normal }]);
+    assert_eq!(phase(&s), None);
+}
+
+#[test]
+fn dfu_mode_again_from_recovery_mode_goes_on_with_its_reason() {
+    let app = App::Installer;
+    let again = State::DfuAgain { device: ipad6(), why: Again::Install, seen: None, recovery: None };
+    let (s, _) = update(app, again, recovery(ipad6()));
+    assert_eq!(phase(&s), Some(recovery::Phase::ready()));
+    assert_eq!(kind(app, &s), ScreenKind::DfuAgain, "3.1's own header stays");
+    let s = run(app, s, vec![Event::Continue, Event::Timeout, Event::Timeout, Event::Detached { id: ipad6().id }, Event::Timeout]).0;
+    assert_eq!(phase(&s), Some(recovery::Phase::LetGo));
+    let (s, e) = update(app, s, dfu(ipad6()));
+    assert!(matches!(s, State::CreateAccount { env: None, .. }));
+    assert_eq!(e, vec![Effect::BootInstallEnv(ipad6().id)]);
+}
+
+#[test]
+fn the_launcher_gets_the_same_run() {
+    let app = App::Launcher;
+    let s = run(app, State::start(), vec![recovery(ipad6()), Event::Continue, Event::Timeout, Event::Timeout, Event::Detached { id: ipad6().id }, Event::Timeout]).0;
+    assert_eq!(phase(&s), Some(recovery::Phase::LetGo));
+    let (s, e) = update(app, s, dfu(ipad6()));
+    assert!(matches!(s, State::Found { .. }) && e.is_empty(), "the launcher still waits for Start in Found");
+}
+
+#[test]
+fn the_buttons_follow_the_layout() {
+    assert_eq!(recovery::buttons(Sequence::HomePower), ("Home", "Power"));
+    assert_eq!(recovery::buttons(Sequence::VolumeDownSide), ("Volume Down", "Power"));
+    assert_eq!(recovery::buttons(Sequence::VolumeSequence), ("Volume Down", "Power"));
 }

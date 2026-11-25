@@ -6,6 +6,7 @@
 //! See the README for the non-goals.
 
 pub mod assets;
+pub mod recovery;
 mod view;
 pub use assets::{Asset, AssetState, Assets, Cause};
 pub use view::{view, view_flow, DeviceView, Glyph, Screen, ScreenKind, Tint};
@@ -195,7 +196,9 @@ pub enum State {
     // Connect
     /// `leaving`: the device 1.2 showed dropped off USB, most likely because
     /// the user is doing the DFU combination; 1.2 stays for a grace period.
-    WaitingForDfu { tab: Sequence, seen: Vec<Seen>, leaving: Option<Seen> },
+    /// `recovery`: the one device seen is in recovery mode, so the guided
+    /// run from there replaces the DFU steps (R.1–R.5); see [`recovery`].
+    WaitingForDfu { tab: Sequence, seen: Vec<Seen>, leaving: Option<Seen>, recovery: Option<recovery::Run> },
     SeveralInDfu { devices: Vec<Device> },
     Unsupported { device: Device },
     Found { device: Device, confirm_skip: bool },
@@ -206,7 +209,8 @@ pub enum State {
     Splitting { device: Device, omarchy_gb: u32, link: Link, reopened: bool },
     SplitDone { device: Device, omarchy_gb: u32 },
     // Install
-    DfuAgain { device: Device, why: Again, seen: Option<UsbMode> },
+    /// `recovery`: the device is in recovery mode, as in WaitingForDfu.
+    DfuAgain { device: Device, why: Again, seen: Option<UsbMode>, recovery: Option<recovery::Run> },
     CreateAccount {
         device: Device,
         account: Account,
@@ -323,6 +327,8 @@ pub enum Event {
     Quit,
     /// The launcher: m1n1 took the entry and is starting it (the USB link may go).
     EntryStarted,
+    /// A command to the device in recovery mode didn't go through, with why.
+    RecoveryFailed(String),
 }
 
 /// Work for the app to start. Names only; this crate does none of it.
@@ -350,6 +356,11 @@ pub enum Effect {
     /// Restart the iPad through the companion (quitting from the temporary iPadOS).
     RestartIpad,
     Quit,
+    /// In recovery mode: set the device to start normally (so a run given up
+    /// starts iPadOS rather than staying in recovery), before the hold.
+    PrepareRecovery(DeviceId),
+    /// In recovery mode: restart the device, while the user holds the buttons.
+    RestartFromRecovery(DeviceId),
 }
 
 /// The whole state: the flow's screen state and the asset lane.
@@ -512,14 +523,24 @@ impl Default for Flow {
 /// iPadOS with the overlay: palera1n's boot, iPadOS starting and the
 /// companion coming up. The install system: palera1n's boot and Linux.
 pub fn timeout(state: &State) -> Option<std::time::Duration> {
+    timer(state).map(|(_, after)| after)
+}
+
+/// The current wait's timer: a name that changes whenever the wait does (so
+/// the driver starts it anew), and how long it runs before
+/// [`Event::Timeout`]. The flow keeps no clock.
+pub fn timer(state: &State) -> Option<(&'static str, std::time::Duration)> {
     use std::time::Duration;
+    if let Some(run) = state.recovery() {
+        return run.phase.timer();
+    }
     match state {
         // The helper answers about 20 s after palera1n is done; well past that
         // the screen offers to start over.
-        State::WaitingForIpados { slow: false, .. } => Some(Duration::from_secs(90)),
+        State::WaitingForIpados { slow: false, .. } => Some(("ipados-slow", Duration::from_secs(90))),
         // The DFU combination takes 20-25 s with the device gone in between.
-        State::WaitingForDfu { leaving: Some(_), .. } => Some(Duration::from_secs(30)),
-        State::CreateAccount { env: None, slow: false, .. } => Some(Duration::from_secs(150)),
+        State::WaitingForDfu { leaving: Some(_), .. } => Some(("dfu-leaving", Duration::from_secs(30))),
+        State::CreateAccount { env: None, slow: false, .. } => Some(("env-slow", Duration::from_secs(150))),
         _ => None,
     }
 }
@@ -646,6 +667,14 @@ fn step_inner(app: App, mut flow: Flow, event: Event) -> (Flow, Vec<Effect>) {
         Event::Continue if flow.refusing() => return (flow, out),
         Event::Others(others) => {
             flow.others = others;
+            // A guided run not yet past the restart goes back to Start: the
+            // installer never restarts a device with others on USB.
+            if !flow.others.is_empty() {
+                let (without, run) = flow.state.clone().take_recovery();
+                if let Some(run) = run.filter(|r| r.phase.running() && !r.phase.restarting()) {
+                    flow.state = without.with_recovery(recovery::Run { phase: recovery::Phase::ready(), ..run });
+                }
+            }
             if flow.others.is_empty() {
                 let held = std::mem::take(&mut flow.held);
                 route(&mut flow, held, &mut out);
@@ -842,7 +871,32 @@ fn route(flow: &mut Flow, effects: Vec<Effect>, out: &mut Vec<Effect>) {
 
 impl State {
     pub fn start() -> State {
-        State::WaitingForDfu { tab: Sequence::HomePower, seen: Vec::new(), leaving: None }
+        State::WaitingForDfu { tab: Sequence::HomePower, seen: Vec::new(), leaving: None, recovery: None }
+    }
+
+    /// The guided run from recovery mode, if the state has one.
+    pub fn recovery(&self) -> Option<&recovery::Run> {
+        match self {
+            State::WaitingForDfu { recovery, .. } | State::DfuAgain { recovery, .. } => recovery.as_ref(),
+            _ => None,
+        }
+    }
+
+    fn with_recovery(self, run: recovery::Run) -> State {
+        match self {
+            State::WaitingForDfu { tab, seen, leaving, .. } => State::WaitingForDfu { tab, seen, leaving, recovery: Some(run) },
+            State::DfuAgain { device, why, seen, .. } => State::DfuAgain { device, why, seen, recovery: Some(run) },
+            other => other,
+        }
+    }
+
+    /// The state without its run, and the run.
+    fn take_recovery(self) -> (State, Option<recovery::Run>) {
+        match self {
+            State::WaitingForDfu { tab, seen, leaving, recovery } => (State::WaitingForDfu { tab, seen, leaving, recovery: None }, recovery),
+            State::DfuAgain { device, why, seen, recovery } => (State::DfuAgain { device, why, seen, recovery: None }, recovery),
+            other => (other, None),
+        }
     }
 
     /// The current wait is taking longer than usual: show the trouble link.
@@ -886,8 +940,72 @@ impl State {
     }
 }
 
-/// The only way the state changes.
+/// The only way the state changes. A guided run from recovery mode moves
+/// first (it only knows its phase); the state then handles the event as it
+/// would without one, USB events included, so its record of what is on USB
+/// stays true; [`settle`] puts the two together.
 pub fn update(app: App, state: State, event: Event) -> (State, Vec<Effect>) {
+    use recovery::Next;
+    let (without, run) = state.take_recovery();
+    let Some(run) = run else {
+        let (state, effects) = update_plain(app, without, event);
+        return (settle(state, None), effects);
+    };
+    let usb = matches!(event, Event::Attached { .. } | Event::Detached { .. });
+    match recovery::next(run.phase.clone(), &run.device, &event) {
+        Next::Run(phase, effects) if !usb => (settle(without, Some(recovery::Run { phase, ..run })), effects),
+        Next::Run(phase, mut effects) => {
+            let (state, more) = update_plain(app, without, event);
+            effects.extend(more);
+            (settle(state, Some(recovery::Run { phase, ..run })), effects)
+        }
+        Next::Over => {
+            // Gone quiet after the restart and back in recovery: R.5. Any
+            // other way it ended leaves no run behind.
+            let again = matches!(event, Event::Timeout).then(|| recovery::Run { phase: recovery::Phase::Ready { again: true, problem: None }, ..run });
+            let (state, effects) = update_plain(app, without, event);
+            (settle(state, again), effects)
+        }
+        Next::Pass => {
+            let (state, effects) = update_plain(app, without, event);
+            (settle(state, Some(run)), effects)
+        }
+    }
+}
+
+/// A state waiting for DFU mode, given the run it had (if any): it has a run
+/// while its one device is in recovery mode, or is off USB because the run
+/// restarted it. A device newly seen in recovery mode starts at the steps.
+fn settle(state: State, had: Option<recovery::Run>) -> State {
+    use recovery::{Phase, Run};
+    match state {
+        State::WaitingForDfu { tab, seen, leaving, .. } => {
+            let in_recovery = match seen.as_slice() {
+                [only] if only.mode == UsbMode::Recovery => Some(&only.device),
+                _ => None,
+            };
+            let recovery = match (had, in_recovery) {
+                (Some(run), Some(device)) if run.device.id == device.id => Some(run),
+                (Some(run), None) if run.phase.restarting() && seen.is_empty() => Some(run),
+                (_, Some(device)) => Some(Run { device: device.clone(), phase: Phase::ready() }),
+                _ => None,
+            };
+            State::WaitingForDfu { tab, seen, leaving, recovery }
+        }
+        State::DfuAgain { device, why, seen, .. } => {
+            let recovery = match (had, seen) {
+                (Some(run), Some(UsbMode::Recovery)) => Some(run),
+                (Some(run), _) if run.phase.restarting() => Some(run),
+                (_, Some(UsbMode::Recovery)) => Some(Run { device: device.clone(), phase: Phase::ready() }),
+                _ => None,
+            };
+            State::DfuAgain { device, why, seen, recovery }
+        }
+        other => other,
+    }
+}
+
+fn update_plain(app: App, state: State, event: Event) -> (State, Vec<Effect>) {
     use Event as E;
     use State as S;
     let none = Vec::new;
@@ -899,36 +1017,36 @@ pub fn update(app: App, state: State, event: Event) -> (State, Vec<Effect>) {
         (S::UsbAccessNeeded, E::UsbAccessGranted) => (S::start(), none()),
 
         // ---- Connect ----
-        (S::WaitingForDfu { seen, leaving, .. }, E::SelectTab(tab)) => (S::WaitingForDfu { tab, seen, leaving }, none()),
+        (S::WaitingForDfu { seen, leaving, .. }, E::SelectTab(tab)) => (S::WaitingForDfu { tab, seen, leaving, recovery: None }, none()),
         (S::WaitingForDfu { mut seen, tab, .. }, E::Attached { device, mode }) => match mode {
             UsbMode::Dfu => found(device),
             _ => {
                 seen.retain(|s| s.device.id != device.id);
                 let tab = if seen.is_empty() { device.sequence } else { tab };
                 seen.push(Seen { device, mode });
-                (S::WaitingForDfu { tab, seen, leaving: None }, none())
+                (S::WaitingForDfu { tab, seen, leaving: None, recovery: None }, none())
             }
         },
-        (S::WaitingForDfu { tab, mut seen, leaving }, E::Detached { id }) => {
+        (S::WaitingForDfu { tab, mut seen, leaving, recovery: None }, E::Detached { id }) => {
             let gone = seen.iter().position(|s| s.device.id == id).map(|i| seen.remove(i));
             // The last device shown dropped off: keep showing it for a while.
             let leaving = if seen.is_empty() { gone.or(leaving) } else { None };
-            (S::WaitingForDfu { tab, seen, leaving }, none())
+            (S::WaitingForDfu { tab, seen, leaving, recovery: None }, none())
         }
         // An install system already running when the installer started (or
         // came back): continue by its phase (the install worker reads it).
         // Relaunched while the iPad still runs this install's iPadOS with the
         // companion: pick up at the split instead of booting it again.
-        (S::WaitingForDfu { seen, tab, leaving }, E::IpadosReady { layout }) => match seen.iter().find(|s| s.mode == UsbMode::Normal) {
+        (S::WaitingForDfu { seen, tab, leaving, recovery: None }, E::IpadosReady { layout }) => match seen.iter().find(|s| s.mode == UsbMode::Normal) {
             Some(s) => {
                 let device = s.device.clone();
                 let omarchy_gb = suggested_size(&layout);
                 (S::ChooseSplit { device, layout, omarchy_gb, approved: false }, none())
             }
-            None => (S::WaitingForDfu { seen, tab, leaving }, none()),
+            None => (S::WaitingForDfu { seen, tab, leaving, recovery: None }, none()),
         },
         // Nothing planned yet (phase ready): the account form, as after a boot.
-        (S::WaitingForDfu { seen, tab, leaving }, E::EnvReady { layout }) => match seen.iter().find(|s| s.mode == UsbMode::Install) {
+        (S::WaitingForDfu { seen, tab, leaving, recovery: None }, E::EnvReady { layout }) => match seen.iter().find(|s| s.mode == UsbMode::Install) {
             Some(s) => {
                 let device = s.device.clone();
                 if !layout.has_room() {
@@ -941,7 +1059,7 @@ pub fn update(app: App, state: State, event: Event) -> (State, Vec<Effect>) {
                     (S::CreateAccount { device, account, env: Some(layout), erase_approved: false, slow: false }, vec![Effect::PrepareInstall])
                 }
             }
-            None => (S::WaitingForDfu { seen, tab, leaving }, none()),
+            None => (S::WaitingForDfu { seen, tab, leaving, recovery: None }, none()),
         },
         (S::WaitingForDfu { seen, .. }, event @ (E::Reconnected { .. } | E::AccountNeeded | E::InstallFinished { .. }))
             if seen.iter().any(|s| s.mode == UsbMode::Install) =>
@@ -975,7 +1093,7 @@ pub fn update(app: App, state: State, event: Event) -> (State, Vec<Effect>) {
             }
         }
         // It didn't come back in time: back to waiting.
-        (S::WaitingForDfu { tab, seen, leaving: Some(_) }, E::Timeout) => (S::WaitingForDfu { tab, seen, leaving: None }, none()),
+        (S::WaitingForDfu { tab, seen, leaving: Some(_), recovery: None }, E::Timeout) => (S::WaitingForDfu { tab, seen, leaving: None, recovery: None }, none()),
         (S::Found { device: first, .. } | S::Unsupported { device: first }, E::Attached { device, mode: UsbMode::Dfu })
             if first.id != device.id =>
         {
@@ -1046,7 +1164,7 @@ pub fn update(app: App, state: State, event: Event) -> (State, Vec<Effect>) {
                 // Still running iPadOS: re-attach, never restart the chain.
                 UsbMode::Normal => (S::Splitting { device, omarchy_gb, link: Link::Up, reopened }, none()),
                 // It reset: the result is unknown until the installer looks.
-                _ => (S::DfuAgain { device, why: Again::CheckSplit, seen: None }, none()),
+                _ => (S::DfuAgain { device, why: Again::CheckSplit, seen: None, recovery: None }, none()),
             }
         }
         (S::Splitting { device, omarchy_gb, .. }, E::SplitFinished { ok: true }) => {
@@ -1062,9 +1180,9 @@ pub fn update(app: App, state: State, event: Event) -> (State, Vec<Effect>) {
             (S::WaitingForIpados { device, slow: false }, none())
         }
         (S::Splitting { device, .. }, E::SplitFinished { ok: false }) => {
-            (S::DfuAgain { device, why: Again::CheckSplit, seen: None }, none())
+            (S::DfuAgain { device, why: Again::CheckSplit, seen: None, recovery: None }, none())
         }
-        (S::SplitDone { device, .. }, E::Continue) => (S::DfuAgain { device, why: Again::Install, seen: None }, none()),
+        (S::SplitDone { device, .. }, E::Continue) => (S::DfuAgain { device, why: Again::Install, seen: None, recovery: None }, none()),
         (_, E::SplitRunning { device, omarchy_gb }) => {
             (S::Splitting { device, omarchy_gb, link: Link::Lost, reopened: true }, none())
         }
@@ -1125,7 +1243,7 @@ pub fn update(app: App, state: State, event: Event) -> (State, Vec<Effect>) {
             S::Installing { device, percent: 0, link: Link::Up, streamed: false, step: None },
             vec![Effect::StartInstall(account)],
         ),
-        (S::NotPrepared { device }, E::Continue) => (S::DfuAgain { device, why: Again::Split, seen: None }, none()),
+        (S::NotPrepared { device }, E::Continue) => (S::DfuAgain { device, why: Again::Split, seen: None, recovery: None }, none()),
         // Already in DFU when the next step would ask for it: take the step.
         (S::NotPrepared { device: d }, E::Attached { device, mode: UsbMode::Dfu }) if d.id == device.id => {
             let id = device.id.clone();
@@ -1179,7 +1297,7 @@ pub fn update(app: App, state: State, event: Event) -> (State, Vec<Effect>) {
         (S::Installing { device, .. }, E::InstallFinished { ok: false }) => (S::InstallFailed { device }, none()),
         // The install system couldn't be opened or prepared: no endless wait on 3.2.
         (S::CreateAccount { device, .. }, E::InstallFinished { ok: false }) => (S::InstallFailed { device }, none()),
-        (S::InstallFailed { device }, E::Retry) => (S::DfuAgain { device, why: Again::Retry, seen: None }, none()),
+        (S::InstallFailed { device }, E::Retry) => (S::DfuAgain { device, why: Again::Retry, seen: None, recovery: None }, none()),
 
         // ---- Launcher ----
         // Detaches while launching change nothing: the chain (palera1n, Pongo,
@@ -1213,25 +1331,25 @@ pub fn update(app: App, state: State, event: Event) -> (State, Vec<Effect>) {
         (S::WaitingForIpados { device, .. }, E::Timeout) => (S::WaitingForIpados { device, slow: true }, none()),
         // The install system never reported in: DFU mode again, boot once more.
         (S::CreateAccount { device, env: None, slow: true, .. }, E::Retry) => {
-            (S::DfuAgain { device, why: Again::Retry, seen: None }, none())
+            (S::DfuAgain { device, why: Again::Retry, seen: None, recovery: None }, none())
         }
         // iPadOS never answered: put it in DFU mode again and boot once more.
-        (S::WaitingForIpados { device, slow: true }, E::Retry) => (S::DfuAgain { device, why: Again::RetryPrepare, seen: None }, none()),
+        (S::WaitingForIpados { device, slow: true }, E::Retry) => (S::DfuAgain { device, why: Again::RetryPrepare, seen: None, recovery: None }, none()),
         (S::CreateAccount { device, account, env: None, erase_approved, .. }, E::Timeout) => {
             (S::CreateAccount { device, account, env: None, erase_approved, slow: true }, none())
         }
         (S::WaitingForIpados { device, .. }, E::ChainFailed(_)) => {
-            (S::DfuAgain { device, why: Again::RetryPrepare, seen: None }, none())
+            (S::DfuAgain { device, why: Again::RetryPrepare, seen: None, recovery: None }, none())
         }
         (S::CreateAccount { device, env: None, .. }, E::ChainFailed(_)) => {
-            (S::DfuAgain { device, why: Again::Retry, seen: None }, none())
+            (S::DfuAgain { device, why: Again::Retry, seen: None, recovery: None }, none())
         }
         // The launcher's start (palera1n, Pongo, m1n1, the entry) failed: the same.
         (S::Launching { device } | S::Starting { device, .. }, E::ChainFailed(_)) if app == App::Launcher => {
-            (S::DfuAgain { device, why: Again::Retry, seen: None }, none())
+            (S::DfuAgain { device, why: Again::Retry, seen: None, recovery: None }, none())
         }
         (S::DfuAgain { device: d, why, .. }, E::Attached { device, mode }) if d.id == device.id => {
-            (S::DfuAgain { device, why, seen: Some(mode) }, none())
+            (S::DfuAgain { device, why, seen: Some(mode), recovery: None }, none())
         }
         (state @ S::Starting { .. }, E::Continue) => (state, vec![Effect::Quit]),
         // Quitting from the temporary iPadOS restarts the iPad into normal iPadOS.
