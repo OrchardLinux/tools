@@ -10,7 +10,7 @@ start it, built in Rust on shared libraries:
 - **Orchard**: the launcher, which starts an installed system. It is neutral
   and shared by every distribution.
 - **The command line** (`orchard2`, in progress): the same building blocks for
-  scripts and development.
+  scripts and development. Its documentation is in [`docs/`](docs/README.md).
 
 They build on [orchard](https://github.com/OrchardLinux/orchard), which holds
 what runs on the device. macOS (Apple Silicon and Intel) and Linux (x86_64 and
@@ -28,7 +28,8 @@ aarch64).
 | `crates/formats` | File formats Apple devices and Linux boots use |
 | `crates/cache` | Pinned downloads and the cache |
 | `crates/build` | `build`: the component cache and orchard's producers |
-| `crates/device`, `crates/cli` | The command line ([`crates/cli/README.md`](crates/cli/README.md)) |
+| `crates/device`, `crates/cli` | The command line |
+| `docs` | What `orchard2` does, command by command |
 | `companion` | The iPad app that splits the storage, with its helper |
 | `packaging` | Release builds, stamping (`stamp.py`) and `install.sh` |
 | `vendor` | Patched or pinned third-party code (see each `PATCHED.md`) |
