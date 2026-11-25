@@ -26,6 +26,8 @@ struct Row {
     device: Device,
     /// The board from the orchard data, when data is set and it matches.
     board: Option<String>,
+    /// The serial port to open for a console: a Linux system's, m1n1's proxy.
+    serial_port: Option<String>,
 }
 
 impl Report for Devices {
@@ -56,11 +58,15 @@ impl Report for Devices {
         if boards {
             headers.push("Board");
         }
+        let ports = self.devices.iter().any(|r| r.serial_port.is_some());
+        if ports {
+            headers.push("Serial port");
+        }
         headers.push("Product");
         let rows: Vec<Vec<Cell>> = self
             .devices
             .iter()
-            .map(|Row { device: d, board }| {
+            .map(|Row { device: d, board, serial_port }| {
                 let id = &d.identity;
                 let mut row = vec![Cell::mode(d.mode.as_str())];
                 if systems {
@@ -78,6 +84,9 @@ impl Report for Devices {
                 }
                 if boards {
                     row.push(Cell::optional(board.as_deref(), Style::Board));
+                }
+                if ports {
+                    row.push(Cell::optional(serial_port.as_deref(), Style::Plain));
                 }
                 row.push(Cell::optional(d.product.as_deref(), Style::Plain));
                 row
@@ -116,15 +125,17 @@ fn report(global: &Global, devices: Vec<Device>, filtered: bool) -> Result<Outpu
     let catalog =
         board_data::existing(global.data.as_deref(), &store).and_then(|d| Catalog::open(&d).ok());
     let hex = |s: &Option<String>| s.as_deref().and_then(|s| u32::from_str_radix(s, 16).ok());
+    let ports = orchard_usb::serial_ports(&devices);
     let devices = devices
         .into_iter()
-        .map(|device| {
+        .zip(ports)
+        .map(|(device, port)| {
             let board = catalog.as_ref().and_then(|c| {
                 c.board_for(hex(&device.identity.chip)?, hex(&device.identity.board_id)?)
                     .ok()
                     .map(|b| b.name)
             });
-            Row { device, board }
+            Row { device, board, serial_port: port.map(|p| p.display().to_string()) }
         })
         .collect();
     Ok(Devices { devices, filtered }.into())
@@ -145,7 +156,21 @@ mod tests {
                 identity: Identity::parse(serial),
             },
             board: board.map(str::to_owned),
+            serial_port: None,
         }
+    }
+
+    #[test]
+    fn a_serial_port_gets_its_column() {
+        let mut linux = row(Mode::Linux, Some(System::Ram), "", None);
+        linux.serial_port = Some("/dev/cu.usbmodem1".into());
+        let devices = Devices { devices: vec![linux, row(Mode::Dfu, None, "CPID:8010 BDID:0C ECID:1", None)], filtered: false };
+        let json = serde_json::to_value(&devices).unwrap();
+        assert_eq!(json["devices"][0]["serial_port"], "/dev/cu.usbmodem1");
+        assert!(json["devices"][1]["serial_port"].is_null());
+        let table = String::from_utf8(devices.human()).unwrap();
+        assert!(table.contains("│ Serial port       │ Product │"));
+        assert!(table.contains("│ /dev/cu.usbmodem1 │"));
     }
 
     fn text(devices: Vec<Row>) -> String {

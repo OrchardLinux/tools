@@ -13,7 +13,7 @@ use std::time::Duration;
 
 /// The proxy's control and data interface; the second function (2 and 3)
 /// is m1n1's console only.
-const FUNCTION: serial_port::Function = [0, 1];
+pub(crate) const FUNCTION: serial_port::Function = [0, 1];
 
 const NOP: u32 = 0x00aa_55ff;
 const CALL: u32 = 0x01aa_55ff;

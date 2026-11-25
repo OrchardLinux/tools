@@ -6,7 +6,7 @@
 //! USB location and the function's interface numbers.
 use crate::error::{Fault, Kind};
 use crate::wire::Serial;
-use crate::Device;
+use crate::{Device, Mode};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -17,7 +17,7 @@ pub(crate) type Function = [u8; 2];
 /// Opens the serial port of `function` on the device at `device.location`.
 #[cfg(unix)]
 pub(crate) fn open(device: &Device, function: Function) -> Result<Tty, Fault> {
-    let path = find(&device.location, function)?.ok_or_else(|| {
+    let path = find(&device.location, Some(function))?.ok_or_else(|| {
         Fault::new(
             Kind::Disconnected,
             format!("no serial port for the device at {}", device.location),
@@ -34,6 +34,43 @@ pub(crate) fn open(_device: &Device, _function: Function) -> Result<Tty, Fault> 
     ))
 }
 
+/// The serial port to open for each device, in the order given: the console
+/// of a device running Linux (its first serial function) and m1n1's proxy.
+/// None for a device without one, and when the host cannot tell.
+pub fn serial_ports(devices: &[Device]) -> Vec<Option<PathBuf>> {
+    // Some(function) for a device that has a port to look for.
+    let wanted = |device: &Device| match device.mode {
+        Mode::M1n1 => Some(Some(crate::m1n1::FUNCTION)),
+        Mode::Linux => Some(None),
+        _ => None,
+    };
+    if !devices.iter().any(|d| wanted(d).is_some()) {
+        return vec![None; devices.len()];
+    }
+    let lookup = lookup();
+    devices
+        .iter()
+        .map(|d| wanted(d).and_then(|function| lookup(&d.location, function)))
+        .collect()
+}
+
+/// Finds ports from one reading of the host's devices.
+#[cfg(target_os = "macos")]
+fn lookup() -> impl Fn(&str, Option<Function>) -> Option<PathBuf> {
+    let registry = registry::read().ok();
+    move |location, function| find_in(registry.as_ref()?, location, function).ok().flatten()
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn lookup() -> impl Fn(&str, Option<Function>) -> Option<PathBuf> {
+    |location, function| find(location, function).ok().flatten()
+}
+
+#[cfg(not(unix))]
+fn lookup() -> impl Fn(&str, Option<Function>) -> Option<PathBuf> {
+    |_, _| None
+}
+
 #[cfg(not(unix))]
 pub(crate) struct Tty;
 
@@ -47,17 +84,25 @@ impl Serial for Tty {
     }
 }
 
+/// The port of `function`, or with None the device's first port.
 #[cfg(target_os = "macos")]
-fn find(location: &str, function: Function) -> Result<Option<PathBuf>, Fault> {
+fn find(location: &str, function: Option<Function>) -> Result<Option<PathBuf>, Fault> {
+    find_in(&registry::read()?, location, function)
+}
+
+#[cfg(target_os = "macos")]
+fn find_in(registry: &plist::Value, location: &str, function: Option<Function>) -> Result<Option<PathBuf>, Fault> {
     let location = location
         .strip_prefix("0x")
         .and_then(|hex| u64::from_str_radix(hex, 16).ok())
         .ok_or_else(|| Fault::invalid(format!("{location} is not a USB location")))?;
-    registry::port(&registry::read()?, location, function)
+    registry::port(registry, location, function)
 }
 
+/// The port of `function`, or with None the device's first port.
 #[cfg(all(unix, not(target_os = "macos")))]
-fn find(location: &str, function: Function) -> Result<Option<PathBuf>, Fault> {
+fn find(location: &str, function: Option<Function>) -> Result<Option<PathBuf>, Fault> {
+    let mut found = Vec::new();
     let io = |e: std::io::Error| Fault::new(Kind::Other, format!("/sys/class/tty: {e}"));
     for entry in std::fs::read_dir("/sys/class/tty").map_err(io)? {
         let name = entry.map_err(io)?.file_name();
@@ -69,31 +114,29 @@ fn find(location: &str, function: Function) -> Result<Option<PathBuf>, Fault> {
         ) else {
             continue;
         };
-        let interface = interface.file_name().and_then(|n| n.to_str());
-        if interface.is_some_and(|i| sysfs_interface_matches(i, location, function)) {
-            return Ok(Some(std::path::Path::new("/dev").join(name)));
+        let interface = interface
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|i| sysfs_interface(i, location));
+        if let Some(interface) = interface.filter(|i| function.is_none_or(|f| f.contains(i))) {
+            found.push((interface, std::path::Path::new("/dev").join(name)));
         }
     }
-    Ok(None)
+    found.sort();
+    Ok(found.into_iter().next().map(|(_, path)| path))
 }
 
-/// Whether a sysfs interface name such as `1-2.3:1.0` (bus, port chain,
-/// configuration, interface) is `function` of the device at `location`,
-/// which discovery writes as `001-2.3`.
+/// The interface number in a sysfs interface name such as `1-2.3:1.0` (bus,
+/// port chain, configuration, interface), when it is on the device at
+/// `location`, which discovery writes as `001-2.3`.
 #[cfg_attr(target_os = "macos", allow(dead_code))]
-fn sysfs_interface_matches(name: &str, location: &str, function: Function) -> bool {
-    let parsed = || {
-        let (device, interface) = name.split_once(':')?;
-        let (_configuration, interface) = interface.split_once('.')?;
-        let (bus, chain) = device.split_once('-')?;
-        let (wanted_bus, wanted_chain) = location.split_once('-')?;
-        Some(
-            bus.parse::<u32>().ok()? == wanted_bus.parse::<u32>().ok()?
-                && chain == wanted_chain
-                && function.contains(&interface.parse::<u8>().ok()?),
-        )
-    };
-    parsed().unwrap_or(false)
+fn sysfs_interface(name: &str, location: &str) -> Option<u8> {
+    let (device, interface) = name.split_once(':')?;
+    let (_configuration, interface) = interface.split_once('.')?;
+    let (bus, chain) = device.split_once('-')?;
+    let (wanted_bus, wanted_chain) = location.split_once('-')?;
+    let same = bus.parse::<u32>().ok()? == wanted_bus.parse::<u32>().ok()? && chain == wanted_chain;
+    same.then(|| interface.parse().ok())?
 }
 
 /// Finding the port in the macOS I/O registry, as `ioreg` prints it.
@@ -191,23 +234,26 @@ mod registry {
         }
     }
 
-    /// The port of `function` on the device at `location`.
+    /// The port of `function` on the device at `location`; with None, the
+    /// port of its lowest interface.
     pub fn port(
         registry: &Value,
         location: u64,
-        function: Function,
+        function: Option<Function>,
     ) -> Result<Option<PathBuf>, Fault> {
         let mut found = Vec::new();
         for root in registry.as_array().map(Vec::as_slice).unwrap_or(&[]) {
             devices(root, location, &mut found);
         }
-        found.retain(|(interface, _)| function.iter().any(|f| u64::from(*f) == *interface));
+        if let Some(function) = function {
+            found.retain(|(interface, _)| function.iter().any(|f| u64::from(*f) == *interface));
+        }
         found.sort();
         found.dedup();
-        match found.len() {
-            0 => Ok(None),
-            1 => Ok(Some(found.remove(0).1)),
-            n => Err(Fault::unexpected(format!(
+        match (found.len(), function) {
+            (0, _) => Ok(None),
+            (1, _) | (_, None) => Ok(Some(found.remove(0).1)),
+            (n, Some(_)) => Err(Fault::unexpected(format!(
                 "{n} serial ports for one USB function"
             ))),
         }
@@ -248,7 +294,10 @@ mod registry {
                 ),
                 device(0x200000, vec![serial(1, "/dev/cu.other")]),
             ]);
-            let port = |location, function| port(&registry, location, function).unwrap();
+            let first = |location| port(&registry, location, None).unwrap();
+            assert_eq!(first(0x100000), Some("/dev/cu.proxy".into()));
+            assert_eq!(first(0x300000), None);
+            let port = |location, function| port(&registry, location, Some(function)).unwrap();
             assert_eq!(port(0x100000, [0, 1]), Some("/dev/cu.proxy".into()));
             assert_eq!(port(0x100000, [2, 3]), Some("/dev/cu.console".into()));
             assert_eq!(port(0x200000, [0, 1]), Some("/dev/cu.other".into()));
@@ -263,7 +312,7 @@ mod registry {
                 vec![serial(1, "/dev/cu.a"), serial(1, "/dev/cu.b")],
             )]);
             assert_eq!(
-                port(&registry, 0x100000, [0, 1]).unwrap_err().kind,
+                port(&registry, 0x100000, Some([0, 1])).unwrap_err().kind,
                 Kind::Unexpected
             );
         }
@@ -378,13 +427,11 @@ mod tests {
 
     #[test]
     fn sysfs_names() {
-        let matches = |name, location| sysfs_interface_matches(name, location, [0, 1]);
-        assert!(matches("1-2.3:1.0", "001-2.3"));
-        assert!(matches("1-2.3:1.1", "001-2.3"));
-        // The console function, another port, another bus.
-        assert!(!matches("1-2.3:1.2", "001-2.3"));
-        assert!(!matches("1-2.4:1.0", "001-2.3"));
-        assert!(!matches("2-2.3:1.0", "001-2.3"));
-        assert!(!matches("ttyS0", "001-2.3"));
+        assert_eq!(sysfs_interface("1-2.3:1.0", "001-2.3"), Some(0));
+        assert_eq!(sysfs_interface("1-2.3:1.2", "001-2.3"), Some(2));
+        // Another port, another bus, not a USB interface.
+        assert_eq!(sysfs_interface("1-2.4:1.0", "001-2.3"), None);
+        assert_eq!(sysfs_interface("2-2.3:1.0", "001-2.3"), None);
+        assert_eq!(sysfs_interface("ttyS0", "001-2.3"), None);
     }
 }

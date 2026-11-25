@@ -24,6 +24,7 @@ pub mod recovery;
 pub use discovery::{list, Device, Discovery, Host};
 pub use error::{Error, Kind};
 pub use identity::{classify, Identity, Mode, System};
+pub use serial_port::serial_ports;
 pub use others::{apple_device, ecid_key, others, Target};
 
 use serde::Serialize;
