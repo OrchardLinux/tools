@@ -15,7 +15,6 @@ const PANEL: f32 = 12. + LINE + 6. + LINE + 6. + LOG_LINES * LINE + 12.;
 pub fn details(installer: &mut Installer, cx: &mut Context<Installer>) -> Div {
     installer.details.set(if installer.details_open { 1. } else { 0. });
     let t = installer.details.value();
-    let open = installer.details_open;
     let toggle = div()
         .id("details-toggle")
         .flex()
@@ -26,7 +25,8 @@ pub fn details(installer: &mut Installer, cx: &mut Context<Installer>) -> Div {
         .cursor_pointer()
         .text_color(c(MUTED))
         .hover(|s| s.text_color(c(SUBTITLE)))
-        .child(crate::screens::icon(if open { "chevron-down" } else { "chevron-right" }, 14., c(MUTED)))
+        // Turns down with the panel as it opens.
+        .child(crate::screens::icon_turned("chevron-right", 14., c(MUTED), 0.25 * t))
         .child(div().font_family(MONO).text_size(px(12.)).child("Details"))
         .on_click(cx.listener(|this, _, _, cx| {
             this.details_open = !this.details_open;

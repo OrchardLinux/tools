@@ -58,6 +58,11 @@ pub fn link_ring(s: gpui::StyleRefinement) -> gpui::StyleRefinement {
 
 /// A Lucide icon from the designs, `size` px, in `color`.
 pub fn icon(name: &str, size: f32, color: Hsla) -> Div {
+    icon_turned(name, size, color, 0.)
+}
+
+/// The same, turned clockwise by `turn` (0…1, a full turn).
+pub fn icon_turned(name: &str, size: f32, color: Hsla, turn: f32) -> Div {
     div()
         .w(px(size))
         .h(px(size))
@@ -65,7 +70,13 @@ pub fn icon(name: &str, size: f32, color: Hsla) -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .child(svg().path(SharedString::from(format!("icons/{name}.svg"))).size(px(size * 0.92)).text_color(color))
+        .child(
+            svg()
+                .path(SharedString::from(format!("icons/{name}.svg")))
+                .size(px(size * 0.92))
+                .text_color(color)
+                .with_transformation(gpui::Transformation::rotate(gpui::percentage(turn))),
+        )
 }
 
 /// Title and subtitle (gap 12).
