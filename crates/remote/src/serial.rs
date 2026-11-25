@@ -176,25 +176,44 @@ impl<W: Wire> Console<W> {
         Ok(data)
     }
 
-    /// Runs `command`, which reads exactly `data.len()` raw bytes from the
-    /// console. The length is part of the command; the caller checks what
-    /// arrived by its checksum.
-    pub fn send_exact(&mut self, command: &str, data: &[u8], timeout: Duration) -> Result<()> {
+    /// Writes `data` to the file `to` (already quoted for the shell) on the
+    /// device: `head` reads exactly its length from the console. The caller
+    /// checks what arrived by its checksum.
+    ///
+    /// Nothing is sent unless something is reading it. A file that cannot
+    /// be opened would leave the shell at its prompt, where the file's bytes
+    /// would run as commands: so the shell opens it first and says BEGIN only
+    /// then, and without a BEGIN the data stays here.
+    pub fn send_file(&mut self, to: &str, data: &[u8], timeout: Duration) -> Result<()> {
         if !(1..=LIMIT).contains(&data.len()) {
             return Err(Error::new(Code::TooLarge, "a serial transfer is 1 byte to 16 MiB"));
         }
         let deadline = Instant::now() + timeout;
         let token = token();
         let (begin, done) = (format!("{token}_BEGIN"), format!("{token}_DONE"));
-        // Raw, so no byte is echoed, edited or taken for flow control.
+        // Raw, so no byte is echoed, edited or taken for flow control. `true`
+        // and not `:`, which as a special builtin can end a shell when its
+        // redirection fails.
         self.start(
-            &format!("stty raw -echo; printf '\\n%s\\n' {begin}; {command}; code=$?; stty sane; printf '\\n%s:%s\\n' {done} \"$code\"\r"),
+            &format!(
+                "stty raw -echo; if true > {to} 2>/dev/null; then printf '\\n%s\\n' {begin}; head -c {} > {to}; code=$?; else code=1; fi; \
+                 stty sane; printf '\\n%s:%s\\n' {done} \"$code\"\r",
+                data.len()
+            ),
             deadline,
         )?;
-        self.until(deadline, 65536, |data| marker(data, begin.as_bytes(), false, false).map(|(_, end, _)| (end, ())))?;
+        // Whichever comes: BEGIN, and `head` reads; or DONE alone, and it
+        // never started.
+        let (_, reading) = self.until(deadline, 65536, |pending| {
+            let begun = marker(pending, begin.as_bytes(), false, false).map(|(_, end, _)| (end, true));
+            begun.or_else(|| marker(pending, done.as_bytes(), true, false).map(|(_, end, _)| (end, false)))
+        })?;
+        if !reading {
+            return Err(Error::new(Code::Refused, "the device cannot write the file there; nothing was sent"));
+        }
         self.wire.send(data, deadline)?;
-        let (_, code) = self.until(deadline, 65536, |data| {
-            marker(data, done.as_bytes(), true, false).map(|(_, end, code)| (end, code))
+        let (_, code) = self.until(deadline, 65536, |pending| {
+            marker(pending, done.as_bytes(), true, false).map(|(_, end, code)| (end, code))
         })?;
         match code {
             0 => Ok(()),
@@ -325,7 +344,7 @@ pub(crate) mod tests {
         answer: Box<dyn FnMut(&str) -> (Vec<u8>, u8)>,
         /// Line ends as a console with output processing prints them.
         crlf: bool,
-        /// Raw bytes still expected from `send_exact`.
+        /// Raw bytes still expected from `send_file`.
         taking: usize,
         done: Option<String>,
     }
@@ -358,6 +377,13 @@ pub(crate) mod tests {
             self.ready.extend(line.as_bytes());
             self.ready.extend(format!("{nl}{token}_BEGIN{nl}").into_bytes());
             if let Some(size) = line.split("head -c ").nth(1).and_then(|rest| rest.split(' ').next()).and_then(|n| n.parse().ok()) {
+                // As the shell does it: the file is opened before BEGIN is
+                // printed, and one under /ro cannot be.
+                if line.contains("true > /ro/") {
+                    self.ready.truncate(self.ready.len() - format!("{nl}{token}_BEGIN{nl}").len());
+                    self.ready.extend(format!("{nl}{token}_DONE:1{nl}").into_bytes());
+                    return Ok(());
+                }
                 self.taking = size;
                 self.done = Some(format!("{token}_DONE"));
                 return Ok(());
@@ -420,9 +446,23 @@ pub(crate) mod tests {
     #[test]
     fn a_file_goes_as_exactly_its_bytes() {
         let mut console = Console::new(Script::new(true, |_| (Vec::new(), 0)));
-        console.send_exact("head -c 5 > f", b"\x03\x04\r\n\x7f", LONG).unwrap();
+        console.send_file("/tmp/f.part", b"\x03\x04\r\n\x7f", LONG).unwrap();
         assert!(console.wire.sent.ends_with(b"\x03\x04\r\n\x7f"));
-        assert!(console.send_exact("head -c 0 > f", b"", LONG).is_err());
+        assert!(console.send_file("/tmp/f.part", b"", LONG).is_err());
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_written_is_never_sent() {
+        // Its bytes would otherwise arrive at the shell's prompt, as commands.
+        let mut console = Console::new(Script::new(true, |_| (Vec::new(), 0)));
+        let data = b"rm -rf /important\n";
+        let e = console.send_file("/ro/f.part", data, LONG).unwrap_err();
+        assert_eq!(e.code, Code::Refused);
+        assert!(e.message.contains("nothing was sent"), "{}", e.message);
+        let sent = &console.wire.sent;
+        assert!(!sent.windows(data.len()).any(|w| w == data), "the data went out");
+        // The console is usable afterwards.
+        assert_eq!(console.run("true", LONG).unwrap().0, 0);
     }
 
     #[test]

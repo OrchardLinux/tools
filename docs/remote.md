@@ -26,7 +26,10 @@ Two of a kind is `ambiguous`: connect one, or name an address with `--host`.
   USB serial console, which is the cable and so trusted, and pinned for that
   start: nothing else on the network can stand in for the device.
 - **An installed system's host key** is learned on the first connection and
-  kept. `--user NAME` signs in as another user than the one the install set
+  kept under the unit's own name, which the system says on USB: every
+  device on the cable has the same address, and two tablets are still two
+  hosts. `orchard2 install --ssh` forgets the unit's old key, since the new
+  system makes a new one, and remembers the user per unit. `--user NAME` signs in as another user than the one the install set
   up; root is `sudo` there, as on any system.
 - **`--host ADDRESS`** reaches a system over a network instead of the cable,
   as an installed system; with `--ram`, as a payload and root. Its host key
@@ -49,8 +52,9 @@ checksum that differs leaves the `.part` file and fails.
 
 - Over SSH, any size. A connection that drops is made again once, and the
   file starts over.
-- `--serial`: over the USB serial console, for a payload without SSH, up to
-  16 MiB. Not for an installed system, whose console is a login.
+- `--serial`: over the USB serial console, for a payload without SSH, 1 byte
+  to 16 MiB. A place that cannot be written is refused before any byte of
+  the file is sent. Not for an installed system, whose console is a login.
 
 `--json` gives `{"from", "to", "size", "sha256"}`.
 
@@ -59,4 +63,5 @@ checksum that differs leaves the `.part` file and fails.
 In the cache, readable by you only: `private/ram-ssh/` (the key for
 payloads and the pinned host key of the payload that runs) and
 `private/ssh/` (the key for installed systems, their host keys, and the
-user the last install with `--ssh` set up).
+user each install with `--ssh` set up: `user-UNIT` per unit, `user` for the
+last one).

@@ -362,7 +362,10 @@ impl Worker {
                 a["ssh_keys"] = json!(crate::ssh_keys::keys(self.executor.cache())?);
                 // Who this computer signs in as afterwards (orchard2 shell).
                 if let Some(user) = a.get("user").and_then(|u| u.as_str()) {
-                    crate::ssh_keys::remember_user(self.executor.cache(), user)?;
+                    // By the unit where its serial number was seen in DFU
+                    // mode: the system it gets names itself by it on USB.
+                    let unit = self.executor.serial_number(&device.id.0).map(|serial| crate::ssh_keys::unit(&serial));
+                    crate::ssh_keys::installed(self.executor.cache(), user, unit.as_deref())?;
                 }
             }
         }

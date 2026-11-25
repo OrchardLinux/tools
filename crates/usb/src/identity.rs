@@ -133,6 +133,10 @@ pub struct Identity {
     /// The board an Orchard system names in its serial (`BOARD:j71b`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub board: Option<String>,
+    /// An Orchard system's id for the unit it runs on: 12 hex digits made
+    /// from the unit's serial number, which itself is never shown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
 }
 
 impl Identity {
@@ -153,6 +157,16 @@ impl Identity {
         }
         id.udid = Some(udid);
         id
+    }
+
+    /// An Orchard system's id for the unit (`ID:` in its serial): 12 hex
+    /// digits made from the unit's serial number, the same for every system
+    /// on it. None for other devices.
+    pub fn unit(serial: &str) -> Option<String> {
+        serial.split_whitespace().find_map(|field| {
+            let value = field.strip_prefix("ID:")?;
+            (value.len() == 12 && value.bytes().all(|b| b.is_ascii_hexdigit())).then(|| value.to_ascii_lowercase())
+        })
     }
 
     pub fn parse(serial: &str) -> Identity {
@@ -177,6 +191,7 @@ impl Identity {
                 "SRTG" => id.iboot = Some(value),
                 "PWND" => id.pwned = Some(value),
                 "BOARD" => id.board = Some(value),
+                "ID" if value.len() == 12 && value.bytes().all(|b| b.is_ascii_hexdigit()) => id.unit = Some(value),
                 _ => {}
             }
         }

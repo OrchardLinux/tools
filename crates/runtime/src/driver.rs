@@ -344,6 +344,13 @@ impl<O: Observer> Driver<O> {
                             })
                             .collect();
                         unnamed.extend(in_use.iter().map(|(d, _)| d.clone()));
+                        // What the boot ROM says of a unit, for what an install
+                        // remembers of it afterwards.
+                        for usb in named.iter().filter(|d| d.mode == orchard_usb::Mode::Dfu) {
+                            if let (Some(ecid), Some(serial)) = (usb.identity.ecid.as_deref(), usb.identity.serial_number.as_deref()) {
+                                self.executor.note_serial_number(&crate::ecid_key(ecid), serial);
+                            }
+                        }
                         let seen_events = watcher.see(&catalog, &named);
                         // Other Apple devices besides the one being worked on:
                         // neither app goes on until they're gone.

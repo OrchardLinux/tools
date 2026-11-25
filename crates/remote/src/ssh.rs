@@ -47,12 +47,17 @@ pub fn payload(identity: &Path, hosts: &Path, host: &str, strict: bool) -> Vec<O
 }
 
 /// SSH as `user` to an installed system with this computer's key. Its host
-/// key is learned on the first connection and kept in `hosts`.
-pub fn system(identity: &Path, hosts: &Path, user: &str, host: &str) -> Vec<OsString> {
+/// key is learned on the first connection and kept in `hosts`, under
+/// `alias` when there is one: every device on the cable has the same
+/// address, so its key is kept under the device's own name.
+pub fn system(identity: &Path, hosts: &Path, user: &str, host: &str, alias: Option<&str>) -> Vec<OsString> {
     let mut argv = words(&["ssh", "-i"]);
     argv.push(identity.into());
     argv.extend(words(&["-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o"]));
     argv.push(known_hosts(hosts));
+    if let Some(alias) = alias {
+        argv.extend([OsString::from("-o"), format!("HostKeyAlias={alias}").into()]);
+    }
     argv.extend(words(&["-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=8"]));
     argv.push(format!("{user}@{host}").into());
     argv
@@ -144,12 +149,19 @@ pub fn wait(argv: &[OsString], check: &dyn Fn() -> Result<()>, limit: Duration) 
 fn refusal(said: &str) -> Error {
     let last = said.lines().last().unwrap_or(said);
     let error = Error::new(Code::Refused, format!("the device refused the sign-in: {last}"));
-    match said.to_lowercase().contains("permission denied") {
-        true => error.hint(
+    let said = said.to_lowercase();
+    if said.contains("permission denied") {
+        return error.hint(
             "it does not take this computer's key: a payload gets it from orchard2 build, an installed system from orchard2 install --ssh",
-        ),
-        false => error,
+        );
     }
+    // Not the key that was learned for it: another system answers there.
+    if said.contains("host key verification failed") || said.contains("host identification has changed") {
+        return error.hint(
+            "its host key is not the one this computer knows for it; orchard2 install --ssh forgets the old one, and after an install by another tool its line in private/ssh/known_hosts in the cache has to go",
+        );
+    }
+    error
 }
 
 #[cfg(test)]
@@ -172,9 +184,13 @@ mod tests {
 
     #[test]
     fn a_system_is_reached_as_its_user() {
-        let text = line(&system(Path::new("/c/id"), Path::new("/c/hosts"), "tablet", HOST));
+        let text = line(&system(Path::new("/c/id"), Path::new("/c/hosts"), "tablet", HOST, None));
         assert!(text.starts_with("ssh -i /c/id -o IdentitiesOnly=yes -o BatchMode=yes"), "{text}");
         assert!(text.ends_with("-o ConnectTimeout=8 tablet@172.16.42.1"), "{text}");
+        assert!(!text.contains("HostKeyAlias"), "{text}");
+        // On the cable every device has that address: its key goes under its own name.
+        let text = line(&system(Path::new("/c/id"), Path::new("/c/hosts"), "tablet", HOST, Some("orchard-0123456789ab")));
+        assert!(text.contains("-o HostKeyAlias=orchard-0123456789ab -o StrictHostKeyChecking=accept-new"), "{text}");
     }
 
     #[test]
@@ -217,5 +233,14 @@ mod tests {
         let gone = wait(&words(&["true"]), &|| Err(Error::new(Code::DeviceChanged, "gone")), Duration::from_secs(30));
         assert_eq!(gone.unwrap_err().code, Code::DeviceChanged);
         wait(&words(&["sh", "-c", "exit 0", "ssh"]), &|| Ok(()), Duration::from_secs(30)).unwrap();
+    }
+
+    #[test]
+    fn a_refusal_says_what_would_help() {
+        let key = refusal("root@172.16.42.1: Permission denied (publickey).");
+        assert!(key.hint.unwrap().contains("orchard2 build"));
+        let host = refusal("@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @\nHost key verification failed.");
+        assert!(host.hint.unwrap().contains("known_hosts"));
+        assert!(refusal("kex_exchange_identification: read: Connection reset by peer").hint.is_none());
     }
 }

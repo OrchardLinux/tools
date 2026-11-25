@@ -117,11 +117,13 @@ impl Keys {
         Keys::identity(&self.systems, "orchard2 install --ssh makes the key and lets it sign in")
     }
 
-    /// The user an install on this computer set up, or the one named.
-    fn user(&self, named: Option<&str>) -> Result<String> {
+    /// The user an install on this computer set up, or the one named: the
+    /// one remembered for this unit (`user-UNIT`), else the last install's.
+    fn user(&self, named: Option<&str>, unit: Option<&str>) -> Result<String> {
+        let remembered = |file: String| std::fs::read_to_string(self.systems.join(file)).ok().map(|text| text.trim().to_owned()).filter(|u| !u.is_empty());
         let user = match named {
             Some(user) => user.to_owned(),
-            None => std::fs::read_to_string(self.systems.join("user")).unwrap_or_default().trim().to_owned(),
+            None => unit.and_then(|unit| remembered(format!("user-{unit}"))).or_else(|| remembered("user".into())).unwrap_or_default(),
         };
         if user.is_empty() {
             return Err(Error::new(Code::InvalidInput, "which user? This computer installed no system that allows it to sign in")
@@ -132,6 +134,12 @@ impl Keys {
         }
         Ok(user)
     }
+}
+
+/// The name an installed system's host key is kept under: the unit's, as
+/// `orchard2 install --ssh` forgets it by.
+pub fn alias(unit: &str) -> String {
+    format!("orchard-{unit}")
 }
 
 /// Writes a file only this user reads.
@@ -172,14 +180,18 @@ pub fn connect(cache: &Path, reach: &Reach) -> Result<Vec<OsString>> {
             let hosts = keys.payloads.join("network_known_hosts");
             return Ok(ssh::payload(&keys.payload_identity()?, &hosts, host, false));
         }
-        let user = keys.user(reach.user.as_deref())?;
-        return Ok(ssh::system(&keys.system_identity()?, &keys.systems.join("known_hosts"), &user, host));
+        let user = keys.user(reach.user.as_deref(), None)?;
+        return Ok(ssh::system(&keys.system_identity()?, &keys.systems.join("known_hosts"), &user, host, None));
     }
     let target = target()?;
     let check = || target.check();
     if !target.payload() {
-        let user = keys.user(reach.user.as_deref())?;
-        let argv = ssh::system(&keys.system_identity()?, &keys.systems.join("known_hosts"), &user, ssh::HOST);
+        // The unit's own name on USB, where it gives one: its host key and
+        // its user are kept under it.
+        let unit = target.device.identity.unit.as_deref();
+        let user = keys.user(reach.user.as_deref(), unit)?;
+        let alias = unit.map(alias);
+        let argv = ssh::system(&keys.system_identity()?, &keys.systems.join("known_hosts"), &user, ssh::HOST, alias.as_deref());
         ssh::wait(&argv, &check, Duration::from_secs(20))?;
         return Ok(argv);
     }
@@ -340,12 +352,20 @@ pub fn push(cache: &Path, reach: &Reach, local: &Path, remote: &str, over_serial
     let part = format!("{remote}.part");
     let (to, to_part) = (quote(remote), quote(&part));
     let actual = if over_serial {
+        if size == 0 {
+            return Err(Error::new(Code::InvalidInput, "the file is empty; a serial transfer sends at least one byte").hint("over SSH (without --serial) an empty file is copied too"));
+        }
         if size as usize > serial::LIMIT {
             return Err(Error::new(Code::TooLarge, "a serial transfer is up to 16 MiB; larger files go over SSH"));
         }
         let mut console = console(&target()?)?;
         let data = std::fs::read(local).context(local.display())?;
-        console.send_exact(&format!("head -c {size} > {to_part}"), &data, Duration::from_secs(60 + size / 8000))?;
+        // Asked first, in a shell of its own: a place that cannot be written
+        // ends here, before any byte of the file is sent.
+        if console.run(&format!(": > {to_part}"), Duration::from_secs(25))?.0 != 0 {
+            return Err(Error::new(Code::Refused, format!("{part}: the device cannot write there")));
+        }
+        console.send_file(&to_part, &data, Duration::from_secs(60 + size / 8000))?;
         let (code, printed) = console.run(&format!("sha256sum {to_part}"), Duration::from_secs(25))?;
         let actual = match code {
             0 => remote_sha256(&printed)?,
@@ -451,13 +471,20 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let keys = Keys::new(dir.path());
-        assert_eq!(keys.user(None).unwrap_err().code, Code::InvalidInput);
-        assert_eq!(keys.user(Some("tablet")).unwrap(), "tablet");
-        assert!(keys.user(Some("-oProxyCommand=x")).is_err());
+        assert_eq!(keys.user(None, None).unwrap_err().code, Code::InvalidInput);
+        assert_eq!(keys.user(Some("tablet"), None).unwrap(), "tablet");
+        assert!(keys.user(Some("-oProxyCommand=x"), None).is_err());
         // What an install with SSH allowed leaves (runtime's ssh_keys).
         std::fs::create_dir_all(dir.path().join("private/ssh")).unwrap();
         std::fs::write(dir.path().join("private/ssh/user"), "tablet\n").unwrap();
-        assert_eq!(keys.user(None).unwrap(), "tablet");
+        assert_eq!(keys.user(None, None).unwrap(), "tablet");
+        // A second tablet has its own user; one this computer did not
+        // install falls back to the last install's.
+        std::fs::write(dir.path().join("private/ssh/user-0123456789ab"), "other\n").unwrap();
+        assert_eq!(keys.user(None, Some("0123456789ab")).unwrap(), "other");
+        assert_eq!(keys.user(None, Some("ffffffffffff")).unwrap(), "tablet");
+        assert_eq!(keys.user(Some("named"), Some("0123456789ab")).unwrap(), "named");
+        assert_eq!(alias("0123456789ab"), "orchard-0123456789ab");
         // No key yet: said, with what makes one.
         assert!(keys.payload_identity().unwrap_err().hint.unwrap().contains("orchard2 build"));
         assert!(keys.system_identity().unwrap_err().hint.unwrap().contains("install --ssh"));
