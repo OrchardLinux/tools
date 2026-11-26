@@ -22,6 +22,10 @@ fn main() {
     let mut resources = Vec::new();
     files(&dir.join("Resources"), &dir.join("Resources"), &mut resources);
     let access = Access { info: std::fs::read(dir.join("Info.plist")).unwrap(), library: std::fs::read(dir.join("ResizeAccess.dylib")).unwrap(), resources };
-    let app = prepare(std::fs::read(&args[1]).unwrap(), &access, Path::new(&args[3])).unwrap();
-    println!("{}", app.display());
+    let prepared = prepare(std::fs::read(&args[1]).unwrap(), &access, Path::new(&args[3])).unwrap();
+    // With a fourth argument, also the IPA a signing tool is given.
+    if let Some(ipa) = args.get(4) {
+        std::fs::write(ipa, prepared.ipa().unwrap()).unwrap();
+    }
+    println!("{}", prepared.app.display());
 }

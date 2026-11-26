@@ -113,6 +113,8 @@ pub struct Entry {
     pub size: u64,
     /// Offset of the member's local header.
     pub header: u64,
+    /// The Unix mode the archive records for the member; 0 when it has none.
+    pub mode: u32,
     flags: u16,
 }
 
@@ -150,6 +152,8 @@ pub fn entries(directory: &[u8], count: u64) -> Result<Vec<Entry>> {
             compressed_size: le32(directory, p + 20)?.into(),
             size: le32(directory, p + 24)?.into(),
             header: le32(directory, p + 42)?.into(),
+            // The high half of the external attributes, where Unix made it.
+            mode: le32(directory, p + 38)? >> 16,
             flags,
         };
         zip64_sizes(&mut entry, field(directory, p + 46 + name_len, extra_len)?)?;
@@ -233,6 +237,71 @@ fn le32(d: &[u8], p: usize) -> Result<u32> {
 fn le64(d: &[u8], p: usize) -> Result<u64> {
     Ok(u64::from_le_bytes(field(d, p, 8)?.try_into().unwrap()))
 }
+
+/// A ZIP archive of `members` (name, contents, Unix mode), deflated. A
+/// name that ends in `/` is a folder. For archives made here, such as an
+/// app handed to a tool that signs and installs it.
+pub fn write(members: &[(String, Vec<u8>, u32)]) -> Result<Vec<u8>> {
+    use std::io::Write;
+    let mut out = Vec::new();
+    let mut directory = Vec::new();
+    for (name, data, mode) in members {
+        let folder = name.ends_with('/');
+        let packed = if folder {
+            Vec::new()
+        } else {
+            let mut encoder = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+            encoder.write_all(data).and_then(|()| encoder.finish()).map_err(|_| Error("could not compress a ZIP member"))?
+        };
+        let (Ok(size), Ok(packed_size), Ok(at), Ok(name_len)) =
+            (u32::try_from(data.len()), u32::try_from(packed.len()), u32::try_from(out.len()), u16::try_from(name.len()))
+        else {
+            return Err(Error("a ZIP member or the archive is over 4 GiB"));
+        };
+        let crc = crc32fast::hash(data);
+        let method: u16 = if folder { 0 } else { 8 };
+        // version needed 2.0, no flags, method, no time, date 1980-01-01
+        let fixed = |out: &mut Vec<u8>| {
+            out.extend(20u16.to_le_bytes());
+            out.extend(0u16.to_le_bytes());
+            out.extend(method.to_le_bytes());
+            out.extend(0u16.to_le_bytes());
+            out.extend(0x21u16.to_le_bytes());
+            out.extend(crc.to_le_bytes());
+            out.extend(packed_size.to_le_bytes());
+            out.extend(size.to_le_bytes());
+            out.extend(name_len.to_le_bytes());
+            out.extend(0u16.to_le_bytes());
+        };
+        out.extend(b"PK\x03\x04");
+        fixed(&mut out);
+        out.extend(name.as_bytes());
+        out.extend(&packed);
+        directory.extend(b"PK\x01\x02");
+        // Made by Unix, version 2.0: the external attributes hold the mode.
+        directory.extend((3u16 << 8 | 20).to_le_bytes());
+        fixed(&mut directory);
+        directory.extend(0u16.to_le_bytes()); // comment
+        directory.extend(0u16.to_le_bytes()); // disk
+        directory.extend(0u16.to_le_bytes()); // internal attributes
+        directory.extend((mode << 16 | u32::from(folder) << 4).to_le_bytes());
+        directory.extend(at.to_le_bytes());
+        directory.extend(name.as_bytes());
+    }
+    let (Ok(count), Ok(directory_size), Ok(directory_at)) = (u16::try_from(members.len()), u32::try_from(directory.len()), u32::try_from(out.len())) else {
+        return Err(Error("too many ZIP members, or the archive is over 4 GiB"));
+    };
+    out.extend(&directory);
+    out.extend(b"PK\x05\x06");
+    out.extend([0u8; 4]);
+    out.extend(count.to_le_bytes());
+    out.extend(count.to_le_bytes());
+    out.extend(directory_size.to_le_bytes());
+    out.extend(directory_at.to_le_bytes());
+    out.extend(0u16.to_le_bytes());
+    Ok(out)
+}
+
 
 #[cfg(test)]
 mod tests {

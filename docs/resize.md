@@ -63,8 +63,12 @@ gets storage access by itself when it is opened.
    The device restarts; confirm.
 2. Connect the device, unlock it and trust the computer.
 3. `orchard2 resize --dopamine` puts Resize APFS into the pinned official
-   Dopamine app, signs it with the Apple ID Xcode is signed in to and
-   installs it. With several teams in Xcode, `--team ID` names one.
+   Dopamine app, signs it with your Apple ID and installs it. On Linux, and
+   on a Mac whose Xcode has no account, xtool signs: it asks for the Apple
+   ID, its password and the two-factor code in the terminal the first time
+   (they go to Apple only) and keeps the session. On a Mac whose Xcode is
+   signed in, that account signs, with nothing to sign in to; `--team ID`
+   names one of several teams, and `--xtool` takes xtool all the same.
 4. On the device, trust your Apple ID: Settings > General > VPN & Device
    Management.
 5. Open Resize APFS and tap Continue. The screen restarts once; unlock the
@@ -72,9 +76,7 @@ gets storage access by itself when it is opened.
 
 A free Apple ID signs the app for 7 days; run the command again when it
 stops opening. Signing happens on your computer, with your account, for
-your device. This version signs on a Mac with Xcode; on Linux,
-resize-apfs's own release signs with xtool (`./resize-apfs boot
---dopamine`).
+your device.
 
 A device that was started through DFU never opens this installed copy by
 itself: its helper stays idle there.

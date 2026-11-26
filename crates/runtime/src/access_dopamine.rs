@@ -13,9 +13,14 @@
 //! connected device, and the stub's profile, entitlements and certificate
 //! then sign the app under `org.orchardlinux.resize-apfs.<team>`.
 //!
+//! Where no Xcode is signed in (Linux, and a Mac without it), xtool does
+//! the Apple side, as resize-apfs's `scripts/sideload.py` has it: it signs
+//! in to the Apple ID once in the terminal, registers the device, makes
+//! the App ID and profile, signs and installs. It is pinned by size and
+//! SHA-256 like every outside tool.
+//!
 //! Signing happens on the person's computer, with their account, for their
-//! device. Only a Mac whose Xcode is signed in to an Apple ID can do it
-//! here.
+//! device.
 use crate::exec::Executor;
 use crate::resize_app::Access;
 use crate::usbmux;
@@ -172,11 +177,21 @@ fn write(path: &Path, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// The app unpacked and ready to be signed.
+pub struct Prepared {
+    /// The folder the IPA was unpacked into: it holds `Payload/NAME.app`.
+    pub root: PathBuf,
+    pub app: PathBuf,
+    /// The Unix modes Dopamine's IPA records, by member name.
+    modes: std::collections::BTreeMap<String, u32>,
+}
+
 /// The pinned Dopamine app with Resize APFS in it, unpacked under `work`,
 /// ready to be signed.
-pub fn prepare(ipa: Vec<u8>, access: &Access, work: &Path) -> Result<PathBuf> {
+pub fn prepare(ipa: Vec<u8>, access: &Access, work: &Path) -> Result<Prepared> {
     let mut archive = Archive::open(ipa)?;
     let names: Vec<String> = archive.entries().map(|e| e.name.clone()).collect();
+    let modes = archive.entries().filter(|e| e.mode != 0).map(|e| (e.name.clone(), e.mode & 0o7777)).collect();
     for name in &names {
         if name.starts_with('/') || name.split('/').any(|part| part == "..") {
             return Err(format("an unsafe path in the Dopamine IPA"));
@@ -238,7 +253,37 @@ pub fn prepare(ipa: Vec<u8>, access: &Access, work: &Path) -> Result<PathBuf> {
     let mut bytes = Vec::new();
     Value::Dictionary(info).to_writer_xml(&mut bytes).map_err(|e| format(e.to_string()))?;
     std::fs::write(app.join("Info.plist"), bytes)?;
-    Ok(app)
+    Ok(Prepared { root: work.to_owned(), app, modes })
+}
+
+impl Prepared {
+    /// The app as an IPA, for a tool that signs and installs one. Members
+    /// keep the modes Dopamine's IPA gave them: executables must stay
+    /// executable after signing.
+    pub fn ipa(&self) -> Result<Vec<u8>> {
+        let mut paths = Vec::new();
+        walk(&self.root, &mut paths);
+        paths.sort();
+        let mut members = Vec::new();
+        for path in paths {
+            let Ok(relative) = path.strip_prefix(&self.root) else { continue };
+            let mut name = relative.to_string_lossy().replace('\\', "/");
+            let (data, usual) = match path.is_dir() {
+                true => {
+                    name.push('/');
+                    (Vec::new(), 0o755)
+                }
+                false => {
+                    let data = std::fs::read(&path)?;
+                    let usual = if is_macho(&data) { 0o755 } else { 0o644 };
+                    (data, usual)
+                }
+            };
+            let mode = self.modes.get(&name).copied().unwrap_or(usual);
+            members.push((name, data, mode));
+        }
+        orchard_formats::zip::write(&members).map_err(|e| format(e.to_string()))
+    }
 }
 
 /// What a command printed and how it ended; None: not in time.
@@ -454,9 +499,129 @@ pub fn device() -> Result<String> {
     }
 }
 
-/// Puts Resize APFS into the pinned Dopamine, signs it for `team` (one of
-/// [`teams`]) and installs it on the device `udid`. `say` is told each step.
-pub fn install(executor: &Executor, access: &Access, team: &str, udid: &str, say: &dyn Fn(&str)) -> Result<()> {
+/// xtool 2.0.0-beta.2, which signs with an Apple ID and installs: the
+/// sizes and checksums resize-apfs's `scripts/tools.py` pins. The beta has
+/// the fixes that signing again every 7 days runs into.
+const XTOOL: &str = "https://github.com/xtool-org/xtool/releases/download/2.0.0-beta.2";
+
+struct Xtool {
+    asset: &'static str,
+    bytes: u64,
+    sha256: &'static str,
+    /// The executable inside a ZIP that holds the whole macOS app, with its
+    /// own checksum; None: the file is the executable (an AppImage).
+    member: Option<(&'static str, &'static str)>,
+}
+
+fn xtool_pin() -> Option<Xtool> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "aarch64") => Some(Xtool { asset: "xtool-aarch64.AppImage", bytes: 65_292_808, sha256: "954da46b983f87596bf8500365b2b5458b27d5394f95c6ec579423bb690ec910", member: None }),
+        ("linux", "x86_64") => Some(Xtool { asset: "xtool-x86_64.AppImage", bytes: 67_795_448, sha256: "512fce299d48b0c59e7bd32787a07ecd018d61a529ed17757b9019d709a667fd", member: None }),
+        ("macos", _) => Some(Xtool {
+            asset: "xtool.app.zip",
+            bytes: 46_999_993,
+            sha256: "93e780e4b4f96ba6d48b365bdfe9ae501f111f5dbb751a0d34b9e1317f5428db",
+            member: Some(("xtool.app/Contents/MacOS/xtool", "ebc400c1479accdd33da9f1905e11d0caaf400d0c087160ce916e4f243b06020")),
+        }),
+        _ => None,
+    }
+}
+
+/// Whether xtool has a build for this computer.
+pub fn xtool_here() -> bool {
+    xtool_pin().is_some()
+}
+
+/// The pinned xtool, fetched and unpacked in the cache, ready to run.
+fn xtool(executor: &Executor) -> Result<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let pin = xtool_pin().ok_or_else(|| Error::new(Code::Unsupported, "xtool publishes no build for this computer"))?;
+    let receipt = Receipt { url: format!("{XTOOL}/{}", pin.asset), bytes: pin.bytes, sha256: pin.sha256.into(), expanded_bytes: None };
+    let package = executor.download(&receipt)?;
+    let home = executor.cache().join("tools").join(format!("xtool-{}", &pin.sha256[..16]));
+    let Some((member, checksum)) = pin.member else {
+        // An AppImage: the file is the executable.
+        let path = home.with_extension("AppImage");
+        if !path.is_file() {
+            std::fs::create_dir_all(executor.cache().join("tools"))?;
+            std::fs::copy(&package, &path)?;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
+        }
+        return Ok(path);
+    };
+    let executable = home.join(member);
+    if !executable.is_file() {
+        // The whole app: its executable loads what is beside it.
+        let partial = home.with_extension("partial");
+        let _ = std::fs::remove_dir_all(&partial);
+        let mut archive = Archive::open(std::fs::read(&package)?)?;
+        let entries: Vec<(String, u32)> = archive.entries().map(|e| (e.name.clone(), e.mode)).collect();
+        for (name, mode) in entries {
+            if name.starts_with('/') || name.split('/').any(|part| part == "..") {
+                return Err(format("an unsafe path in xtool's package"));
+            }
+            if name.ends_with('/') {
+                continue;
+            }
+            let path = partial.join(&name);
+            write(&path, &archive.read(&name, MEMBER)?)?;
+            if mode & 0o111 != 0 {
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
+            }
+        }
+        use sha2::Digest;
+        let found: String = sha2::Sha256::digest(std::fs::read(partial.join(member))?).iter().map(|b| std::format!("{b:02x}")).collect();
+        if found != checksum {
+            let _ = std::fs::remove_dir_all(&partial);
+            return Err(format("xtool's executable is not the pinned one"));
+        }
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::rename(&partial, &home)?;
+    }
+    Ok(executable)
+}
+
+/// xtool's command line: the macOS app starts its window without XTL_CLI;
+/// the AppImage runs without FUSE when it unpacks itself.
+fn xtool_command(xtool: &Path) -> Command {
+    let mut command = Command::new(xtool);
+    command.env("XTL_CLI", "1").env("APPIMAGE_EXTRACT_AND_RUN", "1");
+    command
+}
+
+/// Signs and installs with xtool, in this terminal: it may ask for the
+/// Apple ID, its password and the two-factor code (which go to Apple only),
+/// to trust the device, or to replace a certificate.
+fn with_xtool(executor: &Executor, prepared: &Prepared, work: &Path, udid: &str, say: &dyn Fn(&str)) -> Result<()> {
+    let xtool = xtool(executor)?;
+    let ipa = work.join("ResizeAPFS.ipa");
+    std::fs::write(&ipa, prepared.ipa()?)?;
+    let status = run(xtool_command(&xtool).args(["auth", "status"]), work, Duration::from_secs(120))?;
+    if !(status.code == Some(0) && status.stdout.starts_with(b"Logged in")) {
+        say("Sign in with your Apple ID. xtool keeps the session for later runs.");
+        if !xtool_command(&xtool).args(["auth", "login", "--mode", "password"]).status()?.success() {
+            return Err(fail("signing in to your Apple ID failed"));
+        }
+    }
+    say("Signing and installing with xtool");
+    let installed = xtool_command(&xtool).args(["install", "--usb", "--udid", udid]).arg(&ipa).status()?;
+    match installed.success() {
+        true => Ok(()),
+        false => Err(fail(format!("signing or installing Resize APFS failed (xtool: {installed})"))),
+    }
+}
+
+/// Who signs the app.
+pub enum Signer {
+    /// The Apple ID Xcode is signed in to, by its team (one of [`teams`]).
+    Xcode { team: String },
+    /// xtool, with an Apple ID it signs in to itself.
+    Xtool,
+}
+
+/// Puts Resize APFS into the pinned Dopamine, signs it and installs it on
+/// the device `udid`. `say` is told each step.
+pub fn install(executor: &Executor, access: &Access, signer: &Signer, udid: &str, say: &dyn Fn(&str)) -> Result<()> {
     say("Fetching Dopamine");
     let receipt = Receipt { url: DOPAMINE.into(), bytes: DOPAMINE_BYTES, sha256: DOPAMINE_SHA256.into(), expanded_bytes: None };
     let ipa = std::fs::read(executor.download(&receipt)?)?;
@@ -465,18 +630,23 @@ pub fn install(executor: &Executor, access: &Access, team: &str, udid: &str, say
     std::fs::create_dir_all(&work)?;
     let done = (|| {
         say("Putting Resize APFS into it");
-        let app = prepare(ipa, access, &work.join("app"))?;
+        let prepared = prepare(ipa, access, &work.join("app"))?;
+        let team = match signer {
+            Signer::Xtool => return with_xtool(executor, &prepared, &work, udid, say),
+            Signer::Xcode { team } => team,
+        };
+        let app = &prepared.app;
         say("Making a signing profile with Xcode");
         let (profile, entitlements, sha1) = provision(&work, team, udid)?;
         say("Signing");
-        sign(&app, &work, &identifier(team), &profile, &entitlements, &sha1)?;
+        sign(app, &work, &identifier(team), &profile, &entitlements, &sha1)?;
         say("Installing on the device");
-        let ran = run(Command::new("xcrun").args(["devicectl", "device", "install", "app", "--device", udid]).arg(&app), &work, Duration::from_secs(600))?;
+        let ran = run(Command::new("xcrun").args(["devicectl", "device", "install", "app", "--device", udid]).arg(app), &work, Duration::from_secs(600))?;
         match ran.code {
             Some(0) => Ok(()),
             _ => {
-                let text = format!("{}{}", ran.stderr, String::from_utf8_lossy(&ran.stdout));
-                Err(fail(format!("installing Resize APFS failed: {}", text.trim().chars().rev().take(800).collect::<String>().chars().rev().collect::<String>())))
+                let text = std::format!("{}{}", ran.stderr, String::from_utf8_lossy(&ran.stdout));
+                Err(fail(std::format!("installing Resize APFS failed: {}", text.trim().chars().rev().take(800).collect::<String>().chars().rev().collect::<String>())))
             }
         }
     })();

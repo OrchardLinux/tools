@@ -40,6 +40,10 @@ pub struct Args {
     /// several
     #[arg(long, value_name = "ID")]
     team: Option<String>,
+    /// dopamine: sign with xtool and an Apple ID it signs in to itself, also
+    /// where Xcode has an account (Linux always signs this way)
+    #[arg(long, conflicts_with = "team")]
+    xtool: bool,
     /// Seconds to wait for the device in DFU mode
     #[arg(long, default_value = "0")]
     wait: u64,
@@ -60,11 +64,6 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     routes.named(Kind::Access, route)?;
     if !matches!(route, "palera1n" | "checkra1n" | "dopamine") {
         return Err(Error::new(Code::Unsupported, format!("this version does not run the {route} access route")));
-    }
-    // Signing needs Xcode's account here; elsewhere resize-apfs's own
-    // release signs with xtool.
-    if route == "dopamine" && !cfg!(target_os = "macos") {
-        return Err(Error::new(Code::Unsupported, "this version signs the app on a Mac with Xcode only").hint("resize-apfs's own release does it with xtool: ./resize-apfs boot --dopamine"));
     }
     // checkra1n's session ends when the person says so: that needs a terminal.
     if route == "checkra1n" && !std::io::stdin().is_terminal() {
@@ -166,23 +165,39 @@ fn dopamine(executor: &orchard_runtime::exec::Executor, app: &orchard_runtime::r
     use orchard_runtime::access_dopamine;
     let access = app.access.as_ref().ok_or_else(|| Error::new(Code::NotFound, format!("Resize APFS {} has no build for the route without DFU", app.version)))?;
     let udid = access_dopamine::device()?;
-    let work = std::env::temp_dir().join(format!("orchard2-teams-{}", std::process::id()));
-    std::fs::create_dir_all(&work)?;
-    let teams = access_dopamine::teams(&work);
-    let _ = std::fs::remove_dir_all(&work);
-    let teams = teams?;
-    let team = match (&args.team, teams.as_slice()) {
-        (Some(id), _) => teams.iter().find(|(team, _)| team.eq_ignore_ascii_case(id)).ok_or_else(|| Error::new(Code::NotFound, format!("Xcode is not signed in to a team {id}")))?,
-        (None, [one]) => one,
-        (None, []) => return Err(Error::new(Code::NotFound, "Xcode is not signed in to an Apple ID").hint("add yours in Xcode > Settings > Accounts, then run this again")),
+    // Xcode's account where there is one, else xtool with its own sign-in.
+    let teams = match cfg!(target_os = "macos") && !args.xtool {
+        true => {
+            let work = std::env::temp_dir().join(format!("orchard2-teams-{}", std::process::id()));
+            std::fs::create_dir_all(&work)?;
+            let teams = access_dopamine::teams(&work);
+            let _ = std::fs::remove_dir_all(&work);
+            teams?
+        }
+        false => Vec::new(),
+    };
+    let signer = match (&args.team, teams.as_slice()) {
+        (Some(id), _) => {
+            let team = teams.iter().find(|(team, _)| team.eq_ignore_ascii_case(id)).ok_or_else(|| Error::new(Code::NotFound, format!("Xcode is not signed in to a team {id}")))?;
+            say(&format!("Signing with the Apple ID Xcode is signed in to ({})", team.1));
+            access_dopamine::Signer::Xcode { team: team.0.clone() }
+        }
+        (None, [one]) => {
+            say(&format!("Signing with the Apple ID Xcode is signed in to ({})", one.1));
+            access_dopamine::Signer::Xcode { team: one.0.clone() }
+        }
+        (None, []) if access_dopamine::xtool_here() => {
+            say("Signing with xtool and your Apple ID");
+            access_dopamine::Signer::Xtool
+        }
+        (None, []) => return Err(Error::new(Code::Unsupported, "nothing on this computer signs the app: xtool publishes no build for it")),
         (None, several) => {
             let names: Vec<String> = several.iter().map(|(id, name)| format!("{id} ({name})")).collect();
-            return Err(Error::new(Code::Ambiguous, "Xcode is signed in to several teams").hint(format!("choose one with --team: {}", names.join(", "))));
+            return Err(Error::new(Code::Ambiguous, "Xcode is signed in to several teams").hint(format!("choose one with --team, or sign with --xtool: {}", names.join(", "))));
         }
     };
-    say(&format!("Signing with the Apple ID Xcode is signed in to ({})", team.1));
     say("The device needs Developer Mode on: Settings > Privacy & Security > Developer Mode");
-    access_dopamine::install(executor, access, &team.0, &udid, say)?;
+    access_dopamine::install(executor, access, &signer, &udid, say)?;
     Ok(Installed { version: app.version.clone(), seconds: started.elapsed().as_secs_f64() }.into())
 }
 
