@@ -51,7 +51,9 @@ impl Held {
                 None => Lock::acquire(port),
             };
             match taken {
-                Ok(lock) => {
+                Ok(mut lock) => {
+                    // The session that works on the device continues it.
+                    let _ = lock.offer(self.dir.as_deref());
                     self.locks.insert((*port).to_owned(), lock);
                 }
                 Err(e) if e.code == Code::Locked => {
@@ -81,7 +83,8 @@ impl Held {
             None => Lock::acquire(port),
         };
         match taken {
-            Ok(lock) => {
+            Ok(mut lock) => {
+                let _ = lock.offer(self.dir.as_deref());
                 self.locks.insert(port.to_owned(), lock);
                 None
             }
@@ -103,8 +106,14 @@ mod tests {
         dir
     }
 
+    /// Whether other work could take the device: asked as another process
+    /// would, since this one continues a lock it holds itself.
     fn free(dir: &std::path::Path, port: &str) -> bool {
-        Lock::acquire_in(dir, port).is_ok()
+        // No lock file yet: nobody has ever held it.
+        match std::fs::File::options().read(true).write(true).open(dir.join(format!("{port}.lock"))) {
+            Ok(file) => file.try_lock().is_ok(),
+            Err(_) => true,
+        }
     }
 
     /// Free within a moment: another test's child holds a copy of a

@@ -15,11 +15,13 @@ use orchard_boards::data::firmware::Inputs;
 use orchard_boards::{pack, peripheral};
 use orchard_cache::store::Store;
 use orchard_cache::{Code, Context, Error, Result};
-use orchard_device::{deadline::Deadline, lock::Lock, usb};
+use orchard_device::host::M1n1Proxy;
+use orchard_device::select::Selector;
+use orchard_device::session::Session;
+use orchard_device::{deadline::Deadline, usb};
 use orchard_formats::{cpio, fdt, m1n1};
 use orchard_runtime::driver::Options;
-use orchard_usb::m1n1::Proxy;
-use orchard_usb::{Device, Mode};
+use orchard_usb::{Device, Host, Mode};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -157,13 +159,16 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     let catalog = Catalog::open(&data)?;
 
     // The one device in DFU mode, and the board its chip and board numbers name.
-    let original = find(global, Duration::from_secs(args.wait))?;
+    // A session follows it from here on, at its port, with its lock.
+    let found = find(global, Duration::from_secs(args.wait))?;
+    let selector = Selector { ecid: found.identity.ecid.clone(), location: Some(found.location.clone()), mode: Some(Mode::Dfu) };
+    let mut session = Session::start(Host, &selector, None)?;
+    let original = session.device().clone();
     let seen = orchard_runtime::identify(&catalog, &original)
         .filter(|seen| !seen.device.board.is_empty())
         .ok_or_else(|| Error::new(Code::Unsupported, "the device in DFU mode is no board the data knows"))?;
     let device = seen.device;
     let board = catalog.board(&device.board)?;
-    let lock = Lock::acquire(&original.location)?;
     say(&format!("{} at {}", device.name, original.location));
 
     // The Linux to boot: the options, and the build's file where one is named.
@@ -288,13 +293,13 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     let deadline = Deadline::after(Duration::from_secs(args.timeout));
     let device_started = Instant::now();
     if ibss {
-        orchard_runtime::ibss::start(&executor, &device, image)?;
+        orchard_runtime::ibss::start(&executor, &mut session, &device.board, image)?;
     } else {
         let published = match &local_m1n1 {
             Some(_) => Vec::new(),
             None => std::fs::read(executor.download(&executor.orchard_tools()?.m1n1)?)?,
         };
-        orchard_runtime::chain::start_image(&executor, &device, &image(&published)?)?;
+        orchard_runtime::chain::start_image(&executor, &mut session, &device.board, &image(&published)?)?;
     }
     drop(executor);
     drop(log);
@@ -302,22 +307,22 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     let reached = match (linux, through_proxy) {
         (None, _) => {
             say("Waiting for m1n1");
-            wait_for(&original, Mode::M1n1, &deadline)?;
+            session.wait_for(Mode::M1n1, deadline.left()?)?;
             "m1n1 is waiting on USB"
         }
         (Some(_), false) => {
             say("Waiting for Linux");
-            wait_for(&original, Mode::Linux, &deadline)?;
+            session.wait_for(Mode::Linux, deadline.left()?)?;
             "Linux is running in RAM"
         }
         (Some(kernel), true) => {
-            upload(&original, &deadline, &say, kernel, compressed, own_dtb()?, &initramfs, bootargs.as_deref())?;
+            upload(&mut session, &deadline, &say, kernel, compressed, own_dtb()?, &initramfs, bootargs.as_deref())?;
             say("Waiting for Linux");
-            wait_for(&original, Mode::Linux, &deadline)?;
+            session.wait_for(Mode::Linux, deadline.left()?)?;
             "Linux is running in RAM"
         }
     };
-    drop(lock);
+    drop(session);
     Ok(Booted {
         reached,
         board: board.name,
@@ -334,7 +339,7 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
 /// start of Linux from there: for what is too large for the route's upload.
 #[allow(clippy::too_many_arguments)]
 fn upload(
-    original: &Device,
+    session: &mut Session<Host>,
     deadline: &Deadline,
     say: &dyn Fn(&str),
     kernel: &[u8],
@@ -344,28 +349,19 @@ fn upload(
     bootargs: Option<&str>,
 ) -> Result<()> {
     say("Waiting for the m1n1 proxy");
-    // The USB device appears before macOS finishes attaching its CDC driver.
-    say("Opening the m1n1 proxy transport");
-    let mut device;
+    session.wait_for(Mode::M1n1, deadline.left()?)?;
+    // The USB device appears before the system has attached its serial driver.
     let mut proxy = loop {
-        device = wait_for(original, Mode::M1n1, deadline)?;
-        match Proxy::open(&device) {
+        match session.m1n1() {
             Ok(proxy) => break proxy,
-            Err(error) if error.kind == orchard_usb::Kind::Disconnected => {
-                deadline
-                    .sleep(Duration::from_millis(200))
-                    .context("waiting for the m1n1 serial port")?;
+            Err(error) if error.code == Code::Usb => {
+                deadline.sleep(Duration::from_millis(200)).context("waiting for the m1n1 serial port")?;
+                session.wait_for(Mode::M1n1, deadline.left()?)?;
             }
-            Err(error) => return Err(usb::error(error)),
+            Err(error) => return Err(error),
         }
     };
     proxy.ping(deadline.left()?).map_err(usb::error)?;
-    say(if proxy.uses_bulk() {
-        "m1n1 proxy connected over direct USB bulk"
-    } else {
-        "m1n1 proxy connected over USB serial"
-    });
-
 
     // Match proxyclient/tools/linux.py: leave 128 MiB for m1n1, then use
     // a separate 1 GiB host-managed heap. Reserve 512 MiB for the kernel
@@ -497,7 +493,7 @@ const KBOOT_SET_INITRD: u64 = 0x702;
 const KBOOT_PREPARE_DT: u64 = 0x703;
 const CPUFREQ_INIT: u64 = 0x1300;
 
-fn call(proxy: &mut Proxy, deadline: &Deadline, operation: u64, args: &[u64]) -> Result<u64> {
+fn call(proxy: &mut Box<dyn M1n1Proxy>, deadline: &Deadline, operation: u64, args: &[u64]) -> Result<u64> {
     proxy
         .call(operation, args, deadline.left()?)
         .map_err(usb::error)
@@ -524,40 +520,6 @@ fn find(global: &Global, wait: Duration) -> Result<Device> {
             [] => return Err(Error::new(Code::NoDevice, "no device in DFU mode").hint("put the device in DFU mode; --wait SECONDS waits for it")),
             _ => return Err(Error::new(Code::Ambiguous, "several devices in DFU mode; select --ecid or --location")),
         }
-    }
-}
-
-fn wait_for(original: &Device, mode: Mode, deadline: &Deadline) -> Result<Device> {
-    loop {
-        deadline.left().context(format!(
-            "waiting for {} at {}",
-            mode.as_str(),
-            original.location
-        ))?;
-        for device in orchard_usb::list().map_err(usb::error)? {
-            if device.location != original.location {
-                continue;
-            }
-            for (before, now) in [
-                (&original.identity.ecid, &device.identity.ecid),
-                (&original.identity.chip, &device.identity.chip),
-                (&original.identity.board_id, &device.identity.board_id),
-            ] {
-                if before.is_some()
-                    && now.is_some()
-                    && hex(before.as_deref()) != hex(now.as_deref())
-                {
-                    return Err(Error::new(
-                        Code::DeviceChanged,
-                        "another device appeared on the selected port",
-                    ));
-                }
-            }
-            if device.mode == mode {
-                return Ok(device);
-            }
-        }
-        deadline.sleep(Duration::from_millis(100))?;
     }
 }
 

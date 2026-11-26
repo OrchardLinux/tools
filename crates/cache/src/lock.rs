@@ -27,7 +27,13 @@ pub struct Lock {
     file: File,
     location: String,
     inherited: bool,
+    /// The lock's file, while this process offers the lock to its own work.
+    offered: Option<PathBuf>,
 }
+
+/// The locks this process offers to work it starts itself: a window that
+/// holds a device hands it to the session that then works on it.
+static OFFERED: std::sync::Mutex<Vec<(PathBuf, File)>> = std::sync::Mutex::new(Vec::new());
 
 /// The location of the device this process's surrounding session holds.
 pub fn session_location() -> Option<String> {
@@ -54,9 +60,17 @@ impl Lock {
             .collect();
         let path = dir.join(format!("{name}.lock"));
 
-        let from_session = session_location()
-            .filter(|held| held == location)
-            .and_then(|_| inherit::take(FD_VAR, |file| same_file(file, &path)));
+        let from_process = OFFERED
+            .lock()
+            .expect("offered locks")
+            .iter()
+            .find(|(offered, _)| *offered == path)
+            .and_then(|(_, file)| file.try_clone().ok());
+        let from_session = from_process.or_else(|| {
+            session_location()
+                .filter(|held| held == location)
+                .and_then(|_| inherit::take(FD_VAR, |file| same_file(file, &path)))
+        });
         let inherited = from_session.is_some();
         let file = match from_session {
             Some(file) => file,
@@ -72,11 +86,24 @@ impl Lock {
             file,
             location: location.to_owned(),
             inherited,
+            offered: None,
         };
         if !inherited {
             lock.note(&format!("pid {}: {}", std::process::id(), program()));
         }
         Ok(lock)
+    }
+
+    /// Lets work this process starts later on the same device continue
+    /// this lock, as a command run in a session continues the session's,
+    /// for as long as this lock is held.
+    pub fn offer(&mut self, dir: Option<&Path>) -> Result<()> {
+        let name: String = self.location.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+        let path = dir.map_or_else(default_dir, Path::to_owned).join(format!("{name}.lock"));
+        let copy = self.file.try_clone().context(path.display())?;
+        OFFERED.lock().expect("offered locks").push((path.clone(), copy));
+        self.offered = Some(path);
+        Ok(())
     }
 
     /// Whether the lock was taken by a surrounding session, which this
@@ -106,6 +133,9 @@ impl Lock {
 
 impl Drop for Lock {
     fn drop(&mut self) {
+        if let Some(path) = self.offered.take() {
+            OFFERED.lock().expect("offered locks").retain(|(offered, _)| *offered != path);
+        }
         // The one who took the lock takes its note away again.
         if !self.inherited {
             self.note("");
@@ -220,6 +250,22 @@ fn open_to_all(dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_offered_lock_is_continued_by_the_process_and_by_nobody_after() {
+        let scratch = tempfile::tempdir().unwrap();
+        let dir = scratch.path();
+        let mut held = Lock::acquire_in(dir, "0x7").unwrap();
+        assert_eq!(Lock::acquire_in(dir, "0x7").unwrap_err().code, Code::Locked);
+        held.offer(Some(dir)).unwrap();
+        let continued = Lock::acquire_in(dir, "0x7").unwrap();
+        assert!(continued.inherited());
+        // The device stays held while either has it, and the note stays the holder's.
+        drop(continued);
+        assert!(!fs::read_to_string(dir.join("0x7.lock")).unwrap().is_empty());
+        drop(held);
+        assert!(!Lock::acquire_in(dir, "0x7").unwrap().inherited());
+    }
 
     #[test]
     fn one_holder_per_device() {

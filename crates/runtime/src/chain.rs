@@ -2,15 +2,17 @@
 //! install payload to Pongo and `bootm` (orchard's `boot_payload`). The
 //! install system then shows up on USB by itself, and the watcher opens it.
 //!
-//! Continuity: the one DFU device must be the user's device (ECID), the one
-//! Pongo that appears must carry the same ECID when it reports one, and the
-//! install system's receiver checks the ECID again when it is opened.
+//! Continuity: a session follows the device from DFU mode on, at the port
+//! it is on, and refuses another device there; the install system's
+//! receiver checks the ECID again when it is opened.
 use crate::exec::Executor;
 use orchard_boards::install_env;
 use orchard_cache::{Code, Error, Result};
 use orchard_flow::Device;
-use orchard_usb::pongo::Pongo;
-use orchard_usb::Mode;
+use orchard_device::select::Selector;
+use orchard_device::session::Session;
+use orchard_device::usb;
+use orchard_usb::{Host, Mode};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -38,25 +40,33 @@ fn fail(message: impl Into<String>) -> Error {
 /// than let palera1n or a wait take the wrong one.
 pub const ANOTHER: &str = "another device is connected";
 
-/// Where the device was last seen with its ECID, by device id: a sighting
-/// without one (iOS before A12, m1n1) is the device only at that port.
-static LOCATION: std::sync::Mutex<Option<(String, String)>> = std::sync::Mutex::new(None);
+/// A session on the flow's device, which is in DFU mode: it follows the
+/// device through its modes at the port it is on, and continues the lock
+/// the window holds.
+pub(crate) fn session(device: &Device) -> Result<Session<Host>> {
+    let selector = Selector { ecid: Some(device.id.0.clone()), location: None, mode: None };
+    Session::start(Host, &selector, None)
+}
 
-/// `device` in `mode`, if it is there. Any other Apple device on USB, in any
-/// mode, is an error (orchard_usb::others).
-pub(crate) fn the_device(device: &Device, mode: Mode) -> Result<Option<orchard_usb::Device>> {
+/// Fails when another Apple device is on USB, in any mode: palera1n and
+/// checkra1n take the first device they find.
+fn alone(session: &Session<Host>) -> Result<()> {
     let listed = orchard_usb::list().map_err(|e| fail(e.to_string()))?;
-    let mut known = LOCATION.lock().expect("location lock");
-    let location = known.as_ref().filter(|(id, _)| *id == device.id.0).map(|(_, at)| at.clone());
-    let target = orchard_usb::Target { ecid: Some(&device.id.0), location: location.as_deref() };
-    if !orchard_usb::others(&listed, Some(target)).is_empty() {
-        return Err(fail(ANOTHER));
+    let target = orchard_usb::Target { ecid: session.identity().ecid.as_deref(), location: Some(&session.device().location) };
+    match orchard_usb::others(&listed, Some(target)).is_empty() {
+        true => Ok(()),
+        false => Err(fail(ANOTHER)),
     }
-    let found = listed.into_iter().find(|d| d.mode == mode && orchard_usb::apple_device(d));
-    if let Some(d) = found.as_ref().filter(|d| d.identity.ecid.is_some()) {
-        *known = Some((device.id.0.clone(), d.location.clone()));
+}
+
+/// Whether the session's device is in `mode` right now.
+fn now_in(session: &mut Session<Host>, mode: Mode) -> Result<bool> {
+    alone(session)?;
+    match session.wait_for(mode, Duration::from_millis(1)) {
+        Ok(_) => Ok(true),
+        Err(e) if e.code == Code::Timeout => Ok(false),
+        Err(e) => Err(e),
     }
-    Ok(found)
 }
 
 /// The install payload for this device: m1n1, the layer's kernel, initrd and
@@ -87,38 +97,39 @@ fn payload_behind(executor: &Executor, device: &Device, m1n1: &[u8]) -> Result<V
 /// Runs palera1n on the device in DFU: checks it is the user's device
 /// first, resets its USB port on Linux if it doesn't come back after
 /// checkm8, and logs palera1n's output in the cache.
-fn run_palera1n(executor: &Executor, device: &Device, args: &[std::ffi::OsString], seconds: u64) -> Result<()> {
-    run_palera1n_from(executor, device, Mode::Dfu, args, seconds)
+fn run_palera1n(executor: &Executor, session: &mut Session<Host>, args: &[std::ffi::OsString], seconds: u64) -> Result<()> {
+    run_palera1n_from(executor, session, Mode::Dfu, args, seconds)
 }
 
 /// palera1n on the device in `from`: DFU (the exploit, with the port reset
 /// on Linux), or Pongo (palera1n carries on from there).
-fn run_palera1n_from(executor: &Executor, device: &Device, from: Mode, args: &[std::ffi::OsString], seconds: u64) -> Result<()> {
+fn run_palera1n_from(executor: &Executor, session: &mut Session<Host>, from: Mode, args: &[std::ffi::OsString], seconds: u64) -> Result<()> {
     let (pin, release) = crate::flags::palera1n_pin().ok_or_else(|| fail("palera1n publishes no build for this computer"))?;
     let palera1n = executor.palera1n(pin, release)?;
-    run_tool(executor, device, from, "palera1n", &palera1n, args, seconds)
+    run_tool(executor, session, from, "palera1n", &palera1n, args, seconds)
 }
 
 /// checkra1n's exploit and Pongo with `pongo_image`,
 /// with the arguments orchard's Python CLI runs it with.
-fn run_checkra1n(executor: &Executor, device: &Device, pongo_image: &std::path::Path, seconds: u64) -> Result<()> {
+fn run_checkra1n(executor: &Executor, session: &mut Session<Host>, pongo_image: &std::path::Path, seconds: u64) -> Result<()> {
     let (pin, release) = crate::flags::checkra1n_pin().ok_or_else(|| fail("checkra1n publishes no build for this computer"))?;
     let checkra1n = executor.palera1n(pin, release)?;
     let args: Vec<std::ffi::OsString> = ["-E", "-p", "-v", "-n", "-k"].iter().map(Into::into).chain([pongo_image.as_os_str().to_owned()]).collect();
-    run_tool(executor, device, Mode::Dfu, "checkra1n", &checkra1n, &args, seconds)
+    run_tool(executor, session, Mode::Dfu, "checkra1n", &checkra1n, &args, seconds)
 }
 
 /// One run of the tool that takes the device on from `from`, its output in
 /// a log of its own and followed while it runs.
-fn run_tool(executor: &Executor, device: &Device, from: Mode, name: &str, palera1n: &std::path::Path, args: &[std::ffi::OsString], seconds: u64) -> Result<()> {
-    let Some(found) = the_device(device, from)? else {
+fn run_tool(executor: &Executor, session: &mut Session<Host>, from: Mode, name: &str, palera1n: &std::path::Path, args: &[std::ffi::OsString], seconds: u64) -> Result<()> {
+    if !now_in(session, from)? {
         return Err(fail(if from == Mode::Dfu { "the device is no longer in DFU mode" } else { "the device is not in Pongo" }));
-    };
+    }
+    let location = session.device().location.clone();
     // Resolved while the device is present: its sysfs node goes away after checkm8.
     // checkra1n is not helped by the port reset (orchard's Python CLI runs
     // it without).
     let control = (from == Mode::Dfu && name == "palera1n")
-        .then(|| crate::replug::port_control(&found.location, std::path::Path::new("/sys/bus/usb/devices")))
+        .then(|| crate::replug::port_control(&location, std::path::Path::new("/sys/bus/usb/devices")))
         .flatten();
     let (log, log_path) = executor.log_file(name)?;
     // ORCHARD_PORT_RESET_SECONDS=0: no reset.
@@ -175,8 +186,8 @@ fn run_tool(executor: &Executor, device: &Device, from: Mode, name: &str, palera
             // this start can't work any more, whatever palera1n still waits for.
             Ok(None) if from == Mode::Dfu && looked.elapsed() >= Duration::from_secs(1) => {
                 looked = Instant::now();
-                match the_device(device, Mode::Normal) {
-                    Ok(Some(_)) => {
+                match now_in(session, Mode::Normal) {
+                    Ok(true) => {
                         let _ = child.kill();
                         let _ = child.wait();
                         break Err(restarted(&log_path));
@@ -283,7 +294,7 @@ enum Tool {
 /// the device still (or again) in DFU mode is tried again, up to
 /// START_WINDOW, and the flow hears of each new attempt. iOS on USB ends it:
 /// the device restarted, and only DFU mode by hand starts over.
-fn into_pongo(executor: &Executor, device: &Device, pongo_image: &std::path::Path, with: Tool) -> Result<orchard_usb::Device> {
+fn into_pongo(executor: &Executor, session: &mut Session<Host>, pongo_image: &std::path::Path, with: Tool) -> Result<()> {
     let until = Instant::now() + START_WINDOW;
     let mut attempt = 1u32;
     // ORCHARD_KEEP_AWAKE: no deep CPU sleep for as long as the exploit runs.
@@ -291,17 +302,17 @@ fn into_pongo(executor: &Executor, device: &Device, pongo_image: &std::path::Pat
     loop {
         let args = [std::ffi::OsString::from("-p"), "-k".into(), pongo_image.as_os_str().to_owned()];
         let ran = match with {
-            Tool::Checkra1n => run_checkra1n(executor, device, pongo_image, PALERA1N_SECONDS),
-            Tool::Palera1n => run_palera1n(executor, device, &args, PALERA1N_SECONDS),
+            Tool::Checkra1n => run_checkra1n(executor, session, pongo_image, PALERA1N_SECONDS),
+            Tool::Palera1n => run_palera1n(executor, session, &args, PALERA1N_SECONDS),
         };
         let failed = match ran {
             Ok(()) => {
                 let deadline = Instant::now() + Duration::from_secs(PONGO_SECONDS);
                 loop {
-                    if let Some(usb) = the_device(device, Mode::Pongo)? {
-                        return Ok(usb);
+                    if now_in(session, Mode::Pongo)? {
+                        return Ok(());
                     }
-                    if the_device(device, Mode::Normal)?.is_some() {
+                    if now_in(session, Mode::Normal)? {
                         return Err(fail(format!("{RESTARTED} of starting Pongo")));
                     }
                     if Instant::now() > deadline {
@@ -320,19 +331,19 @@ fn into_pongo(executor: &Executor, device: &Device, pongo_image: &std::path::Pat
         let look = Instant::now() + Duration::from_secs(SETTLE_SECONDS);
         let again = loop {
             // Pongo after all, later than PONGO_SECONDS: carry on with it.
-            if let Some(usb) = the_device(device, Mode::Pongo)? {
-                return Ok(usb);
+            if now_in(session, Mode::Pongo)? {
+                return Ok(());
             }
-            if the_device(device, Mode::Dfu)?.is_some() {
+            if now_in(session, Mode::Dfu)? {
                 break true;
             }
-            if the_device(device, Mode::Normal)?.is_some() || Instant::now() > look {
+            if now_in(session, Mode::Normal)? || Instant::now() > look {
                 break false;
             }
             std::thread::sleep(Duration::from_millis(250));
         };
         if !again {
-            let normal = the_device(device, Mode::Normal)?.is_some();
+            let normal = now_in(session, Mode::Normal)?;
             return Err(if normal { fail(format!("{RESTARTED} ({failed})")) } else { failed });
         }
         attempt += 1;
@@ -420,32 +431,30 @@ pub fn boot_ipados(executor: &Executor, device: &Device) -> Result<()> {
     let overlay = executor.overlay()?;
     // Orchard's Pongo (or `--pongo`'s), as every other boot.
     let ours = executor.pongo_image()?;
+    let mut session = session(device)?;
     // palera1n goes on from its own Pongo start.
-    into_pongo(executor, device, &ours, Tool::Palera1n)?;
+    into_pongo(executor, &mut session, &ours, Tool::Palera1n)?;
     let second = vec![std::ffi::OsString::from("-l"), "-o".into(), overlay.into_os_string(), "-k".into(), ours.into_os_string()];
-    run_palera1n_from(executor, device, Mode::Pongo, &second, IPADOS_SECONDS)
+    run_palera1n_from(executor, &mut session, Mode::Pongo, &second, IPADOS_SECONDS)
 }
 
 /// The launcher's loader, by the boot route: palera1n or checkra1n → Pongo →
-/// the release's m1n1 → `bootm`, or the `ibss` route; then m1n1's proxy on USB. m1n1 reads the device's boot partition itself;
-/// nothing else comes from the host (orchard's `orchard launch`).
+/// the release's m1n1 → `bootm`, or the `ibss` route; then m1n1's proxy on USB.
+/// m1n1 reads the device's boot partition itself; nothing else comes from
+/// the host (orchard's `orchard launch`).
 pub fn start_m1n1(executor: &Executor, device: &Device) -> Result<orchard_usb::Device> {
+    let mut session = session(device)?;
     if executor.boot_route(&device.board)?.name == "ibss" {
-        crate::ibss::start_m1n1(executor, device)?;
+        crate::ibss::start(executor, &mut session, &device.board, |m1n1| Ok(m1n1.to_vec()))?;
     } else {
         let tools = executor.orchard_tools()?;
         let m1n1 = std::fs::read(executor.download(&tools.m1n1)?)?;
-        start_from_pongo(executor, device, &m1n1)?;
+        start_image(executor, &mut session, &device.board, &m1n1)?;
     }
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if let Some(usb) = the_device(device, Mode::M1n1)? {
-            return Ok(usb);
-        }
-        if Instant::now() > deadline {
-            return Err(fail("m1n1 did not appear on USB"));
-        }
-        std::thread::sleep(Duration::from_millis(250));
+    match session.wait_for(Mode::M1n1, Duration::from_secs(30)) {
+        Ok(usb) => Ok(usb.clone()),
+        Err(e) if e.code == Code::Timeout => Err(fail("m1n1 did not appear on USB")),
+        Err(e) => Err(e),
     }
 }
 
@@ -454,35 +463,31 @@ pub fn start_m1n1(executor: &Executor, device: &Device) -> Result<orchard_usb::D
 /// Never retried by itself: a failure goes back to the flow, which asks for
 /// DFU again.
 pub fn boot_install_env(executor: &Executor, device: &Device) -> Result<()> {
+    let mut session = session(device)?;
     if executor.boot_route(&device.board)?.name == "ibss" {
-        return crate::ibss::start(executor, device, |m1n1| payload_behind(executor, device, m1n1));
+        return crate::ibss::start(executor, &mut session, &device.board, |m1n1| payload_behind(executor, device, m1n1));
     }
     let payload = payload(executor, device)?;
-    start_from_pongo(executor, device, &payload)
+    start_image(executor, &mut session, &device.board, &payload)
 }
 
-/// `image` by the boot route's tool into Pongo and started there: for a
-/// RAM boot of m1n1, alone or with a system behind it.
-pub fn start_image(executor: &Executor, device: &Device, image: &[u8]) -> Result<()> {
-    start_from_pongo(executor, device, image)
-}
-
-/// Both apps' start: palera1n → Pongo, then `image` to Pongo and `bootm`.
-/// What follows differs: the install system shows up on USB by itself (the
-/// installer), or m1n1 does (the launcher). bootm's own answer may not come
-/// (Pongo is gone once the image runs), so only what shows up next confirms it.
-fn start_from_pongo(executor: &Executor, device: &Device, image: &[u8]) -> Result<()> {
-    let route = executor.boot_route(&device.board)?;
+/// `image` by the board's boot route into Pongo and started there: m1n1,
+/// alone or with a system behind it. What follows differs: the install
+/// system or Linux shows up on USB by itself, or m1n1 does. bootm's own
+/// answer may not come (Pongo is gone once the image runs), so only what
+/// shows up next confirms it.
+pub fn start_image(executor: &Executor, session: &mut Session<Host>, board: &str, image: &[u8]) -> Result<()> {
+    let route = executor.boot_route(board)?;
     let with = match route.name.as_str() {
         "palera1n" => Tool::Palera1n,
         "checkra1n" => Tool::Checkra1n,
-        other => return Err(Error::new(Code::Unsupported, format!("the install system is not started by the {other} route yet; launch is"))),
+        other => return Err(Error::new(Code::Unsupported, format!("the {other} route does not go through Pongo"))),
     };
     let pongo_image = executor.pongo_image()?;
-    let usb = into_pongo(executor, device, &pongo_image, with)?;
-    let mut pongo = Pongo::open(&usb).map_err(|e| fail(e.to_string()))?;
-    pongo.send(image, Duration::from_secs(60)).map_err(|e| fail(e.to_string()))?;
-    let _ = pongo.command("bootm", Duration::from_secs(10));
+    into_pongo(executor, session, &pongo_image, with)?;
+    let mut pongo = session.pongo()?;
+    pongo.send(image, session.timeout(Duration::from_secs(60))?).map_err(usb::error)?;
+    let _ = pongo.command("bootm", session.timeout(Duration::from_secs(10))?);
     Ok(())
 }
 
