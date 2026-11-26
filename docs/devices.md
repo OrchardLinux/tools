@@ -52,8 +52,7 @@ several:
   changes modes on the same cable.
 
 None connected is the error `no-device`; several without a name is
-`ambiguous` (both exit status 3). `prep`, `load` and `boot` pass over a
-device that already runs Linux when exactly one other is there.
+`ambiguous` (both exit status 3).
 
 ### One device for install and launch
 
@@ -82,13 +81,14 @@ orchard2 session [--timeout SECONDS] -- COMMAND…
 keeps one device for a whole script. It picks the device, locks it, runs
 COMMAND and ends with its exit status. Every `orchard2` inside works on
 that device without naming it, also after it changed modes, and they share
-what was learned about it: its identity, and a state USB cannot show (see
-[boot-commands.md](boot-commands.md#states)).
+what was learned about it: its identity, which only the boot ROM and iBoot
+report.
 
 ```sh
 orchard2 session -- sh -c '
-    orchard2 prep &&
-    orchard2 load linux.bin --wait linux'
+    orchard2 dfu send ibss.img4 &&
+    orchard2 wait recovery &&
+    orchard2 recovery command "getenv build-version"'
 ```
 
 - `--timeout` is the time all device work in the session may take together;
@@ -96,8 +96,9 @@ orchard2 session -- sh -c '
   shorter one ends it.
 - **The lock** is per USB location (`/tmp/orchard2-locks/`). While a device
   is locked, another `orchard2` that wants it fails at once with `locked`
-  (exit status 12) and says which process holds it. The boot commands,
-  the low-level commands and `run` take the lock for as long as they run.
+  (exit status 12) and says which process holds it. `install`, `launch`,
+  `run` and the low-level commands take the lock for as long as they work
+  on a device, each through a session of its own.
 - `install`, `launch`, the installer and the launcher take the same lock
   for a device once it is in DFU mode, which is where their work on it
   starts, and keep it until they are done with it, through every mode it

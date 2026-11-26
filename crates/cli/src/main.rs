@@ -58,58 +58,6 @@ fn main() -> ExitCode {
         args::Command::Wait { mode, timeout } => {
             commands::devices::wait(&cli.global, mode.into(), timeout.timeout)
         }
-        args::Command::Prep {
-            path,
-            firmware,
-            plan,
-            timeout,
-        } => {
-            let way = commands::Way {
-                path: &path,
-                firmware: &firmware,
-            };
-            commands::prep::run(&cli.global, &way, plan, timeout)
-        }
-        args::Command::Load {
-            file,
-            payload,
-            path,
-            firmware,
-            wait,
-            plan,
-            timeout,
-        } => {
-            let way = commands::Way {
-                path: &path,
-                firmware: &firmware,
-            };
-            let wait = wait.map(Into::into);
-            commands::load::run(&cli.global, &file, &payload, &way, wait, plan, timeout)
-        }
-        args::Command::Boot {
-            boot_entry,
-            path,
-            firmware,
-            list,
-            dtb_name,
-            no_splash,
-            wait,
-            plan,
-            timeout,
-        } => {
-            let options = orchard_device::boot::Options {
-                entry: boot_entry,
-                dtb_name,
-                splash: !no_splash,
-                wait: wait.map(Into::into),
-                list,
-            };
-            let way = commands::Way {
-                path: &path,
-                firmware: &firmware,
-            };
-            commands::boot::run(&cli.global, options, &way, plan, timeout)
-        }
         args::Command::Fw(a) => commands::fw::run(&cli.global, &a.command),
         args::Command::Boards => commands::boards::list(&cli.global),
         args::Command::Board { name } => commands::boards::show(&cli.global, &name),

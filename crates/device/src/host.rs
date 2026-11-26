@@ -4,7 +4,7 @@
 //! Workflows are written against these traits, so their tests can stand in
 //! for the device in the test file and check the order of what is sent.
 //! The real host opens the protocol modules of the usb crate.
-use crate::entry::{Executable, GASTER};
+use crate::gaster::{self, Executable};
 use orchard_cache::store::Store;
 use orchard_usb::dfu::{Dfu, Pwned, Status};
 use orchard_usb::m1n1::Proxy;
@@ -172,14 +172,6 @@ pub trait Connect: Discovery {
         ))
     }
 
-    /// Runs an entry's tool to its end, for `timeout` at most. A host
-    /// that runs no tools keeps this answer.
-    fn entry_tool(&mut self, tool: &Tool<'_>, _timeout: Duration) -> orchard_cache::Result<()> {
-        Err(orchard_cache::Error::new(
-            orchard_cache::Code::Unsupported,
-            format!("{}: this host runs no outside tools", tool.name),
-        ))
-    }
     fn dfu(&mut self, device: &Device) -> Result<Box<dyn DfuMode>, Error>;
     fn recovery(&mut self, device: &Device) -> Result<Box<dyn RecoveryMode>, Error>;
     fn pongo(&mut self, device: &Device) -> Result<Box<dyn PongoShell>, Error>;
@@ -188,7 +180,7 @@ pub trait Connect: Discovery {
 
 impl Connect for orchard_usb::Host {
     fn gaster_worker(&self, store: &Store) -> orchard_cache::Result<Executable> {
-        GASTER.tool(store)
+        gaster::worker(store)
     }
 
     #[cfg(unix)]
@@ -238,14 +230,6 @@ impl Connect for orchard_usb::Host {
         };
         let reply = tool::reply(&tool, timeout, data.len(), inherit)?;
         Ok(reply.as_chunks::<48>().0.to_vec())
-    }
-    #[cfg(unix)]
-    fn entry_tool(
-        &mut self,
-        invocation: &Tool<'_>,
-        timeout: Duration,
-    ) -> orchard_cache::Result<()> {
-        tool::execute(invocation, timeout)
     }
     fn dfu(&mut self, device: &Device) -> Result<Box<dyn DfuMode>, Error> {
         Ok(Box::new(Dfu::open(device)?))

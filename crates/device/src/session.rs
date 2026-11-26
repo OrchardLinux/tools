@@ -11,10 +11,9 @@
 //! that command starts continue the session: same lock, same deadline, and
 //! what one of them learns about the device the next one knows.
 use crate::deadline::Deadline;
-use crate::entry::Executable;
+use crate::gaster::Executable;
 use crate::host::{Connect, DfuMode, M1n1Proxy, PongoShell, RecoveryMode};
 use crate::lock::{self, Lock};
-use crate::methods;
 use crate::select::{self, normalize_ecid, Selector};
 use crate::state::{Shared, State};
 use crate::usb;
@@ -32,12 +31,6 @@ pub struct Session<D: Discovery> {
     /// Everything the device has told about itself so far. Only the boot
     /// ROM and iBoot report an identity, so it is kept across other modes.
     known: Identity,
-    /// The boot-path state a step left the device in, where USB does not
-    /// show it. It holds for as long as the device stays in that mode.
-    left_in: Option<methods::State>,
-    /// What the receiver in `left_in` was prepared with: the chain and the
-    /// digest of its files.
-    prep: Option<String>,
     /// When all steps must be done, if the session has a limit, and the
     /// same as the session's commands share it.
     deadline: Option<Deadline>,
@@ -175,12 +168,6 @@ impl<D: Discovery> Session<D> {
                 serial_number: state.serial_number,
                 ..Identity::default()
             },
-            left_in: state
-                .left_in
-                .as_deref()
-                .and_then(methods::State::parse)
-                .filter(|s| s.mode() == Some(device.mode)),
-            prep: state.prep,
             device: device.clone(),
             deadline: deadline_unix_ms
                 .map(|end| Deadline::after(Duration::from_millis(end.saturating_sub(now)))),
@@ -202,31 +189,6 @@ impl<D: Discovery> Session<D> {
     /// What the device has told about itself in any mode so far.
     pub fn identity(&self) -> &Identity {
         &self.known
-    }
-
-    /// The state a step of this session left the device in, where USB does
-    /// not show it.
-    pub fn left_in(&self) -> Option<methods::State> {
-        self.left_in
-    }
-
-    /// What the receiver the session left the device in was prepared with.
-    pub fn prep(&self) -> Option<&str> {
-        self.left_in.and(self.prep.as_deref())
-    }
-
-    /// Remembers the state the device is now in, for the steps and commands
-    /// that follow. A method says this once the device has arrived.
-    pub fn arrived_in(&mut self, state: methods::State) {
-        self.left_in = Some(state);
-        self.prep = None;
-        self.remember();
-    }
-
-    /// Remembers what the receiver the device is now in was prepared with.
-    pub fn prepared_with(&mut self, note: String) {
-        self.prep = Some(note);
-        self.remember();
     }
 
     /// The timeout for one protocol action: `most`, or the session's time
@@ -309,11 +271,6 @@ impl<D: Discovery> Session<D> {
         let deadline = Deadline::after(self.timeout(most)?);
         let mode = self.device.mode;
         self.leave(&deadline)?;
-        // What arrives is another program: a state remembered for the one
-        // that left says nothing about it.
-        if self.left_in.take().is_some() {
-            self.remember();
-        }
         self.arrive(mode, &deadline)
     }
 
@@ -412,9 +369,6 @@ impl<D: Discovery> Session<D> {
             known.serial_number = seen.identity.serial_number.clone();
             learned = true;
         }
-        if seen.mode != self.device.mode && self.left_in.take().is_some() {
-            learned = true;
-        }
         self.device = seen;
         if learned {
             self.remember();
@@ -430,8 +384,6 @@ impl<D: Discovery> Session<D> {
             chip: self.known.chip.clone(),
             board_id: self.known.board_id.clone(),
             serial_number: self.known.serial_number.clone(),
-            left_in: self.left_in.map(|s| s.as_str().to_owned()),
-            prep: self.prep().map(str::to_owned),
         }
     }
 
@@ -480,13 +432,6 @@ impl<D: Connect> Session<D> {
         Ok(())
     }
 
-    /// Runs an entry's tool while the device stays locked, for `most` or
-    /// the rest of the session's time, whichever is shorter.
-    pub fn entry_tool(&mut self, tool: &crate::host::Tool<'_>, most: Duration) -> Result<()> {
-        self.check()?;
-        self.discovery.entry_tool(tool, self.timeout(most)?)
-    }
-
     pub(crate) fn gaster_worker(&self, store: &Store) -> Result<Executable> {
         self.discovery.gaster_worker(store)
     }
@@ -499,12 +444,7 @@ impl<D: Connect> Session<D> {
     ) -> Result<Vec<[u8; 48]>> {
         self.check()?;
         let marker = self.device.identity.pwned.as_deref();
-        if self.device.mode != Mode::Dfu
-            || (bags.is_some() && marker != Some("gaster"))
-            || (bags.is_none()
-                && (marker.is_some() || self.left_in.is_some_and(|s| s != methods::State::Dfu)))
-            || (bags.is_some() && self.left_in.is_some_and(|s| s != methods::State::PwnedDfu))
-        {
+        if self.device.mode != Mode::Dfu || (bags.is_some() && marker != Some("gaster")) || (bags.is_none() && marker.is_some()) {
             return Err(Error::new(
                 Code::InvalidInput,
                 "key acquisition needs compatible gaster DFU",
@@ -529,7 +469,6 @@ impl<D: Connect> Session<D> {
                 "device key reply count mismatch (values suppressed)",
             ));
         }
-        self.arrived_in(methods::State::PwnedDfu);
         Ok(reply)
     }
 
@@ -758,32 +697,6 @@ mod tests {
     }
 
     #[test]
-    fn a_state_usb_does_not_show_is_remembered_while_the_mode_lasts() {
-        let dir = tempfile::tempdir().unwrap();
-        let dfu = vec![device("0x100000", Mode::Dfu, FIRST)];
-        let recovery = vec![device("0x100000", Mode::Recovery, FIRST)];
-        let m1n1 = vec![device("0x100000", Mode::M1n1, "")];
-        let lists = vec![dfu.clone(), dfu, recovery.clone(), recovery, m1n1];
-        let selector = Selector::default();
-        let mut s =
-            Session::start_in(dir.path(), Fake(lists.into()), &selector, Some(LONG)).unwrap();
-        s.shared = Some(Shared::create().unwrap());
-        assert_eq!(s.left_in(), None);
-
-        s.wait_for(Mode::Recovery, LONG).unwrap();
-        s.arrived_in(methods::State::PatchedRecovery);
-        s.check().unwrap();
-        assert_eq!(s.left_in(), Some(methods::State::PatchedRecovery));
-        let shared = s.shared.as_ref().unwrap().read();
-        assert_eq!(shared.left_in.as_deref(), Some("patched-recovery"));
-
-        // In the next mode the device is something else.
-        s.wait_for(Mode::M1n1, LONG).unwrap();
-        assert_eq!(s.left_in(), None);
-        assert_eq!(s.shared.as_ref().unwrap().read().left_in, None);
-    }
-
-    #[test]
     fn a_device_is_followed_into_the_same_mode_again() {
         // The boot ROM, pwned, then off the bus, then the iBSS, in DFU too.
         let rom = vec![device(
@@ -822,21 +735,6 @@ mod tests {
         let other = vec![device("0x100000", Mode::Dfu, SECOND)];
         let mut s = session(vec![rom.clone(), rom, vec![], other], LONG).unwrap();
         assert_eq!(s.wait_again(LONG).unwrap_err().code, Code::DeviceChanged);
-    }
-
-    #[test]
-    fn arriving_again_ends_a_remembered_state() {
-        let dir = tempfile::tempdir().unwrap();
-        let dfu = vec![device("0x100000", Mode::Dfu, FIRST)];
-        let lists = vec![dfu.clone(), dfu.clone(), dfu.clone(), vec![], dfu];
-        let selector = Selector::default();
-        let mut s =
-            Session::start_in(dir.path(), Fake(lists.into()), &selector, Some(LONG)).unwrap();
-        s.shared = Some(Shared::create().unwrap());
-        s.arrived_in(methods::State::Kdfu);
-        s.wait_again(LONG).unwrap();
-        assert_eq!(s.left_in(), None);
-        assert_eq!(s.shared.as_ref().unwrap().read().left_in, None);
     }
 
     #[test]

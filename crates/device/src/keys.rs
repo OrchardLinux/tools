@@ -1,7 +1,6 @@
 //! Firmware keys from a connected device: a boot-firmware build that lacks
 //! keys hands its keybags here, and gaster decrypts them on the device.
 use crate::host::Connect;
-use crate::methods::{self, Kind};
 use crate::select::Selector;
 use crate::session::Session;
 use orchard_boards::catalog::{Board, Catalog};
@@ -89,18 +88,12 @@ fn needs_entry<D: Connect>(catalog: &Catalog, board: &Board, session: &Session<D
         }
         None => {}
     }
+    // gaster enters the chips the `ibss` boot route works on.
+    use orchard_boards::routes::{self, Kind};
     let chip = catalog.chip(board.chip)?;
-    let supported = methods::read(catalog)?.iter().any(|e| {
-        e.kind == Kind::Entry
-            && e.name == "gaster"
-            && e.chips.contains(&chip.soc)
-            && e.hosts.iter().any(|h| h == methods::host())
-    });
-    if !supported {
-        return Err(Error::new(
-            Code::Unsupported,
-            "this board has no supported gaster entry",
-        ));
+    let fits = routes::read(catalog)?.offers(Kind::Boot, &chip, None).into_iter().any(|offer| offer.route.name == "ibss" && offer.why_not.is_none());
+    if !fits {
+        return Err(Error::new(Code::Unsupported, format!("gaster does not enter the {} chip", chip.name)));
     }
     Ok(true)
 }

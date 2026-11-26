@@ -28,14 +28,6 @@ pub struct State {
     pub board_id: Option<String>,
     #[serde(default)]
     pub serial_number: Option<String>,
-    /// The boot-path state the session left the device in, where USB does
-    /// not show it, by its name.
-    #[serde(default)]
-    pub left_in: Option<String>,
-    /// What that state's receiver was prepared with: the chain and the
-    /// digest of the files it was built into.
-    #[serde(default)]
-    pub prep: Option<String>,
 }
 
 /// The open state file of a session that runs commands.

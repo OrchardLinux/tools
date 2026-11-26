@@ -13,8 +13,7 @@ installer and the launcher are built on the same libraries; `install` and
 | open a shell on a running system, run a command, copy a file, allow SSH afterwards, save Apple's device tree | [remote.md](remote.md) |
 | see or clean what is cached | [cache.md](cache.md) |
 | list devices, name one, keep one for several commands | [devices.md](devices.md) |
-| boot a kernel in RAM, or start m1n1 alone | [boot-commands.md](boot-commands.md#run) |
-| take a device through a boot chain by hand | [boot-commands.md](boot-commands.md) |
+| boot a kernel in RAM, or start m1n1 alone | [run.md](run.md) |
 | talk to DFU mode, iBoot, Pongo or m1n1 directly | [low-level.md](low-level.md) |
 | look at board data and firmware | [data-and-firmware.md](data-and-firmware.md) |
 | see what this computer lacks, and get it | [host.md](host.md) |
@@ -34,4 +33,4 @@ installer and the launcher are built on the same libraries; `install` and
 
 No command touches a device unless it says so: `build`, `inputs`, `cache`,
 `doctor`, `boards`, `board`, `data`, `fw` (except `fw build --device-keys`),
-`m1n1 pack` and every `--plan` work without one.
+and `m1n1 pack` work without one.

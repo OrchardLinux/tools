@@ -64,9 +64,9 @@ and they are kept in the cache by their SHA-256.
 
 `fw build`:
 
-- `--chain NAME` (boot): the chain to build for; the board's only one by
-  default. `--keys` and `--im4m` as for
-  [prep](boot-commands.md#firmware-keys).
+- `--chain NAME` (boot): the chain to build for: `iboot`, the 64-bit
+  chips' patched iBSS (and iBEC), which the `ibss` boot route sends.
+  `--keys` and `--im4m`: see [Firmware keys](#firmware-keys).
 - `--device-keys` (boot): takes missing keys from the device, which must be
   that board in DFU mode; this may run gaster on it. With every key in the
   cache no device is touched.
@@ -74,3 +74,18 @@ and they are kept in the cache by their SHA-256.
   what it cannot make, instead of failing.
 
 `install` builds a board's peripheral firmware by itself.
+
+## Firmware keys
+
+Boot firmware is built from Apple's, which is encrypted. The keys
+come, in this order, from:
+
+1. `--keys FILE`, else `ORCHARD_FIRMWARE_KEYS`: a JSON file that is yours
+   alone (mode 0600). With one given, nothing else is looked at.
+2. the cache (`firmware-keys/`), private to you;
+3. the board's `boot.json`, where the keys are public;
+4. the device itself, through gaster, in DFU mode: the `ibss` boot route
+   does this the first time, and `fw build --device-keys` does only this.
+
+`--im4m FILE` is the manifest 64-bit firmware is signed with; without it a
+pinned one for the chip is fetched and checked.

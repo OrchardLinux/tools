@@ -1,7 +1,7 @@
 //! Runs an outside tool for a bounded time, in a session of its own that
 //! ends with the call.
 use super::{Tool, ToolArg};
-use orchard_cache::{Code, Context, Error, Result};
+use orchard_cache::{Code, Error, Result};
 use std::os::unix::{fs::PermissionsExt, process::CommandExt};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -178,29 +178,6 @@ fn stage(tool: &Tool<'_>, dir: &Path) -> Result<Command> {
         }
     }
     Ok(command)
-}
-
-/// Runs `tool` from a private directory inside `tool.dir`, which is removed
-/// afterwards. The tool's output goes to a log file; a failure keeps the
-/// file and names it in the error's hint.
-pub(super) fn execute(tool: &Tool<'_>, timeout: Duration) -> Result<()> {
-    let dir = tempfile::tempdir_in(tool.dir).context(tool.dir.display())?;
-    let mut command = stage(tool, dir.path())?;
-    // A file, not a pipe: nobody has to read it for the tool to go on.
-    let log = tempfile::NamedTempFile::new()?;
-    command
-        .stdout(log.as_file().try_clone()?)
-        .stderr(log.as_file().try_clone()?);
-    match run(&mut command, timeout).context(tool.name) {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            let (_, path) = log.keep().map_err(|e| Error::from(e.error))?;
-            Err(error.hint(format!(
-                "inspect USB before retrying; tool log: {}",
-                path.display()
-            )))
-        }
-    }
 }
 
 /// Fixed-size secret reply over a private socket, never a file or a log.

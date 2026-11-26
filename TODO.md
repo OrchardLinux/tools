@@ -2,42 +2,31 @@
 
 What is decided but not done, with why. Remove an entry when it is done.
 
-## One way of working on a device
+## Routes
 
-`install` and `launch` (and the installer's and the launcher's windows) run
-a fixed path of their own in `crates/runtime`: palera1n or checkra1n into
-Pongo, then m1n1. `prep`, `load` and `boot` in `crates/device` take a device
-through any path the board data describes, inside a session.
+`install`, `launch` and `run` take a boot route: one function each in
+`crates/runtime` (`chain.rs`: palera1n and checkra1n into Pongo; `ibss.rs`:
+gaster and a patched iBoot), chosen from `routes.toml` in the board data,
+and following the device through a session (`crates/device`). The planner
+that `prep`, `load` and `boot` ran on is gone. Still to do:
 
-The two are to become one. `install` and `launch` will run on the boot
-commands' paths, which is what brings them:
-
-- **Cascadia** (the 32-bit boards): `prep` and `boot` first, then in the
-  installer.
-- **iBSS and recovery** (a patched iBoot instead of Pongo) as another route
-  in the installer.
-
-Until then:
-
-- **The lock is shared, the session is not.** Both sides take the same
-  per-location lock (`orchard_cache::lock`), so only one piece of work
-  touches a device; the runtime takes it from DFU mode on
-  (`crates/runtime/src/held.rs`). What a session also carries, the device's identity
-  across modes and a state USB cannot show (`crates/device/src/state.rs`),
-  the runtime keeps to itself. At the consolidation the runtime's run
-  becomes a session: one lock holder, one remembered state, the same
-  guarantees for every command. Do not grow a second continuity mechanism
-  in the runtime before that.
+- **The 32-bit boards** (Cascadia's): a route of their own, a patched iBEC
+  that waits, Apple's device tree, m1n1's 32-bit build
+  (`formats::m1n1::kernel_image_arm`) and `bootx`. With it, `install` and
+  `launch` can stop refusing them.
+- **Access routes** (`access.*` in `routes.toml`): `resize` and the
+  installer app on palera1n, checkra1n and Dopamine. Today the storage is
+  split through palera1n only (`chain::boot_ipados`); checkra1n's and
+  Dopamine's ways are in resize-apfs's scripts.
+- **orchard's `run`** handed over to `orchard2 run` where orchard2 is
+  switched on (orchard's `tools/launcher`).
+- **The old data formats.** `boards` still reads `boot-paths.toml` into the
+  copy of the data and `boot.json` schema 2 (chains with patch steps,
+  `loaders.cascadia`). Only the 32-bit autogo chain and the A12 and A13
+  patches use the steps. Decide with the 32-bit route what of it stays.
 - **A device in use has words, not a screen of its own.** The flow gives
   the title and the hint (`Flow::in_use`), and the windows show them on the
   "more than one device" screen's layout. Not looked at in a window yet.
-- **`--via`, `--entry`, `--chain`, `--from`** belong to the boot commands.
-  `install` and `launch` take `--boot ROUTE` (`routes.toml` in the board
-  data), each route one function in `crates/runtime` (`chain.rs`,
-  `ibss.rs`).
-- **The boot paths' data** (`boot-paths.toml`, `boot.json` schema 2) is
-  only on orchard's `boot-paths` branch, and the catalog is being
-  rethought. Do not build on its present shape.
 - **The USB session files' old place.** `build` reads `usb-session` and
   `usb-identity` from `boot/session/` in the data and still falls back to
   `src/orchard/` (`crates/build/src/ram.rs`). Drop the fallback once a
@@ -73,9 +62,9 @@ yet.
 
 Looked at on 2026-11-26, for the day the Python tool goes:
 
-- `run`, and `boot` (a release's recovery or an image, in RAM, without
-  installing): the half that boots what was built. It comes with the one
-  way of working on a device, above. Releases have had no recovery since
+- `run`'s start of what was built, until orchard hands it to `orchard2
+  run` (above), and `boot` (a release's recovery or an image, in RAM,
+  without installing). Releases have had no recovery since
   about 0.3 (Henrik), so the distribution-checkout form of both may have
   nothing left to boot; check before porting it.
 - `python -m orchard.published keys`: orchard's build.yml writes

@@ -1,5 +1,4 @@
 pub mod boards;
-pub mod boot;
 pub mod build;
 pub mod cache;
 pub mod data;
@@ -8,146 +7,22 @@ pub mod dfu;
 pub mod fw;
 pub mod host;
 pub mod install;
-pub mod load;
 pub mod m1n1;
 pub mod pongo;
-pub mod prep;
 pub mod recovery;
 pub mod remote;
 pub mod run;
 pub mod session;
 pub mod term;
 
-use crate::args::{FirmwareArgs, Global, PathArgs, PayloadArgs};
+use crate::args::{Global, PayloadArgs};
 use crate::output::Report;
-use orchard_boards::catalog::Catalog;
 use orchard_boards::pack::Linux;
-use orchard_cache::store::Store;
 use orchard_cache::{Context, Result};
-use orchard_device::prep::{BootPath, Request};
-use orchard_device::select;
-use orchard_device::session::{in_session, Session};
+use orchard_device::session::Session;
 use orchard_usb::{Host, Mode, Sent};
 use serde::Serialize;
-use std::fmt::Write;
 use std::path::Path;
-
-/// How a command that prepares a boot chain is told to: which methods,
-/// and what a chain's firmware is built with.
-pub struct Way<'a> {
-    pub path: &'a PathArgs,
-    pub firmware: &'a FirmwareArgs,
-}
-
-impl Way<'_> {
-    /// The request of the device flags and these, without a store for a
-    /// plan.
-    pub fn request<'a>(&'a self, catalog: &'a Catalog, store: Option<&'a Store>) -> Request<'a> {
-        let path = self.path;
-        Request {
-            store,
-            firmware: orchard_boards::firmware_build::Boot {
-                chain: None,
-                keys: self.firmware.keys.as_deref(),
-                im4m: self.firmware.im4m.as_deref(),
-            },
-            from: path.from,
-            entry: path.entry.as_deref(),
-            chain: path.chain.as_deref(),
-            board: path.board.as_deref(),
-            ..Request::new(catalog)
-        }
-    }
-}
-
-/// The text of a plan's methods and their steps.
-pub fn planned_text(planned: &BootPath) -> String {
-    let from = &planned.from;
-    let mut text = match &planned.board {
-        Some(board) => format!("{board} in {}", from.state.as_str()),
-        None => format!("a device in {}", from.state.as_str()),
-    };
-    if let Some(marker) = &from.marker {
-        let _ = write!(text, " (marker {marker})");
-    }
-    text.push('\n');
-    if planned.methods.is_empty() {
-        text.push_str("methods: none needed\n");
-    }
-    let mut number = 0;
-    for at in &planned.methods {
-        let method = &at.method;
-        let _ = writeln!(
-            text,
-            "{} ({}): {} to {}",
-            method.name,
-            method.kind.as_str(),
-            method.needs.as_str(),
-            method.leaves.as_str()
-        );
-        for step in &at.steps {
-            number += 1;
-            let _ = writeln!(text, "  {number}. {step}");
-        }
-    }
-    text
-}
-
-/// The methods that ran, each with its steps, as text.
-pub fn went_text(went: &BootPath) -> String {
-    let mut text = String::new();
-    for at in &went.methods {
-        let method = &at.method;
-        let _ = writeln!(
-            text,
-            "{} ({}): {} to {}",
-            method.name,
-            method.kind.as_str(),
-            method.needs.as_str(),
-            method.leaves.as_str()
-        );
-        for step in at.done.iter().flatten() {
-            let _ = writeln!(text, "  {}: {}", step.name, step.outcome.as_str());
-        }
-    }
-    text
-}
-
-/// Where the device is after a run.
-pub fn device_text(went: &BootPath) -> String {
-    match (&went.device, went.state) {
-        (Some(device), Some(state)) => {
-            format!("the device at {} is in {}", device.location, state.as_str())
-        }
-        _ => String::new(),
-    }
-}
-
-/// A plan, or what a run did and where the device is now.
-impl Report for BootPath {
-    fn human(&self) -> Vec<u8> {
-        if self.device.is_none() {
-            return planned_text(self).into_bytes();
-        }
-        format!("{}{}\n", went_text(self), device_text(self)).into_bytes()
-    }
-}
-
-/// The device a command that starts a system works on: without a device
-/// flag, a device that already runs Linux is not the one to start.
-fn session_to_start(global: &Global, timeout: std::time::Duration) -> Result<Session<Host>> {
-    let selector = select::to_start(&mut Host, &in_session(&global.device.selector(None)))?;
-    Session::start(Host, &selector, Some(timeout))
-}
-
-/// A session for a plan: none when a board and a state say all a plan
-/// needs, else one that only looks at the device.
-fn plan_session(global: &Global, path: &PathArgs) -> Result<Option<Session<Host>>> {
-    match (&path.board, path.from) {
-        (Some(_), Some(_)) => Ok(None),
-        _ => Session::start(Host, &global.device.selector(None), None).map(Some),
-    }
-}
 
 /// A session on the one connected device in `mode` that the device flags
 /// choose. It holds the device's lock for the command's one action, or

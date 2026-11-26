@@ -170,73 +170,6 @@ pub enum Command {
         #[arg(last = true, required = true)]
         command: Vec<String>,
     },
-    /// Prepare the device's boot chain: leave it in a receiver (Pongo, a
-    /// patched iBoot or an autogo iBEC) that waits for a load
-    Prep {
-        #[command(flatten)]
-        path: PathArgs,
-        #[command(flatten)]
-        firmware: FirmwareArgs,
-        /// List the steps without touching the device
-        #[arg(long)]
-        plan: bool,
-        /// Seconds all steps may take together
-        #[arg(long, default_value = "300", value_parser = seconds)]
-        timeout: std::time::Duration,
-    },
-    /// Put code on a device and start it, through the receiver it waits
-    /// in or one a prep leaves it in
-    Load {
-        /// The file to load: a plain image for Pongo, m1n1's Mach-O for a
-        /// patched iBoot, or Cascadia's loader; with --kernel, what is packed
-        /// behind it
-        file: std::path::PathBuf,
-        #[command(flatten)]
-        payload: PayloadArgs,
-        #[command(flatten)]
-        path: PathArgs,
-        #[command(flatten)]
-        firmware: FirmwareArgs,
-        /// Also wait for the device to show up in this mode
-        #[arg(long)]
-        wait: Option<ModeArg>,
-        /// List the steps without touching the device
-        #[arg(long)]
-        plan: bool,
-        /// Seconds all steps may take together
-        #[arg(long, default_value = "300", value_parser = seconds)]
-        timeout: std::time::Duration,
-    },
-    /// Start a system installed on the device, through m1n1; a device
-    /// that does not run m1n1 yet is taken there by its boot path
-    Boot {
-        /// The boot entry to start; without it, the first that can boot
-        #[arg(long, conflicts_with = "list")]
-        boot_entry: Option<String>,
-        #[command(flatten)]
-        path: PathArgs,
-        #[command(flatten)]
-        firmware: FirmwareArgs,
-        /// Only list the boot entries
-        #[arg(long)]
-        list: bool,
-        /// File name of the board's device tree; defaults to the board's,
-        /// when the device has been recognised
-        #[arg(long)]
-        dtb_name: Option<String>,
-        /// Do not show the system's splash picture while it loads
-        #[arg(long)]
-        no_splash: bool,
-        /// Also wait for the device to show up in this mode
-        #[arg(long, conflicts_with = "list")]
-        wait: Option<ModeArg>,
-        /// List the steps without touching the device
-        #[arg(long)]
-        plan: bool,
-        /// Seconds all steps may take together
-        #[arg(long, default_value = "300", value_parser = seconds)]
-        timeout: std::time::Duration,
-    },
     /// Look inside firmware archives (IPSWs)
     Fw(FwArgs),
     /// List the boards in the orchard data
@@ -297,27 +230,6 @@ pub enum Command {
     },
 }
 
-/// Which methods take the device to the receiver. They are shown by
-/// `--plan`.
-#[derive(Args)]
-pub struct PathArgs {
-    /// The state the device is in, where USB does not show it, such as
-    /// kdfu, patched-recovery or autogo
-    #[arg(long, value_name = "STATE", value_parser = state)]
-    pub from: Option<orchard_device::methods::State>,
-    /// The entry tool to start with, where several fit
-    #[arg(long, value_name = "NAME")]
-    pub entry: Option<String>,
-    /// The boot chain to prepare with, where several fit
-    #[arg(long, value_name = "NAME")]
-    pub chain: Option<String>,
-    /// The board, where the device does not report it; with --plan and
-    /// --from, the plan is for that board and state, and no device is
-    /// looked at
-    #[arg(long, value_name = "NAME")]
-    pub board: Option<String>,
-}
-
 /// What a boot chain's firmware is built with, where a chain is prepared.
 #[derive(Args)]
 pub struct FirmwareArgs {
@@ -327,14 +239,6 @@ pub struct FirmwareArgs {
     /// IM4M manifest; defaults to the bundled chip manifest
     #[arg(long)]
     pub im4m: Option<std::path::PathBuf>,
-}
-
-fn state(text: &str) -> Result<orchard_device::methods::State, String> {
-    use orchard_device::methods::State;
-    State::parse(text).ok_or_else(|| {
-        let names: Vec<&str> = State::ALL.into_iter().map(State::as_str).collect();
-        format!("not a state; the states are {}", names.join(", "))
-    })
 }
 
 /// What m1n1 or Cascadia's loader is to boot, packed behind it.
@@ -635,20 +539,6 @@ impl Global {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn an_entry_is_chosen_for_a_run_as_for_a_plan() {
-        for args in [
-            &["orchard2", "boot", "--entry", "palera1n"][..],
-            &["orchard2", "boot", "--entry", "palera1n", "--plan"],
-        ] {
-            assert!(Cli::try_parse_from(args).is_ok(), "{args:?}");
-        }
-    }
-}
 
 #[cfg(test)]
 mod documented {
