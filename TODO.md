@@ -111,8 +111,10 @@ tests and the scripted demo only:
   Enter and Esc, the countdown): seen in the demo
   (`ORCHARD_DEMO_RECOVERY=1 orchard2 launch --demo`), not with a device;
 - the lock in the runtime;
-- the `checkra1n` boot route, and `install` by the `ibss` route (`launch`
-  by it reached m1n1 on a j71b);
+- the `checkra1n` boot route (`install`, `launch` and `run` by the `ibss`
+  route ran on a j71b);
+- the `autogo` route and the `ibss` route on the 32-bit boards;
+- `run` in a distribution checkout (its boot is `install`'s);
 - `devices` asking a device that runs iOS for its name and ECID;
 - that `install --ssh` knows the unit (`user-UNIT`, the old host key
   forgotten): it takes the id from the install environment's USB serial,
@@ -127,9 +129,9 @@ tests and the scripted demo only:
   one capture shows it holds;
 - `ssh-access`: the login is tested against a scripted one, never against
   a system's real serial login;
-- `shell`, `exec`, `push` and `pull` (`crates/remote`): the serial console
-  protocol is tested against a scripted console, the rest by what it
-  refuses. No payload and no installed system has been reached with them.
+- `shell`, `exec`, `push` and `pull` (`crates/remote`) reached an installed
+  system on a j71b; no RAM payload yet, whose host key is read over the
+  serial console.
 
 Not run on Linux at all (written on macOS): the udev rule (`setup usb`, and
 what `install` and `launch` install when access is refused), and `setup`'s
