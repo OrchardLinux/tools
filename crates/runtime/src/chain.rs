@@ -445,7 +445,7 @@ pub fn boot_ipados(executor: &Executor, device: &Device) -> Result<()> {
 pub fn start_m1n1(executor: &Executor, device: &Device) -> Result<orchard_usb::Device> {
     let mut session = session(device)?;
     if executor.boot_route(&device.board)?.name == "ibss" {
-        crate::ibss::start(executor, &mut session, &device.board, |m1n1| Ok(m1n1.to_vec()))?;
+        crate::ibss::start(executor, &mut session, &device.board, None, |m1n1| Ok(m1n1.to_vec()))?;
     } else {
         let tools = executor.orchard_tools()?;
         let m1n1 = std::fs::read(executor.download(&tools.m1n1)?)?;
@@ -465,7 +465,7 @@ pub fn start_m1n1(executor: &Executor, device: &Device) -> Result<orchard_usb::D
 pub fn boot_install_env(executor: &Executor, device: &Device) -> Result<()> {
     let mut session = session(device)?;
     if executor.boot_route(&device.board)?.name == "ibss" {
-        return crate::ibss::start(executor, &mut session, &device.board, |m1n1| payload_behind(executor, device, m1n1));
+        return crate::ibss::start(executor, &mut session, &device.board, None, |m1n1| payload_behind(executor, device, m1n1));
     }
     let payload = payload(executor, device)?;
     start_image(executor, &mut session, &device.board, &payload)

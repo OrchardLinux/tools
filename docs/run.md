@@ -21,9 +21,31 @@ m1n1's proxy once it runs; `--proxy` asks for that way whatever the size.
 | boot files of your own | `--kernel K --dtb D… --initramfs I [--bootargs "…"]`: nothing is built |
 | start m1n1 alone and leave it waiting on USB | `--bare` |
 | use a local m1n1 | `--m1n1 FILE`: the plain build for palera1n and checkra1n, the Mach-O build for ibss |
+| give the ibss route its firmware keys | `--keys FILE` (also `ORCHARD_FIRMWARE_KEYS`): see [Firmware keys](data-and-firmware.md#firmware-keys) |
 | add the board's peripheral firmware to the initramfs | `--firmware` |
 | wait for DFU mode | `--wait SECONDS` |
 | bound the device work | `--timeout SECONDS` (300) |
+
+## The 32-bit boards
+
+On the A5 boards (iPad mini, iPad 2) the `ibss` route is the one there is,
+and no tool of ours enters their boot ROM. The device has to be in DFU mode
+with a boot ROM that checkm8 from a Raspberry Pi Pico entered (it shows as
+`pwned checkm8` in `devices`), or in kDFU mode from a jailbroken iOS. From
+there:
+
+```sh
+orchard2 run --bare --m1n1 m1n1-armv7.macho --keys keys.json
+orchard2 run --m1n1 m1n1-armv7.macho --keys keys.json \
+    --kernel zImage --dtb board.dtb --initramfs initramfs.cpio.gz
+```
+
+Apple's iBSS and iBEC are sent patched, the iBEC takes Apple's device tree
+and m1n1's 32-bit build as its kernel, and `bootx` starts it. No 32-bit
+m1n1 is published yet, so `--m1n1` is needed, and the firmware's keys come
+from `--keys` (they are public for these boards). The kernel is a zImage
+and goes up behind m1n1; `--proxy` is not for these boards yet. Not run on
+a device.
 
 A distribution checkout is refused: its release is installed
 ([install.md](install.md)), not run.

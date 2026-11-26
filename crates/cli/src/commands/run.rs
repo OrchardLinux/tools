@@ -64,9 +64,14 @@ pub struct Args {
     #[arg(long)]
     firmware: bool,
     /// A local m1n1 instead of Orchard's published one: the plain build for
-    /// the palera1n and checkra1n routes, the Mach-O build for ibss
+    /// the palera1n and checkra1n routes, the Mach-O build for ibss (the
+    /// 32-bit one on a 32-bit board, where none is published yet)
     #[arg(long)]
     m1n1: Option<PathBuf>,
+    /// Firmware key file for the ibss route, instead of the cache and the
+    /// device (also ORCHARD_FIRMWARE_KEYS)
+    #[arg(long)]
+    keys: Option<PathBuf>,
     /// Upload the kernel through m1n1's proxy even where one upload would do
     #[arg(long)]
     proxy: bool,
@@ -209,11 +214,19 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
         return Err(Error::new(Code::Unsupported, format!("run starts m1n1; the {} route ends elsewhere", route.name)));
     }
     let ibss = route.name == "ibss";
+    // The 32-bit chips take a 32-bit m1n1 and a zImage.
+    let arm = catalog.chip(board.chip)?.architecture == "arm";
     if let Some(m1n1) = &local_m1n1 {
-        if m1n1::is_macho(m1n1) != ibss {
-            return Err(invalid(match ibss {
-                true => "the ibss route takes m1n1's Mach-O build (m1n1-idevice.macho)",
-                false => "this route takes m1n1's plain build (m1n1.bin)",
+        let fits = match (ibss, arm) {
+            (true, true) => m1n1::is_macho_arm(m1n1),
+            (true, false) => m1n1::is_macho(m1n1),
+            (false, _) => !m1n1::is_macho(m1n1) && !m1n1::is_macho_arm(m1n1),
+        };
+        if !fits {
+            return Err(invalid(match (ibss, arm) {
+                (true, true) => "this board takes m1n1's 32-bit Mach-O build (m1n1-armv7.macho)",
+                (true, false) => "the ibss route takes m1n1's Mach-O build (m1n1-idevice.macho)",
+                (false, _) => "this route takes m1n1's plain build (m1n1.bin)",
             }));
         }
     }
@@ -240,8 +253,18 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
         fdt::Tree::read(dtb)?;
     }
     let compressed = kernel.as_ref().is_some_and(|k| k.starts_with(&[0x1f, 0x8b]));
-    if kernel.as_ref().is_some_and(|k| !compressed && k.get(56..60) != Some(b"ARM\x64".as_slice())) {
-        return Err(invalid("kernel must be an ARM64 Image or gzip-compressed Image"));
+    let right_kernel = |k: &Vec<u8>| match arm {
+        true => k.get(0x24..0x28) == Some(&0x016f_2818u32.to_le_bytes()[..]),
+        false => compressed || k.get(56..60) == Some(b"ARM\x64".as_slice()),
+    };
+    if kernel.as_ref().is_some_and(|k| !right_kernel(k)) {
+        return Err(invalid(match arm {
+            true => "the kernel must be a 32-bit ARM zImage for this board",
+            false => "kernel must be an ARM64 Image or gzip-compressed Image",
+        }));
+    }
+    if arm && args.proxy {
+        return Err(Error::new(Code::Unsupported, "the kernel goes behind m1n1 on the 32-bit boards; --proxy is not for them yet"));
     }
     if bootargs.as_deref().is_some_and(|s| s.contains('\0')) {
         return Err(invalid("boot arguments contain a NUL byte"));
@@ -302,7 +325,8 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     // that much, else through its proxy once it runs.
     let linux = kernel.as_ref();
     let size = linux.map_or(0, |kernel| kernel.len() + dtbs.iter().map(Vec::len).sum::<usize>() + initramfs.len());
-    let through_proxy = linux.is_some() && (args.proxy || (ibss && size > IBOOT_UPLOAD));
+    // What a 32-bit iBEC takes in one upload has not been measured.
+    let through_proxy = linux.is_some() && (args.proxy || (ibss && !arm && size > IBOOT_UPLOAD));
     let image = |m1n1: &[u8]| -> Result<Vec<u8>> {
         let m1n1 = local_m1n1.as_deref().unwrap_or(m1n1);
         match linux {
@@ -319,7 +343,7 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     let deadline = Deadline::after(Duration::from_secs(args.timeout));
     let device_started = Instant::now();
     if ibss {
-        orchard_runtime::ibss::start(&executor, &mut session, &device.board, image)?;
+        orchard_runtime::ibss::start(&executor, &mut session, &device.board, args.keys.as_deref(), image)?;
     } else {
         let published = match &local_m1n1 {
             Some(_) => Vec::new(),

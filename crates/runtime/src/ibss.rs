@@ -8,7 +8,7 @@
 //! keys where they are not in the cache yet: those the device itself
 //! unwraps once gaster is in.
 use crate::exec::Executor;
-use orchard_boards::catalog::Catalog;
+use orchard_boards::catalog::{Board, Catalog};
 use orchard_boards::data::loaders;
 use orchard_boards::firmware_build::Boot;
 use orchard_boards::{boot_firmware, pack};
@@ -18,7 +18,9 @@ use orchard_device::host::Connect;
 use orchard_device::session::Session;
 use orchard_device::usb;
 use orchard_flow::Event;
+use orchard_usb::dfu::Pwned;
 use orchard_usb::{Host, Mode, Sent};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 fn fail(message: impl Into<String>) -> Error {
@@ -34,8 +36,9 @@ fn acknowledged(sent: Sent, command: &str) -> Result<()> {
 
 /// Takes the session's device, a `board` in DFU mode, into what `image`
 /// makes of m1n1's Mach-O build: m1n1 as it is, or with a system behind it
-/// that it starts at once. What it started then shows up on USB.
-pub fn start(executor: &Executor, session: &mut Session<Host>, board: &str, image: impl FnOnce(&[u8]) -> Result<Vec<u8>>) -> Result<()> {
+/// that it starts at once. What it started then shows up on USB. `keys` is
+/// a firmware key file to use instead of the cache and the device.
+pub fn start(executor: &Executor, session: &mut Session<Host>, board: &str, keys: Option<&Path>, image: impl FnOnce(&[u8]) -> Result<Vec<u8>>) -> Result<()> {
     let mut lines: Vec<String> = Vec::new();
     let mut say = |message: &str| {
         eprintln!("{} ibss: {message}", crate::install::stamp());
@@ -47,6 +50,9 @@ pub fn start(executor: &Executor, session: &mut Session<Host>, board: &str, imag
     let board = catalog.board(board)?;
     let chip = catalog.chip(board.chip)?;
     let store = Store::open(Some(executor.cache()))?;
+    if chip.image_format == "img3" {
+        return start_arm(session, &catalog, &board, &store, keys, image, &mut say);
+    }
     let two_stage = pack::two_stage(&chip);
 
     say("Preparing m1n1");
@@ -56,7 +62,7 @@ pub fn start(executor: &Executor, session: &mut Session<Host>, board: &str, imag
 
     say("Preparing the patched iBoot");
     let plan = boot_firmware::Plan::new(&catalog, &board, Some("iboot"))?;
-    let mut firmware = plan.prepare(&board, &store, &Boot { chain: Some("iboot"), keys: None, im4m: None })?;
+    let mut firmware = plan.prepare(&board, &store, &Boot { chain: Some("iboot"), keys, im4m: None })?;
     firmware.check_restore(&m1n1, two_stage.then_some(&stub[..]))?;
     firmware.check_acquisition()?;
 
@@ -134,6 +140,90 @@ pub fn start(executor: &Executor, session: &mut Session<Host>, board: &str, imag
     recovery.send(&restore.kernelcache, session.timeout(Duration::from_secs(120))?).map_err(usb::error)?;
     say("Starting m1n1");
     // iBoot is gone once m1n1 runs: only what shows up on USB confirms the start.
+    recovery.command("bootx", session.timeout(Duration::from_secs(10))?).map_err(usb::error)?;
+    Ok(())
+}
+
+/// The same route on the 32-bit chips (A5 to A6X), where no tool of ours
+/// enters the boot ROM: the device is in DFU mode with a boot ROM that
+/// checkm8 from a Pico entered (it shows `PWND:[checkm8]`), or in kDFU
+/// mode, where a patched iBSS started from a jailbroken iOS already runs.
+///
+/// From the entered boot ROM the patched iBSS is started and takes the
+/// patched iBEC encrypted, as the firmware's own is; after kDFU the device's
+/// key is off and the iBEC goes unencrypted. The iBEC then takes Apple's
+/// device tree and m1n1's 32-bit build as its kernel, and `bootx` (Project
+/// Cascadia `devices/a5/tools/flash.sh` and `docs/research/boot-strategy.md`,
+/// `091d441`).
+fn start_arm(
+    session: &mut Session<Host>,
+    catalog: &Catalog,
+    board: &Board,
+    store: &Store,
+    keys: Option<&Path>,
+    image: impl FnOnce(&[u8]) -> Result<Vec<u8>>,
+    say: &mut dyn FnMut(&str),
+) -> Result<()> {
+    say("Preparing m1n1");
+    // No 32-bit m1n1 is published yet: the caller brings one.
+    let m1n1 = image(&[])?;
+    if !orchard_formats::m1n1::is_macho_arm(&m1n1) {
+        return Err(Error::new(Code::InvalidInput, "this board takes m1n1's 32-bit Mach-O build, which is not published yet").hint("give it with --m1n1 FILE (m1n1-armv7.macho)"));
+    }
+    let kernel = orchard_formats::m1n1::kernel_image_arm(&m1n1).map_err(|e| Error::new(Code::Format, e.to_string()))?;
+
+    say("Preparing the patched iBoot");
+    let plan = boot_firmware::Plan::new(catalog, board, Some("iboot"))?;
+    let firmware = plan.prepare(board, store, &Boot { chain: Some("iboot"), keys, im4m: None })?;
+    if firmware.needs_device() {
+        return Err(Error::new(Code::NotFound, "the firmware's keys are not known, and no tool of ours reads them from this chip").hint("give them with --keys FILE"));
+    }
+    let images = firmware.finish(store)?;
+    let devicetree = plan.input(board, store, "DeviceTree")?;
+
+    if session.check()?.mode != Mode::Dfu {
+        return Err(fail("the device is no longer in DFU mode"));
+    }
+    match session.device().identity.pwned.clone().as_deref() {
+        Some("checkm8") => {
+            say("Starting the patched iBSS on the entered boot ROM");
+            let mut dfu = session.dfu()?;
+            dfu.start_pwned(Pwned::Checkm8, pack::file(&images, "ibss.raw")?, session.timeout(Duration::from_secs(60))?).map_err(usb::error)?;
+            drop(dfu);
+            say("Waiting for the iBSS");
+            if let Some(mark) = &session.wait_again(Duration::from_secs(30))?.identity.pwned {
+                return Err(fail(format!("the boot ROM is back (marked {mark}); the iBSS did not start")));
+            }
+            say("Sending the patched iBEC");
+            let mut dfu = session.dfu()?;
+            dfu.send(pack::file(&images, "ibec.encrypted.img3")?, session.timeout(Duration::from_secs(60))?).map_err(usb::error)?;
+        }
+        // DFU mode without a mark: kDFU, where the iBSS runs already. An
+        // untouched boot ROM looks the same and refuses the upload.
+        None => {
+            say("Sending the patched iBEC to the iBSS (kDFU)");
+            let mut dfu = session.dfu()?;
+            dfu.send(pack::file(&images, "ibec.plain.img3")?, session.timeout(Duration::from_secs(60))?).map_err(usb::error)?;
+        }
+        Some(other) => return Err(fail(format!("the boot ROM was entered by {other}, which this route does not start from"))),
+    }
+
+    say("Waiting for the patched iBEC");
+    session.wait_for(Mode::Recovery, Duration::from_secs(60))?;
+    let opening = Instant::now() + session.timeout(Duration::from_secs(10))?;
+    let mut recovery = loop {
+        match session.recovery() {
+            Ok(recovery) => break recovery,
+            Err(e) if e.code == Code::Usb && Instant::now() < opening => std::thread::sleep(Duration::from_millis(200)),
+            Err(e) => return Err(e),
+        }
+    };
+    say("Sending the device tree");
+    recovery.send(&devicetree, session.timeout(Duration::from_secs(60))?).map_err(usb::error)?;
+    acknowledged(recovery.command("devicetree", session.timeout(Duration::from_secs(10))?).map_err(usb::error)?, "devicetree")?;
+    say("Sending m1n1");
+    recovery.send(&kernel, session.timeout(Duration::from_secs(120))?).map_err(usb::error)?;
+    say("Starting m1n1");
     recovery.command("bootx", session.timeout(Duration::from_secs(10))?).map_err(usb::error)?;
     Ok(())
 }

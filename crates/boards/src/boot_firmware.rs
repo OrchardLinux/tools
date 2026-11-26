@@ -252,11 +252,17 @@ impl Plan {
     pub fn new(catalog: &Catalog, board: &Board, chain: Option<&str>) -> Result<Self> {
         let data = board.boot_data()?;
         let chip = catalog.chip(board.chip)?;
-        // The `iboot` chain needs no recipe on the 64-bit chips: the open
-        // patcher on every stage the chip loads, from the board's firmware.
-        let plain = match (chain, data.firmware.keys().next()) {
-            (Some("iboot"), Some(build)) if !data.chains.contains_key("iboot") && chip.image_format == "im4p" => {
-                let step = crate::catalog::BootStep { name: "hbootpatcher".into(), params: Default::default() };
+        // The `iboot` chain needs no recipe: the open patcher of the chip's
+        // image format on every stage the chip loads, from the board's
+        // firmware.
+        let patcher = match chip.image_format.as_str() {
+            "im4p" => Some("hbootpatcher"),
+            "img3" => Some("iboot32patcher"),
+            _ => None,
+        };
+        let plain = match (chain, data.firmware.keys().next(), patcher) {
+            (Some("iboot"), Some(build), Some(patcher)) if !data.chains.contains_key("iboot") => {
+                let step = crate::catalog::BootStep { name: patcher.into(), params: Default::default() };
                 Some(crate::catalog::ChainRecipe {
                     firmware: build.clone(),
                     patch: chip.stages.iter().map(|stage| (stage.clone(), vec![step.clone()])).collect(),
@@ -349,6 +355,12 @@ impl Plan {
     /// The exact Apple firmware selected for this boot plan.
     pub fn firmware(&self) -> &crate::catalog::Ipsw {
         &self.recipe.ipsw
+    }
+
+    /// One of the firmware's files as Apple ships it, by its name in the
+    /// board's boot data, such as `DeviceTree`.
+    pub fn input(&self, board: &Board, store: &Store, name: &str) -> Result<Vec<u8>> {
+        Ok(Inputs::new(store, board, &self.recipe).get(name, MAX_IMAGE)?.bytes)
     }
 
     pub fn chain(&self) -> &str {
