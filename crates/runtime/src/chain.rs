@@ -472,12 +472,16 @@ pub fn start_m1n1(executor: &Executor, device: &Device) -> Result<orchard_usb::D
 /// Never retried by itself: a failure goes back to the flow, which asks for
 /// DFU again.
 pub fn boot_install_env(executor: &Executor, device: &Device) -> Result<()> {
-    let mut session = session(device)?;
+    boot_install_env_in(executor, &mut session(device)?, device)
+}
+
+/// [`boot_install_env`] in a session that follows the device already.
+pub fn boot_install_env_in(executor: &Executor, session: &mut Session<Host>, device: &Device) -> Result<()> {
     if executor.boot_route(&device.board)?.name == "ibss" {
-        return crate::ibss::start(executor, &mut session, &device.board, None, |m1n1| payload_behind(executor, device, m1n1));
+        return crate::ibss::start(executor, session, &device.board, None, |m1n1| payload_behind(executor, device, m1n1));
     }
     let payload = payload(executor, device)?;
-    start_image(executor, &mut session, &device.board, &payload)
+    start_image(executor, session, &device.board, &payload)
 }
 
 /// `image` by the board's boot route into Pongo and started there: m1n1,

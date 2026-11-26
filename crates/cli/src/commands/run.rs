@@ -178,8 +178,16 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     if explicit {
         wanted(args, None)?;
     }
+    // A distribution checkout's release: its installer system, from RAM.
+    let release = match explicit || directory.is_file() {
+        true => None,
+        false => build::release(global, &args.build, !args.no_build)?,
+    };
+    if release.is_some() && (args.m1n1.is_some() || args.proxy || args.firmware || args.bootargs.is_some() || !args.dtb.is_empty() || args.initramfs.is_some()) {
+        return Err(invalid("a distribution checkout's release is booted as it is built: --m1n1, --proxy, --firmware, --bootargs, --dtb and --initramfs are for a kernel of your own"));
+    }
     let file_at = match () {
-        _ if explicit => None,
+        _ if explicit || release.is_some() => None,
         _ if directory.is_file() => Some(directory.to_owned()),
         _ if directory.join(SHORTCUT).is_file() => Some(directory.join(SHORTCUT)),
         _ if args.no_build => None,
@@ -215,9 +223,38 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
         options.cache = cache.clone();
     }
     options.boot = args.boot.clone().or(args.short.route().map(str::to_owned));
+    options.index = release.as_ref().map(|index| format!("file://{}", index.display()));
     let executor = options.executor(events)?;
     executor.check_boot()?;
     let route = executor.boot_route(&device.board)?;
+    if release.is_some() {
+        let name = executor.release()?.name;
+        say(&format!("Starting {name}'s installer system by the {} route; nothing is installed", route.name));
+        let deadline = Deadline::after(Duration::from_secs(args.timeout));
+        let device_started = Instant::now();
+        orchard_runtime::chain::boot_install_env_in(&executor, &mut session, &device)?;
+        drop(executor);
+        drop(log);
+        let reached = match args.no_wait {
+            true => "The start has gone out; not waited for",
+            false => {
+                say("Waiting for the installer system");
+                session.wait_for(Mode::Linux, deadline.left()?)?;
+                "The release's installer system is running in RAM; nothing is installed"
+            }
+        };
+        drop(session);
+        return Ok(Booted {
+            reached,
+            board: board.name,
+            location: original.location,
+            route: route.name,
+            through_proxy: false,
+            total_seconds: started.elapsed().as_secs_f64(),
+            device_seconds: device_started.elapsed().as_secs_f64(),
+        }
+        .into());
+    }
     // Routes end in m1n1, or in Cascadia's loader, which boots Linux itself.
     let autogo = route.ends.as_deref() == Some("cascadia");
     if !autogo && route.ends.as_deref() != Some("m1n1") {
@@ -246,7 +283,7 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
 
     // The Linux to boot: the options, and the build's file where one is named.
     let file_at = match file_at {
-        None if !explicit => Some(shortcut(directory, board.platform.as_deref())?),
+        None if !explicit && release.is_none() => Some(shortcut(directory, board.platform.as_deref())?),
         at => at,
     };
     let file = match file_at {

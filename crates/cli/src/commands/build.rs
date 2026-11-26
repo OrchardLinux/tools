@@ -170,13 +170,22 @@ pub fn build(global: &Global, args: &BuildArgs) -> Result<Output> {
 }
 
 /// Builds the RAM payload of the project in `args`' directory and returns
-/// where it is. A distribution checkout is refused before anything is built.
+/// where it is.
 pub fn payload(global: &Global, args: &BuildArgs) -> Result<PathBuf> {
-    let directory = args.directory.canonicalize().context(args.directory.display())?;
-    if project::find_release(&directory)?.is_some() {
-        return Err(Error::new(Code::Unsupported, format!("{} is a distribution checkout: its release is installed, not run", directory.display())));
-    }
     built(global, args).map(|built| PathBuf::from(built.output))
+}
+
+/// Where `args`' directory is a distribution checkout: the index of its
+/// release, built first when `build`, else the last build's.
+pub fn release(global: &Global, args: &BuildArgs, build: bool) -> Result<Option<PathBuf>> {
+    let directory = args.directory.canonicalize().context(args.directory.display())?;
+    let Some((checkout, _)) = project::find_release(&directory)? else {
+        return Ok(None);
+    };
+    match build {
+        true => built(global, args).map(|built| Some(PathBuf::from(built.output))),
+        false => distro::latest(&checkout).map(Some),
+    }
 }
 
 fn built(global: &Global, args: &BuildArgs) -> Result<Built> {

@@ -67,8 +67,14 @@ the routes that end in m1n1. Both routes start the same patched iBSS and
 iBEC the same way, so where `--ibss` fails and `--autogo` boots, the fault
 is in m1n1. Not run on a device.
 
-A distribution checkout is refused: its release is installed
-([install.md](install.md)), not run.
+## A distribution checkout
+
+In a distribution checkout (`orchard.toml` with `[release]`), `run` builds
+the release and starts its installer system on the device from RAM, by the
+same route and in the same way `install` starts it. Nothing is installed:
+the system is there to look around in. `--no-build` takes the last build.
+The options for a kernel of your own (`--m1n1`, `--proxy`, `--firmware`,
+`--bootargs`, `--dtb`, `--initramfs`) are not for it.
 
 ## run.toml
 
