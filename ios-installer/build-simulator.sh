@@ -6,14 +6,16 @@
 # (nothing is kept), so an API newer than iOS 12 fails here too.
 set -euo pipefail
 cd "$(dirname "$0")"
+# resize-apfs's code for the app inside Dopamine, which the screens name (see build.sh).
+access=${RESIZE_APFS:-$PWD/../../resize-apfs-engine}/Access/StorageAccess.swift
 
 xcrun --sdk iphoneos swiftc -target arm64-apple-ios12.0 -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" \
-  -swift-version 5 -parse-as-library -typecheck App/*.swift
+  -swift-version 5 -parse-as-library -typecheck App/*.swift "$access"
 
 app=$PWD/out-simulator/OrchardInstaller.app
 rm -rf "$app" && mkdir -p "$app/Fonts"
 xcrun --sdk iphonesimulator swiftc -target arm64-apple-ios15.0-simulator -sdk "$(xcrun --sdk iphonesimulator --show-sdk-path)" \
-  -swift-version 5 -O -parse-as-library App/*.swift -o "$app/OrchardInstaller"
+  -swift-version 5 -O -parse-as-library App/*.swift "$access" -o "$app/OrchardInstaller"
 cp App/Info.plist "$app/" && plutil -replace CFBundleSupportedPlatforms -json '["iPhoneSimulator"]' "$app/Info.plist"
 cp ../crates/app/assets/fonts/*.ttf "$app/Fonts/"
 # The wordmark of what an unstamped installer installs.

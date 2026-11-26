@@ -25,6 +25,11 @@ enum Mock {
         return UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
     }
 
+    /// A0.1 to A0.3: the pages before the helper is there (the app inside Dopamine).
+    static func access(_ frame: String) -> StorageAccess.Phase? {
+        ["A0.1": .start, "A0.2": .getting, "A0.3": .failed][frame]
+    }
+
     /// The frames that show a ticked checkbox, a filled form or an open dialog.
     static func approved(_ frame: String) -> Bool { ["I1.2", "I1.4", "I1.6", "I1.7", "I1.8"].contains(frame) }
     static func dialog(_ frame: String) -> Bool { frame == "I1.7" || frame == "I3.4" }

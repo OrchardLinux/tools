@@ -7,14 +7,14 @@ install; starting the installed system is not its part.
 
 | Path | What it is |
 | --- | --- |
-| `App` | The app (UIKit, iOS 12): it shows what the helper tells it and sends what the user does |
+| `App` | The app (UIKit): it shows what the helper tells it and sends what the user does |
 | `Helper` | The root helper: serves the app, resizes iOS with resize-apfs's engine, links the installer's engine |
 | `../crates/inapp` | The installer's engine, in Rust: its state, the downloads and the install |
 | `PROTOCOL.md` | How app and helper talk |
-| `build.sh` | Builds app, helper and e2fsprogs into `out/device` |
+| `build.sh` | Builds the app, the helper and e2fsprogs into `out/device/access` |
 | `build-e2fsprogs.sh` | Builds the e2fsprogs programs the helper runs (`ios`, or `host` for the tests) |
-| `build-simulator.sh` | Builds only the app for the iOS simulator, to look at its screens (`--mock I1.2`) |
-| `launch.sh` | Starts the installer on a connected device through Dopamine |
+| `build-simulator.sh` | Builds only the app for the iOS simulator, to look at its screens (`--mock I1.2`, `--mock A0.1`) |
+| `launch.sh` | Puts the installer on a connected device, without DFU |
 
 ## Start it
 
@@ -22,18 +22,33 @@ install; starting the installed system is not its part.
 ./launch.sh
 ```
 
-builds the installer when it is not built, signs and installs Dopamine as
-resize-apfs's Dopamine route does (its checkout is used, `RESIZE_APFS` or
-`../../resize-apfs-engine`), and after the jailbreak copies the installer to
-the device over the USB cable and opens it. Typing `done` in the terminal
-removes it again; never while a split or an install runs.
+builds the installer when it is not built, puts it into the pinned Dopamine app, signs that
+with your Apple ID and installs it: one app, called Orchard Installer. Open it on the device
+and tap **Continue**. The screen restarts, you unlock, and the installer opens again.
 
-- `--jailbroken`: Dopamine is on the device and its jailbreak is active;
-  nothing is signed or installed.
 - `--allow-unsupported`: install on a board the release does not cover yet,
   with the kernel of its chip's page size. Such a system has no device tree
   and no boot entry; the boot partition stays empty.
 - `--index URL`: another release index than the newest Omarchy A.
+
+How the one app works is resize-apfs's, used from its checkout (`RESIZE_APFS`, default
+`../../resize-apfs-engine`, at the commit `build.sh` pins): its `Access` folder is the code
+that gets storage access through Dopamine and starts the helper as a launch daemon, and its
+`scripts/embed.py` and Dopamine route put the app into Dopamine and sign it. Its
+`Device/README.md` ("Via Dopamine") and `docs/updating-dopamine.md` describe it. What is the
+installer's own is `App/EmbeddedApp.swift`: its names, the helper and e2fsprogs programs it
+brings as payloads, and its start.
+
+Orchard Installer and Resize APFS are the same app to iOS (one identifier), so installing
+one replaces the other on a device. The installer resizes too.
+
+The app's log of getting access and starting the helper is in its own folder on the device:
+
+```sh
+xcrun devicectl device copy from --device UDID --domain-type appDataContainer \
+  --domain-identifier IDENTIFIER --source "Library/Application Support/OrchardInstaller" \
+  --destination ./installer-log
+```
 
 ## What it does
 

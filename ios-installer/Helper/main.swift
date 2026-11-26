@@ -9,7 +9,13 @@ import ResizeDevice
 import NativeSystem
 import InstallerEngine
 
-let ipcDirectory = "/var/run/orchard-installer"
+/// Where the socket and the token are. The app inside Dopamine names a folder of the helper's
+/// own (--ipc-dir): its helper starts early in a screen restart, and iOS empties /var/run
+/// after that.
+let ipcDirectory: String = {
+    let args = CommandLine.arguments
+    return args.firstIndex(of: "--ipc-dir").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } ?? "/var/run/orchard-installer"
+}()
 let stateDirectory = "/var/root/Library/OrchardInstaller"
 let cacheDirectory = "/var/root/Library/Caches/orchard"
 // What an unstamped installer installs.
@@ -104,9 +110,14 @@ final class Server: @unchecked Sendable {
     let socketFD: Int32
     let token: String
     let mobileUID: uid_t
-    let appExecutable: String
+    /// The app that may connect as `mobile`. nil for the app inside Dopamine, which connects as root.
+    let appExecutable: String?
+    /// Set by the first request with the right token: the app is there.
+    private let served = NSLock()
+    private var wasServed = false
+    var hasServed: Bool { served.lock(); defer { served.unlock() }; return wasServed }
 
-    init(appExecutable: String) throws {
+    init(appExecutable: String?) throws {
         self.appExecutable = appExecutable
         mobileUID = getpwnam("mobile")?.pointee.pw_uid ?? 501
         let mobileGID = getpwnam("mobile")?.pointee.pw_gid ?? 501
@@ -161,7 +172,7 @@ final class Server: @unchecked Sendable {
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, socklen_t(MemoryLayout<Int32>.size))
         var uid: uid_t = 0
         guard raf_peer_uid(fd, &uid) == 0, uid == mobileUID || uid == 0,
-              uid == 0 || raf_peer_is_executable(fd, appExecutable) == 1 else { return }
+              uid == 0 || appExecutable.map({ raf_peer_is_executable(fd, $0) == 1 }) == true else { return }
         while let frame = try? LocalFrames.read(from: fd) {
             let refused = { (message: String) in
                 (try? JSONSerialization.data(withJSONObject: ["error": ["message": message]])) ?? Data()
@@ -171,6 +182,7 @@ final class Server: @unchecked Sendable {
                 try? LocalFrames.write(refused("Invalid helper credentials."), to: fd)
                 return
             }
+            served.lock(); wasServed = true; served.unlock()
             let answer: Data = String(decoding: frame, as: UTF8.self).withCString { request in
                 guard let raw = oi_request(request) else { return refused("The installer did not answer.") }
                 defer { oi_free(raw) }
@@ -193,23 +205,22 @@ do {
         try DeviceWorker.runFile(URL(fileURLWithPath: job))
         exit(0)
     }
-    // The session's commands (launch.py), as resize-apfs's helper has them.
-    if let app = argument("--register-app") {
-        try AppRegistration.register(app)
-        exit(0)
-    }
-    if let app = argument("--unregister-app") {
-        try AppRegistration.unregister(app)
-        exit(0)
-    }
-    if CommandLine.arguments.contains("--busy") {
-        // Exit 0 while a resize or an install runs: the session must not end then.
-        let installing = FileManager.default.fileExists(atPath: cacheDirectory + "/work")
-        exit(DeviceEngine.operationActive(directory: URL(fileURLWithPath: stateDirectory)) || installing ? 0 : 1)
-    }
     guard geteuid() == 0 else { throw ResizeError("The installer's helper must run as root.") }
-    guard let uiPath = argument("--ui-path") else { throw ResizeError("The helper serves the app --ui-path names.") }
-    let appExecutable = try SessionTrust.validatedUIPath(uiPath)
+    // Whom the helper serves: the app inside Dopamine (--embedded IDENTIFIER PROCESS, started
+    // as a launch daemon by that app, which connects as root), or the app at --ui-path.
+    var embedded: (identifier: String, process: String)?
+    if let index = CommandLine.arguments.firstIndex(of: "--embedded") {
+        guard index + 2 < CommandLine.arguments.count else { throw ResizeError("--embedded needs the app's identifier and process name.") }
+        embedded = (CommandLine.arguments[index + 1], CommandLine.arguments[index + 2])
+    }
+    let appExecutable = try argument("--ui-path").map(SessionTrust.validatedUIPath)
+    guard (embedded == nil) != (appExecutable == nil) else { throw ResizeError("The helper serves the app --embedded or --ui-path names.") }
+    if embedded != nil {
+        // Nothing here works before the first unlock since the device started.
+        FirstUnlock.wait()
+        // That app asks for no terminal password, so Dopamine's default one must not stay.
+        Thread.detachNewThread { TerminalPassword.replaceDefault(log: log) }
+    }
     let executable = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.path
     let product = machine()
     let pad = product.hasPrefix("iPad")
@@ -234,8 +245,17 @@ do {
     Resizer.shared = resizer
     let server = try Server(appExecutable: appExecutable)
     resizer.run()
-    AppOpener(executable: appExecutable, registerWithUICache: false).start(log: log)
-    log("helper serving \(appExecutable)")
+    if let embedded {
+        // On the lock screen iOS starts the app's process without showing the app: only its
+        // first request counts as open.
+        let opener = AppOpener(identifier: embedded.identifier, processName: embedded.process)
+        opener.opened = { server.hasServed }
+        opener.start(log: log)
+        log("helper serving \(embedded.identifier)")
+    } else if let appExecutable {
+        AppOpener(executable: appExecutable, registerWithUICache: false).start(log: log)
+        log("helper serving \(appExecutable)")
+    }
     server.run()
 } catch {
     fputs("Orchard installer helper stopped: \(error.localizedDescription)\n", stderr)

@@ -174,7 +174,8 @@ func notice(_ m: Metrics, icon: Icon? = nil, head: String, body: String, fill: C
     box.layer.borderColor = Theme.yellow.withAlphaComponent(0.32).cgColor
     var heading: UIView = text(head, Theme.sans(m.bodySize, semibold: true), Theme.yellow)
     if let icon = icon { heading = stack(.horizontal, 8, [icon.view(15, Theme.yellow), heading], align: .center) }
-    let column = stack(.vertical, 6, [heading, text(body, Theme.sans(m.noteSize), Theme.text, line: 1.45)])
+    if let icon = icon, body.isEmpty { heading = stack(.horizontal, 8, [icon.view(15, Theme.yellow), text(head, Theme.sans(m.bodySize, semibold: true), Theme.yellow)], align: .top) }
+    let column = stack(.vertical, 6, body.isEmpty ? [heading] : [heading, text(body, Theme.sans(m.noteSize), Theme.text, line: 1.45)])
     embed(column, in: box, UIEdgeInsets(top: 14, left: 16, bottom: 14, right: 16))
     return box
 }

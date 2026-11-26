@@ -42,10 +42,18 @@ final class RootViewController: UIViewController {
     private static let missedLimit = 10
     private var signature: String?
     private var timer: Timer?
+    /// Only in the app inside Dopamine, which gets storage access and starts the helper itself.
+    private let access: StorageAccess?
+    /// Before `.ready` the helper is not there: the access pages show instead of its view.
+    private var phase: StorageAccess.Phase
 
-    init(mock: String?) {
+    init(mock: String?, access: StorageAccess? = nil) {
         self.mock = mock
-        client = mock == nil ? HelperClient() : nil
+        self.access = access
+        phase = mock.flatMap(Mock.access) ?? (access == nil ? .ready : .checking)
+        client = mock != nil ? nil : access.map { access in
+            HelperClient(directory: access.configuration.ipc, elevate: { access.privileged($0) })
+        } ?? HelperClient()
         super.init(nibName: nil, bundle: nil)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -99,6 +107,18 @@ final class RootViewController: UIViewController {
             let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.poll() }
             RunLoop.main.add(timer, forMode: .common)
             self.timer = timer
+            beginAccess(.launch)
+        }
+    }
+
+    /// Where storage access stands, and once the user has agreed, getting it.
+    private func beginAccess(_ entry: StorageAccess.Entry) {
+        access?.begin(entry) { [weak self] phase in
+            guard let self = self else { return }
+            self.phase = phase
+            UIApplication.shared.isIdleTimerDisabled = phase == .getting
+            self.render()
+            if phase == .ready { self.poll() }
         }
     }
 
@@ -132,7 +152,7 @@ final class RootViewController: UIViewController {
     // MARK: The helper
 
     private func poll() {
-        guard let client = client, !polling, !busy else { return }
+        guard phase == .ready, let client = client, !polling, !busy else { return }
         polling = true
         client.request("view") { [weak self] answer in
             guard let self = self else { return }
@@ -210,7 +230,7 @@ final class RootViewController: UIViewController {
         // The download's state only changes the Install button and the line under it.
         shown?.account?.download = ""
         let state = shown.flatMap { try? encoder.encode($0) }.flatMap { String(data: $0, encoding: .utf8) } ?? "-"
-        let next = "\(state)|\(approved)|\(error ?? "")|\(busy)|\(selectedIos ?? -1)|\(metrics.screenWidth)"
+        let next = "\(state)|\(approved)|\(error ?? "")|\(busy)|\(selectedIos ?? -1)|\(metrics.screenWidth)|\(phase)"
         guard next != signature else {
             if current?.screen == "account" { refreshAccount() }
             return
@@ -221,18 +241,11 @@ final class RootViewController: UIViewController {
         installButton = nil
         accountHint = nil
         let blocks: [UIView]
-        switch current?.screen {
-        case "welcome"?: blocks = welcome()
-        case "unsupported"?: blocks = unsupported()
-        case "split"?: blocks = split()
-        case "splitting"?: blocks = splitting()
-        case "split_done"?: blocks = splitDone()
-        case "account"?: blocks = account()
-        case "installing"?: blocks = installing()
-        case "installed"?: blocks = installed()
-        case "failed"?: blocks = failed()
-        // Until the helper answers, and while it can't be reached: the welcome, still checking.
-        default: blocks = welcome()
+        switch (phase, current?.screen) {
+        case (.start, _): blocks = storageAccess(working: false)
+        case (.getting, _): blocks = storageAccess(working: true)
+        case (.failed, _): blocks = accessFailed()
+        default: blocks = screenBlocks()
         }
         column?.removeFromSuperview()
         let column = stack(.vertical, metrics.gap, blocks)
@@ -249,6 +262,57 @@ final class RootViewController: UIViewController {
         self.column = column
         if current?.screen == "account" { refreshAccount() }
         if let focused = focused, focused.window != nil { focused.becomeFirstResponder() }
+    }
+
+    /// The helper's view as its screen.
+    private func screenBlocks() -> [UIView] {
+        switch current?.screen {
+        case "welcome"?: return welcome()
+        case "unsupported"?: return unsupported()
+        case "split"?: return split()
+        case "splitting"?: return splitting()
+        case "split_done"?: return splitDone()
+        case "account"?: return account()
+        case "installing"?: return installing()
+        case "installed"?: return installed()
+        case "failed"?: return failed()
+        // Until the helper answers, and while it can't be reached: the welcome, still checking.
+        default: return welcome()
+        }
+    }
+
+    // MARK: Storage access (the app inside Dopamine): A0.1 to A0.3
+
+    /// One page from the start to the helper's first answer: with Continue, then, while access
+    /// is obtained and whenever the app is opened again in between, with the spinner.
+    private func storageAccess(working: Bool) -> [UIView] {
+        let m = metrics
+        let mark: UIView = working ? Spinner() : Icon.keyRound.view(m.badgeIcon, Theme.blue)
+        var blocks: [UIView] = [badge(m, tint: Theme.blue, fill: 0.12, mark),
+                                header(m, title: "Storage access",
+                                       subtitle: "Orchard Installer needs access to your device’s storage. This takes about a minute.", centered: true)]
+        let rows: [UIView] = ["The screen restarts and open apps close", "Unlock the device when it is back",
+                              "Orchard Installer opens again by itself"].map {
+            stack(.horizontal, 10, [Icon.arrowRight.view(16, Theme.blue), text($0, Theme.sans(m.bodySize), Theme.text)], align: .center)
+        }
+        blocks.append(stack(.vertical, 12, rows + [hint(m, "Your storage is not changed. Needs an internet connection.", Theme.muted)]))
+        blocks.append(reopenNotice(m))
+        if !working { blocks.append(actions(m, [button("Continue") { [weak self] in self?.beginAccess(.confirmed) }], centered: true)) }
+        return blocks
+    }
+
+    /// Some devices restart their screen once before access; nothing can open the app again
+    /// then, and what that restart was for holds only about 20 seconds.
+    private func reopenNotice(_ m: Metrics) -> UIView {
+        notice(m, icon: .timer, head: "If Orchard Installer doesn’t open again by itself, reopen it within 20 seconds.", body: "", fill: 0.07)
+    }
+
+    private func accessFailed() -> [UIView] {
+        let m = metrics
+        return [badge(m, tint: Theme.red, fill: 0.12, Icon.triangleAlert.view(m.badgeIcon, Theme.red)),
+                header(m, title: "Couldn’t get storage access", subtitle: "Your storage was not changed.", centered: true),
+                reopenNotice(m),
+                actions(m, [button("Try again") { [weak self] in self?.beginAccess(.retry) }], centered: true)]
     }
 
     private func button(_ title: String, style: ActionButton.Style = .primary, dimmed: Bool = false, action: @escaping () -> Void) -> ActionButton {

@@ -167,6 +167,7 @@ enum Capacity {
 /// their paths: iOS 12 has no SF Symbols and the bundle has no asset catalog.
 enum Icon {
     case check, circle, circleSlash, circleAlert, arrowUpRight, triangleAlert, loaderCircle, eye, plugZap
+    case arrowRight, keyRound, timer
 
     private var paths: [String] {
         switch self {
@@ -175,6 +176,11 @@ enum Icon {
         case .circleSlash: return [Icon.ring(10), "M9 15l6-6"]
         case .circleAlert: return [Icon.ring(10), "M12 8v4", "M12 16h.01"]
         case .arrowUpRight: return ["M7 7h10v10", "M7 17 17 7"]
+        case .arrowRight: return ["M5 12h14", "m12 5 7 7-7 7"]
+        case .keyRound:
+            return ["M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z",
+                    "M16 7.5a.5 .5 0 1 0 1 0a.5 .5 0 1 0 -1 0"]
+        case .timer: return ["M10 2h4", "M12 14l3-3", "M4 14a8 8 0 1 0 16 0a8 8 0 1 0 -16 0"]
         case .triangleAlert:
             return ["m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3", "M12 9v4", "M12 17h.01"]
         case .loaderCircle: return ["M21 12a9 9 0 1 1-6.219-8.56"]

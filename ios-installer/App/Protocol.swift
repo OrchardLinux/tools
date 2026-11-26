@@ -99,10 +99,19 @@ final class HelperClient {
 
     #if targetEnvironment(simulator)
     // The simulator talks to a helper the developer runs on the Mac.
-    private static let directory = ProcessInfo.processInfo.environment["ORCHARD_HELPER_DIR"] ?? "/var/run/orchard-installer"
+    static let usualDirectory = ProcessInfo.processInfo.environment["ORCHARD_HELPER_DIR"] ?? "/var/run/orchard-installer"
     #else
-    private static let directory = "/var/run/orchard-installer"
+    static let usualDirectory = "/var/run/orchard-installer"
     #endif
+    private let directory: String
+    /// Runs its argument where the helper's socket can be opened, and returns after it: as
+    /// root, for the app inside Dopamine (EmbeddedApp.swift). The open connection is used outside.
+    private let elevate: ((() -> Void) -> Void)?
+
+    init(directory: String = HelperClient.usualDirectory, elevate: ((() -> Void) -> Void)? = nil) {
+        self.directory = directory
+        self.elevate = elevate
+    }
     private static let limit = 1 << 20
     private let queue = DispatchQueue(label: "dev.orchard.installer.helper")
     private var descriptor: Int32 = -1
@@ -136,8 +145,15 @@ final class HelperClient {
     }
 
     private func connect() -> Bool {
+        guard let elevate = elevate else { return open() }
+        var opened = false
+        elevate { opened = self.open() }
+        return opened
+    }
+
+    private func open() -> Bool {
         // The helper makes the token anew each time it starts.
-        guard let text = try? String(contentsOfFile: HelperClient.directory + "/client.token", encoding: .utf8) else { return false }
+        guard let text = try? String(contentsOfFile: directory + "/client.token", encoding: .utf8) else { return false }
         token = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return false }
@@ -150,7 +166,7 @@ final class HelperClient {
         address.sun_family = sa_family_t(AF_UNIX)
         let capacity = MemoryLayout.size(ofValue: address.sun_path)
         withUnsafeMutablePointer(to: &address.sun_path) {
-            $0.withMemoryRebound(to: CChar.self, capacity: capacity) { _ = strncpy($0, HelperClient.directory + "/helper.sock", capacity - 1) }
+            $0.withMemoryRebound(to: CChar.self, capacity: capacity) { _ = strncpy($0, directory + "/helper.sock", capacity - 1) }
         }
         let result = withUnsafePointer(to: &address) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) }

@@ -5,10 +5,15 @@ device. Version 1.
 
 ## Transport
 
-The helper listens on the Unix socket `/var/run/orchard-installer/helper.sock`
+The helper listens on the Unix socket `helper.sock` in its socket folder
 (root's, group `mobile`, mode 0660). The first request on a connection carries
-the token from `/var/run/orchard-installer/client.token` (64 hex digits, mode
-0640, group `mobile`), which the helper makes anew each time it starts.
+the token from `client.token` there (64 hex digits, mode 0640, group
+`mobile`), which the helper makes anew each time it starts.
+
+The folder is `/private/var/OrchardInstaller/run` for the app inside Dopamine
+(`--ipc-dir`; the app opens it as root), else `/var/run/orchard-installer`.
+The helper answers root, and the app at `--ui-path` where it was started with
+one.
 
 A message is a 4-byte big-endian length and that many bytes of UTF-8 JSON, at
 most 1 MiB. The app sends one request and reads its answer before the next.
