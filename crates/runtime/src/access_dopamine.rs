@@ -449,12 +449,7 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
 /// Signs `app` under `identifier` with the profile and identity:
 /// everything inside it first, innermost first, then the app itself.
 fn sign(app: &Path, work: &Path, identifier: &str, profile: &Path, entitlements: &[u8], sha1: &str) -> Result<()> {
-    let mut info = dictionary(&std::fs::read(app.join("Info.plist"))?, "the app's Info.plist")?;
-    let executable = app.join(info.get("CFBundleExecutable").and_then(Value::as_string).unwrap_or_default());
-    info.insert("CFBundleIdentifier".into(), identifier.into());
-    let mut bytes = Vec::new();
-    Value::Dictionary(info).to_writer_xml(&mut bytes).map_err(|e| format(e.to_string()))?;
-    std::fs::write(app.join("Info.plist"), bytes)?;
+    let executable = name_app(app, identifier)?;
     std::fs::copy(profile, app.join("embedded.mobileprovision"))?;
     let rules = work.join("entitlements.plist");
     std::fs::write(&rules, entitlements)?;
@@ -581,6 +576,21 @@ fn xtool(executor: &Executor) -> Result<PathBuf> {
     Ok(executable)
 }
 
+/// Gives the app `identifier` in its Info.plist, and returns its executable.
+fn name_app(app: &Path, identifier: &str) -> Result<PathBuf> {
+    let mut info = dictionary(&std::fs::read(app.join("Info.plist"))?, "the app's Info.plist")?;
+    let executable = app.join(info.get("CFBundleExecutable").and_then(Value::as_string).unwrap_or_default());
+    info.insert("CFBundleIdentifier".into(), identifier.into());
+    let mut bytes = Vec::new();
+    Value::Dictionary(info).to_writer_xml(&mut bytes).map_err(|e| format(e.to_string()))?;
+    std::fs::write(app.join("Info.plist"), bytes)?;
+    Ok(executable)
+}
+
+/// The identifier the app goes to xtool with, which puts its own prefix
+/// for the Apple ID's team in front.
+const XTOOL_IDENTIFIER: &str = "org.orchardlinux.resize-apfs";
+
 /// xtool's command line: the macOS app starts its window without XTL_CLI;
 /// the AppImage runs without FUSE when it unpacks itself.
 fn xtool_command(xtool: &Path) -> Command {
@@ -594,6 +604,9 @@ fn xtool_command(xtool: &Path) -> Command {
 /// to trust the device, or to replace a certificate.
 fn with_xtool(executor: &Executor, prepared: &Prepared, work: &Path, udid: &str, say: &dyn Fn(&str)) -> Result<()> {
     let xtool = xtool(executor)?;
+    // Our own name, not Dopamine's: the copy never stands in for a Dopamine
+    // the person installed themselves.
+    name_app(&prepared.app, XTOOL_IDENTIFIER)?;
     let ipa = work.join("ResizeAPFS.ipa");
     std::fs::write(&ipa, prepared.ipa()?)?;
     let status = run(xtool_command(&xtool).args(["auth", "status"]), work, Duration::from_secs(120))?;
