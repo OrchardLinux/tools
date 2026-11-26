@@ -69,7 +69,7 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     // Everything is made before the device is touched.
     say("Fetching Resize APFS");
     let app = orchard_runtime::resize_app::latest(&executor)?;
-    say(&format!("Resize APFS {}: preparing iPadOS's overlay", app.version));
+    say(&format!("Resize APFS {}: preparing iPadOS", app.version));
     let overlay = app.overlay(&executor)?;
 
     let found = super::run::find(global, Duration::from_secs(args.wait))?;
