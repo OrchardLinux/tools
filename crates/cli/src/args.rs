@@ -95,6 +95,9 @@ pub enum Command {
     },
     /// Start m1n1 from DFU mode, alone or with a Linux it boots in RAM
     Run(crate::commands::run::Args),
+    /// Get Resize APFS, the app that resizes iPadOS, onto the device and
+    /// running
+    Resize(crate::commands::resize::Args),
     /// List connected devices
     Devices(DevicesArgs),
     /// Wait until one device shows up in a mode

@@ -27,6 +27,7 @@ pub mod usb_access;
 mod held;
 pub mod usbmux;
 pub mod replug;
+pub mod resize_app;
 pub use orchard_boards::release;
 pub mod tools;
 

@@ -271,8 +271,44 @@ fn job() -> Value {
     Value::Dictionary(d)
 }
 
+/// What an overlay carries in place of palera1n's loader app: an app, its
+/// root helper with the launchd job that keeps it running, and the entry
+/// program palera1n's daemon job starts.
+pub struct Payload<'a> {
+    /// The app bundle's files: path inside the bundle, contents, mode.
+    pub app: &'a [(String, Vec<u8>, u16)],
+    /// The app's executable, a path inside the bundle.
+    pub app_executable: &'a str,
+    /// The helper and the entry program, each with its path in the overlay.
+    pub helper: (&'a str, &'a [u8]),
+    pub entry: (&'a str, &'a [u8]),
+    /// The helper's launchd job: its path in the overlay and the plist.
+    pub job: (&'a str, Vec<u8>),
+    /// More files: path, contents, mode.
+    pub files: Vec<(&'a str, Vec<u8>, u16)>,
+    /// A picture in place of palera1n's boot screen.
+    pub boot_screen: Option<&'a [u8]>,
+}
+
 /// The overlay for this palera1n and companion.
 pub fn build(palera1n: &[u8], companion: &Companion, identity: &Identity) -> Result<Vec<u8>> {
+    let payload = Payload {
+        app: &companion.app,
+        app_executable: &companion.app_executable,
+        helper: (HELPER, &companion.helper),
+        entry: (ENTRY, &companion.entry),
+        job: (JOB, plist_bytes(&job())?),
+        files: vec![
+            (TOKEN, identity.token_hex().into_bytes(), 0o600),
+            (SYSTEM, orchard_flow::system_name().as_bytes().to_vec(), 0o644),
+        ],
+        boot_screen: Some(BOOT_SCREEN),
+    };
+    build_with(palera1n, &payload, identity)
+}
+
+/// The overlay for this palera1n with `payload` in it.
+pub fn build_with(palera1n: &[u8], companion: &Payload, identity: &Identity) -> Result<Vec<u8>> {
     let mut outer = open(binpack(palera1n)?)?;
     let time = outer.modified;
     let loader = match outer.entries.iter().find(|e| e.path == "/loader.dmg").map(|e| &e.kind) {
@@ -285,9 +321,9 @@ pub fn build(palera1n: &[u8], companion: &Companion, identity: &Identity) -> Res
     let root = inner.entries.iter().find(|e| e.path == "/").cloned().ok_or_else(|| format("loader.dmg has no root"))?;
     inner.entries = vec![root, Entry { path: LOADER_APP.into(), meta: root_owned(0o755, time), kind: Kind::Folder }];
     if !companion.app.iter().any(|(p, _, _)| *p == companion.app_executable) {
-        return Err(format("the companion's app has no executable"));
+        return Err(format("the app has no executable"));
     }
-    for (path, data, mode) in &companion.app {
+    for (path, data, mode) in companion.app {
         if path.is_empty() || path.starts_with('/') || path.split('/').any(|p| p.is_empty() || p == "." || p == "..") {
             return Err(format(format!("not a plain path in the app: {path}")));
         }
@@ -300,14 +336,17 @@ pub fn build(palera1n: &[u8], companion: &Companion, identity: &Identity) -> Res
     let entries = &mut outer.entries;
     put(entries, "/loader.dmg", loader, 0o644, time);
     entries.retain(|e| e.path != "/tvloader.dmg");
-    put(entries, BOOT_IMAGE, BOOT_SCREEN.to_vec(), 0o644, time);
-    put(entries, HELPER, companion.helper.clone(), 0o755, time);
-    put(entries, ENTRY, companion.entry.clone(), 0o755, time);
-    put(entries, TOKEN, identity.token_hex().into_bytes(), 0o600, time);
-    put(entries, SYSTEM, orchard_flow::system_name().as_bytes().to_vec(), 0o644, time);
-    put(entries, JOB, plist_bytes(&job())?, 0o644, time);
+    if let Some(picture) = companion.boot_screen {
+        put(entries, BOOT_IMAGE, picture.to_vec(), 0o644, time);
+    }
+    put(entries, companion.helper.0, companion.helper.1.to_vec(), 0o755, time);
+    put(entries, companion.entry.0, companion.entry.1.to_vec(), 0o755, time);
+    for (path, data, mode) in &companion.files {
+        put(entries, path, data.clone(), *mode, time);
+    }
+    put(entries, companion.job.0, companion.job.1.clone(), 0o644, time);
     let mut daemon = read_plist(entries, "/Library/LaunchDaemons/palera1nd.plist")?;
-    let program = format!("{BINPACK}{ENTRY}");
+    let program = format!("{BINPACK}{}", companion.entry.0);
     daemon.insert("Program".into(), program.clone().into());
     daemon.insert("ProgramArguments".into(), Value::Array(vec![program.into()]));
     daemon.insert("RunAtLoad".into(), true.into());

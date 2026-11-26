@@ -11,6 +11,7 @@ pub mod m1n1;
 pub mod pongo;
 pub mod recovery;
 pub mod remote;
+pub mod resize;
 pub mod run;
 pub mod session;
 pub mod term;

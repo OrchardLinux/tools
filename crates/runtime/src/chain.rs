@@ -429,13 +429,19 @@ impl Progress {
 /// iPadOS's USB (normal mode).
 pub fn boot_ipados(executor: &Executor, device: &Device) -> Result<()> {
     let overlay = executor.overlay()?;
+    let mut session = session(device)?;
+    boot_ipados_with(executor, &mut session, &overlay)
+}
+
+/// iPadOS with `overlay`, the palera1n access route: what the overlay
+/// carries (an app and its root helper) then runs inside iPadOS.
+pub fn boot_ipados_with(executor: &Executor, session: &mut Session<Host>, overlay: &std::path::Path) -> Result<()> {
     // Orchard's Pongo (or `--pongo`'s), as every other boot.
     let ours = executor.pongo_image()?;
-    let mut session = session(device)?;
     // palera1n goes on from its own Pongo start.
-    into_pongo(executor, &mut session, &ours, Tool::Palera1n)?;
-    let second = vec![std::ffi::OsString::from("-l"), "-o".into(), overlay.into_os_string(), "-k".into(), ours.into_os_string()];
-    run_palera1n_from(executor, &mut session, Mode::Pongo, &second, IPADOS_SECONDS)
+    into_pongo(executor, session, &ours, Tool::Palera1n)?;
+    let second = vec![std::ffi::OsString::from("-l"), "-o".into(), overlay.as_os_str().to_owned(), "-k".into(), ours.into_os_string()];
+    run_palera1n_from(executor, session, Mode::Pongo, &second, IPADOS_SECONDS)
 }
 
 /// The launcher's loader, by the boot route: palera1n or checkra1n → Pongo →

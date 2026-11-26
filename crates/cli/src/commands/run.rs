@@ -551,7 +551,7 @@ fn call(proxy: &mut Box<dyn M1n1Proxy>, deadline: &Deadline, operation: u64, arg
 
 /// The one device in DFU mode that --ecid and --location leave, waited for
 /// up to `wait`.
-fn find(global: &Global, wait: Duration) -> Result<Device> {
+pub(crate) fn find(global: &Global, wait: Duration) -> Result<Device> {
     let until = Instant::now() + wait;
     loop {
         let devices = orchard_usb::list().map_err(usb::error)?;

@@ -43,6 +43,7 @@ fn main() -> ExitCode {
             commands::build::component_keys(&cli.global, &output, &platform)
         }
         args::Command::Run(args) => commands::run::run(&cli.global, &args),
+        args::Command::Resize(args) => commands::resize::run(&cli.global, &args),
         args::Command::Session { .. } | args::Command::Shell { .. } | args::Command::Exec { .. } => {
             unreachable!("handled above")
         }

@@ -254,6 +254,12 @@ impl Routes {
             })
     }
 
+    /// Whether the route of `kind` called `name` works on `chip`, whatever
+    /// iOS version it also asks for.
+    pub fn reaches(&self, kind: Kind, name: &str, chip: &Chip) -> Result<bool> {
+        Ok(self.named(kind, name)?.fits.iter().any(|fit| fit.chips.contains(&chip.soc)))
+    }
+
     /// The routes of `kind` for a device, in order of preference, each with
     /// why it does not fit where it does not.
     pub fn offers(&self, kind: Kind, chip: &Chip, ios: Option<&Version>) -> Vec<Offer<'_>> {
