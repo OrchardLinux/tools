@@ -21,6 +21,7 @@ const KEEP: &[&str] = &[
     "platforms/",
     "features.toml",
     "boot-paths.toml",
+    "routes.toml",
 ];
 
 /// Where the board data in use came from.

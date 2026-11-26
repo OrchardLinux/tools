@@ -9,3 +9,4 @@ pub mod install_env;
 pub mod install_plan;
 pub mod pack;
 pub mod peripheral;
+pub mod routes;
