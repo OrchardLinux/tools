@@ -75,6 +75,7 @@ and with `--json` these events, one object per line with an `event` field:
 | `needs` | `action`: `dfu` (`device`, `mode`, `steps`, `wait_s`), `input` (`flag`), `disconnect-others`, `connect-named` and `wait-for-device` (`devices`), `replug` |
 | `approved` | `by`: the option that answered |
 | `split` | the storage: total, iPadOS and what it uses, the suggested, smallest and largest size, the partitions after iPadOS |
+| `recovery` | the guided run from recovery mode into DFU mode, once per phase: `phase` (`ready`, `get-ready`, `hold`, `restarted`, `let-go`, `waiting`), `device`, `seconds` (how long the phase runs, or null), `again` and `problem` (in `ready`: the last attempt came back in recovery mode; why the device couldn't be reached) |
 | `stage`, `retry` | where a start is, and that it is tried again |
 | `progress` | `percent`, or `step` |
 | `systems` | `entries`: `id`, `title`, `kernel`, `default` (launch) |

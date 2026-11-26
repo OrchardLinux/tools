@@ -101,6 +101,9 @@ These came in with the cut-over from orchard's Python and were checked with
 tests and the scripted demo only:
 
 - `--ecid` and `--location` for `install` and `launch`;
+- the guided run from recovery mode in `install` and `launch` (the steps,
+  Enter and Esc, the countdown): seen in the demo
+  (`ORCHARD_DEMO_RECOVERY=1 orchard2 launch --demo`), not with a device;
 - the lock in the runtime;
 - `ORCHARD_ENTRY=checkra1n`;
 - `devices` asking a device that runs iOS for its name and ECID;

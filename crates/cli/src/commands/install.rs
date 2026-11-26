@@ -7,6 +7,7 @@
 //! on stdout; the words for people go to the terminal.
 use crate::args::Global;
 use super::term::{bar, gradient, s, Span, Term, BLUE, FG, GREEN, MUTED, RED, SUB, TITLE, TRACK, YELLOW};
+use orchard_flow::recovery::{self, Phase, Run};
 use orchard_flow::{Again, App, Event, Flow, Layout, Link, Seen, Sequence, State, UsbMode, MIN_OMARCHY_GB};
 use orchard_runtime::driver::{self, Observer, Options};
 use serde_json::{json, Value};
@@ -322,6 +323,155 @@ fn erase_consent(out: &mut Out, layout: &Layout, yes: bool, title: &str, intro: 
 }
 
 /// The flow's state name, as the GUI's log and --json say it.
+/// A button's name in the app's colours: Power pink, others blue.
+fn button(name: &str) -> Span {
+    s(name, if name == "Power" { 0xbb9af7 } else { BLUE })
+}
+
+/// The guided run's phase, as --json names it.
+fn phase_name(phase: &Phase) -> &'static str {
+    match phase {
+        Phase::Ready { .. } => "ready",
+        Phase::GetReady => "get-ready",
+        Phase::Hold => "hold",
+        Phase::Restarted => "restarted",
+        Phase::LetGo => "let-go",
+        Phase::Waiting => "waiting",
+    }
+}
+
+/// The note above the guided steps, if any (the window's
+/// recovery_screen::note): the last attempt came back in recovery mode, the
+/// device is restarting after one that didn't work, or why the installer
+/// couldn't reach it (muted).
+fn recovery_note(run: &Run) -> Option<Span> {
+    if run.phase == Phase::Waiting {
+        return Some(s(orchard_flow::for_device("That didn't work. Let go of all buttons. Your iPad is restarting, which can take up to a minute."), YELLOW));
+    }
+    let Phase::Ready { again, problem } = &run.phase else { return None };
+    match problem {
+        Some(why) => {
+            let mut text = orchard_flow::for_device(why).to_owned();
+            if let Some(first) = text.get(..1) {
+                text = first.to_uppercase() + &text[1..];
+            }
+            Some(s(text, MUTED))
+        }
+        None if *again => Some(s(orchard_flow::for_device("That didn't work. Your iPad is in recovery mode again. Start holding as soon as step 3 lights up."), YELLOW)),
+        None => None,
+    }
+}
+
+/// The lit step's countdown SECONDS into the phase: whole seconds left, and
+/// how far it is (0 to 1). Step 3 runs through two phases (the restart goes
+/// out in its middle), as in the window.
+fn countdown(phase: &Phase, seconds: f32) -> Option<(u32, f32)> {
+    let (done, total) = match phase {
+        Phase::GetReady => (seconds, recovery::GET_READY.as_secs_f32()),
+        Phase::Hold => (seconds, (recovery::HOLD + recovery::RESTARTED).as_secs_f32()),
+        Phase::Restarted => (recovery::HOLD.as_secs_f32() + seconds, (recovery::HOLD + recovery::RESTARTED).as_secs_f32()),
+        Phase::LetGo => (seconds, recovery::LET_GO.as_secs_f32()),
+        Phase::Ready { .. } | Phase::Waiting => return None,
+    };
+    Some(((total - done).max(0.).ceil() as u32, (done / total).clamp(0., 1.)))
+}
+
+/// Cells of the countdown's bar.
+const COUNT_BAR: usize = 10;
+
+/// The guided run from recovery mode into DFU mode (the window's R.1i–R.5i),
+/// SECONDS into its phase: the note, the five steps with the lit one's
+/// countdown, and the keys.
+fn recovery_block(run: &Run, seconds: f32) -> Vec<Vec<Span>> {
+    let (hold, power) = recovery::buttons(run.device.sequence);
+    let running = run.phase.running();
+    let lit = run.phase.row();
+    let t = |x: &str| s(orchard_flow::for_device(x), FG);
+    let rows: [(Vec<Span>, &str); 5] = [
+        (vec![t("Press "), s("Enter", BLUE), t(" to start")], ""),
+        (vec![t("Get ready")], "3 s"),
+        (vec![t("Hold "), button(hold), t(" and "), button(power)], "4 s"),
+        (vec![t("Let go of "), button(power), t(", keep holding "), button(hold)], "12 s"),
+        (vec![t("Let go when this changes")], ""),
+    ];
+    let mut out = Vec::new();
+    if let Some(note) = recovery_note(run) {
+        out.push(vec![s("  ", MUTED), note]);
+    }
+    for (i, (parts, duration)) in rows.into_iter().enumerate() {
+        let is_lit = lit == Some(i);
+        let width: usize = parts.iter().map(|(t, _)| t.chars().count()).sum();
+        let pad = " ".repeat(48usize.saturating_sub(width));
+        let mut l = vec![s(format!("  {}  ", i + 1), if is_lit { BLUE } else { MUTED })];
+        // While it runs only the lit step stands out.
+        l.extend(parts.into_iter().map(|(text, color)| (text, if running && !is_lit { MUTED } else { color })));
+        match countdown(&run.phase, seconds).filter(|_| is_lit) {
+            Some((left, progress)) => {
+                l.push(s(format!("{pad}{left:>2} s  "), SUB));
+                l.extend(bar((progress * COUNT_BAR as f32).round() as usize, COUNT_BAR));
+            }
+            None if !duration.is_empty() => l.push(s(format!("{pad}{duration:>4}"), MUTED)),
+            None => {}
+        }
+        out.push(l);
+    }
+    out.push(vec![]);
+    match run.phase {
+        Phase::Ready { .. } => out.push(vec![s("  Having trouble? Press ", MUTED), s("t", BLUE), s(" for tips", MUTED)]),
+        // Until the restart goes out, as the window's Stop.
+        Phase::GetReady | Phase::Hold => out.push(vec![s("  Esc", BLUE), s(" Stop", MUTED)]),
+        _ => {}
+    }
+    out
+}
+
+/// What the keys typed mean for the guided run: Enter starts it, and Esc
+/// or q stops it until the restart goes out. An arrow key's Esc is not one.
+fn recovery_events(phase: &Phase, typed: &[char]) -> Vec<Event> {
+    let mut out = Vec::new();
+    let mut phase = phase.clone();
+    let mut keys = typed.iter().copied().peekable();
+    while let Some(k) = keys.next() {
+        match k {
+            '\x1b' if matches!(keys.peek(), Some('[' | 'O')) => {
+                keys.next();
+                keys.next();
+            }
+            '\n' | '\r' if matches!(phase, Phase::Ready { .. }) => {
+                out.push(Event::Continue);
+                phase = Phase::GetReady;
+            }
+            '\x1b' | 'q' | 'Q' if matches!(phase, Phase::GetReady | Phase::Hold) => {
+                out.push(Event::Cancel);
+                phase = Phase::ready();
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// "Put your iPad in DFU mode", and the device with the mode it is in.
+fn mode_header(out: &mut Out, device: &orchard_flow::Device, mode: &str) {
+    use orchard_flow::Model;
+    let kind = match device.model {
+        Model::IpadHome | Model::IpadNoHome => "iPad",
+        Model::IphoneHome | Model::IphoneNoHome => "iPhone",
+    };
+    out.term.live(None);
+    out.term.blank();
+    out.heading(format!("Put your {kind} in DFU mode"), None);
+    out.term.line(vec![s(format!("  {}  ", device.name), SUB), s(mode, YELLOW)]);
+}
+
+/// The guided run on the terminal: what is shown, since when its phase
+/// runs (the flow keeps no clock), and the countdown drawn last.
+struct Guided {
+    run: Run,
+    since: Instant,
+    drawn: Option<Option<(u32, usize)>>,
+}
+
 fn state_name(state: &State) -> String {
     let name: String = format!("{state:?}").chars().take_while(|c| c.is_alphanumeric()).collect();
     let mut out = String::new();
@@ -462,11 +612,6 @@ impl Waiting {
 /// A device is connected, but in another mode than DFU (the app's 1.2): its
 /// name, the mode it is in, and the steps for its own buttons.
 fn wrong_mode(out: &mut Out, seen: &Seen, wait: u64) {
-    use orchard_flow::Model;
-    let kind = match seen.device.model {
-        Model::IpadHome | Model::IpadNoHome => "iPad",
-        Model::IphoneHome | Model::IphoneNoHome => "iPhone",
-    };
     let mode = match seen.mode {
         UsbMode::Recovery => "recovery mode",
         UsbMode::Normal => "normal mode",
@@ -476,10 +621,7 @@ fn wrong_mode(out: &mut Out, seen: &Seen, wait: u64) {
     // It is on the cable already: the steps start at its buttons.
     let list = &steps(seen.device.sequence)[1..];
     out.event(json!({"event": "needs", "action": "dfu", "device": seen.device.name, "mode": mode, "steps": list.iter().map(|(p, d)| format!("{}{}", plain(p), if d.is_empty() { String::new() } else { format!(" ({d})") })).collect::<Vec<_>>(), "wait_s": wait}));
-    out.term.live(None);
-    out.term.blank();
-    out.heading(format!("Put your {kind} in DFU mode"), None);
-    out.term.line(vec![s(format!("  {}  ", seen.device.name), SUB), s(mode, YELLOW)]);
+    mode_header(out, &seen.device, mode);
     for (i, (parts, duration)) in list.iter().enumerate() {
         let width: usize = parts.iter().map(|(t, _)| t.chars().count()).sum();
         let mut l = vec![s(format!("  {}  ", i + 1), MUTED)];
@@ -499,11 +641,8 @@ fn wrong_mode(out: &mut Out, seen: &Seen, wait: u64) {
 
 /// Keys while waiting (T.1): ← and → change the tab (n, 7 and h name one),
 /// t shows the tips. With a device connected the steps are its own.
-fn waiting_keys(out: &mut Out, waiting: &mut Waiting, wait: u64) {
-    let mut typed = Vec::new();
-    while let Some(k) = out.term.key() {
-        typed.push(k);
-    }
+/// While the guided run from recovery mode shows, the tabs stay away.
+fn waiting_keys(out: &mut Out, waiting: &mut Waiting, wait: u64, typed: &[char], guided: bool) {
     let at = |sequence: Option<Sequence>| TABS.iter().position(|(tab, _)| Some(*tab) == sequence).unwrap_or(0);
     let mut keys = typed.iter().copied().peekable();
     while let Some(k) = keys.next() {
@@ -532,7 +671,7 @@ fn waiting_keys(out: &mut Out, waiting: &mut Waiting, wait: u64) {
             _ => None,
         };
         // The tabs are for a device nobody has seen; a connected one has its steps.
-        if waiting.seen.is_some() || !waiting.shown {
+        if guided || waiting.seen.is_some() || !waiting.shown {
             continue;
         }
         if let Some(seq) = sequence.filter(|q| Some(*q) != waiting.sequence) {
@@ -577,6 +716,12 @@ struct Shared {
     wait: u64,
     /// The run is for one named device (--ecid, --location).
     named: bool,
+    /// The guided run from recovery mode, while it shows.
+    guided: Option<Guided>,
+    /// The guided run went away with this flow: the DFU steps show again.
+    guide_ended: bool,
+    /// The guided run's phase last reported (--json).
+    phase_said: Option<Phase>,
 }
 
 enum Next {
@@ -590,7 +735,68 @@ enum Next {
 impl Shared {
     fn new(app: App, wait: u64, global: &Global) -> Shared {
         let named = global.device.ecid.is_some() || global.device.location.is_some();
-        Shared { named, app, last: String::new(), waiting: Waiting::new(), stalled: false, others_said: Vec::new(), attempt_said: 1, stage_said: None, wait }
+        Shared { named, app, last: String::new(), waiting: Waiting::new(), stalled: false, others_said: Vec::new(), attempt_said: 1, stage_said: None, wait, guided: None, guide_ended: false, phase_said: None }
+    }
+
+    /// The keys typed since the last call: the guided run's (returned as
+    /// the flow's events), the tabs and the tips.
+    fn keys(&mut self, out: &mut Out) -> Vec<Event> {
+        let mut typed = Vec::new();
+        while let Some(k) = out.term.key() {
+            typed.push(k);
+        }
+        waiting_keys(out, &mut self.waiting, self.wait, &typed, self.guided.is_some());
+        self.guided.as_ref().map(|g| recovery_events(&g.run.phase, &typed)).unwrap_or_default()
+    }
+
+    /// Shows the guided run RUN, or what changed of it; HEADER comes first
+    /// when the run is new on the terminal.
+    fn guide(&mut self, out: &mut Out, run: &Run, header: impl FnOnce(&mut Out)) {
+        let known = self.guided.as_ref().filter(|g| g.run.device.id == run.device.id);
+        if known.is_some_and(|g| g.run == *run) {
+            return;
+        }
+        let since = match known {
+            Some(g) if std::mem::discriminant(&g.run.phase) == std::mem::discriminant(&run.phase) => g.since,
+            _ => Instant::now(),
+        };
+        if known.is_none() {
+            header(out);
+        }
+        self.guided = Some(Guided { run: run.clone(), since, drawn: None });
+        // The countdown is the lit step's; no line under the steps then.
+        out.term.live(None);
+        self.draw_guided(out);
+        // DFU mode by hand still counts while nothing runs.
+        if matches!(run.phase, Phase::Ready { .. }) {
+            out.term.live_restart(vec![s("Waiting for it in DFU mode", SUB)]);
+        }
+        out.term.keys(true);
+    }
+
+    /// Draws the guided run where it stands when its countdown moved.
+    fn draw_guided(&mut self, out: &mut Out) {
+        let Some(g) = self.guided.as_mut() else { return };
+        let seconds = g.since.elapsed().as_secs_f32();
+        let now = countdown(&g.run.phase, seconds).map(|(left, progress)| (left, (progress * COUNT_BAR as f32).round() as usize));
+        if g.drawn == Some(now) {
+            return;
+        }
+        g.drawn = Some(now);
+        let lines = recovery_block(&g.run, seconds);
+        if !out.term.take_block() {
+            out.term.blank();
+        }
+        out.term.begin_block();
+        for l in lines {
+            out.term.line(l);
+        }
+        out.term.end_block();
+    }
+
+    /// Between flows: the lit step's countdown.
+    fn tick(&mut self, out: &mut Out) {
+        self.draw_guided(out);
     }
 
     /// "Unplug the ones you don't want to install on." and the launcher's own.
@@ -630,7 +836,16 @@ impl Shared {
     }
 
     /// DFU mode again (3.1), saying why; `name` is the system's name.
-    fn dfu_again(&mut self, out: &mut Out, flow: &Flow, device: &orchard_flow::Device, why: Again, name: &str, wait: u64) {
+    /// In recovery mode the guided run takes the steps' place.
+    fn dfu_again(&mut self, out: &mut Out, flow: &Flow, device: &orchard_flow::Device, why: Again, name: &str, wait: u64, first: bool) {
+        let run = flow.state.recovery().filter(|_| out.term.tty).cloned();
+        // Its heading shows once, and again when the guided run is over.
+        if !first && !self.guide_ended {
+            if let Some(run) = &run {
+                self.guide(out, run, |_| {});
+            }
+            return;
+        }
         out.term.live(None);
         if matches!(why, Again::Retry | Again::RetryPrepare) {
             out.event(json!({"event": "retry", "reason": "start-failed"}));
@@ -655,7 +870,17 @@ impl Shared {
         }
         self.attempt_said = 1;
         self.stage_said = None;
-        dfu_block(out, &title, Some(&sub), device.sequence, Some(&device.name), wait);
+        match run {
+            Some(run) => {
+                self.guided = None;
+                self.guide(out, &run, |out| {
+                    out.term.blank();
+                    out.heading(title, None);
+                    out.sub(sub);
+                });
+            }
+            None => dfu_block(out, &title, Some(&sub), device.sequence, Some(&device.name), wait),
+        }
         self.waiting = Waiting { since: Instant::now(), shown: true, sequence: Some(device.sequence), seen: None };
     }
 
@@ -727,9 +952,35 @@ impl Shared {
         } else if !flow.boot_stalled {
             self.stalled = false;
         }
+        // The guided run's phases, one event per change.
+        match flow.state.recovery() {
+            Some(run) if self.phase_said.as_ref() != Some(&run.phase) => {
+                self.phase_said = Some(run.phase.clone());
+                let (again, problem) = match &run.phase {
+                    Phase::Ready { again, problem } => (*again, problem.clone()),
+                    _ => (false, None),
+                };
+                out.event(json!({"event": "recovery", "phase": phase_name(&run.phase), "device": run.device.name, "seconds": run.phase.timer().map(|(_, d)| d.as_secs()), "again": again, "problem": problem}));
+            }
+            Some(_) => {}
+            None => self.phase_said = None,
+        }
+        // Enter and Esc need a terminal: without one the DFU steps stay.
+        let run = flow.state.recovery().filter(|_| out.term.tty);
+        self.guide_ended = run.is_none() && self.guided.take().is_some();
         match &flow.state {
-            State::WaitingForDfu { seen, .. } => {
+            State::WaitingForDfu { .. } if run.is_some() => {
                 if first {
+                    self.waiting = Waiting::new();
+                }
+                // No steps of the other kinds while it shows.
+                self.waiting.shown = true;
+                self.waiting.seen = None;
+                let run = run.expect("checked").clone();
+                self.guide(out, &run, |out| mode_header(out, &run.device, "recovery mode"));
+            }
+            State::WaitingForDfu { seen, .. } => {
+                if first || self.guide_ended {
                     self.waiting = Waiting::new();
                 }
                 // A device that is connected in another mode gets its own
@@ -832,7 +1083,10 @@ pub fn install(global: &Global, args: &InstallArgs) -> ExitCode {
     let mut ctrl_c_said = false;
     loop {
         out.term.tick();
-        waiting_keys(&mut out, &mut shared.waiting, args.wait);
+        shared.tick(&mut out);
+        for event in shared.keys(&mut out) {
+            send(event);
+        }
         let flow = match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(flow) => Some(flow),
             Err(RecvTimeoutError::Timeout) => None,
@@ -990,9 +1244,7 @@ pub fn install(global: &Global, args: &InstallArgs) -> ExitCode {
                 }
             }
             State::DfuAgain { device, why, .. } => {
-                if first {
-                    shared.dfu_again(&mut out, &flow, device, *why, &name, args.wait);
-                }
+                shared.dfu_again(&mut out, &flow, device, *why, &name, args.wait, first);
             }
             State::NotPrepared { .. } => {
                 out.term.live(None);
@@ -1198,7 +1450,10 @@ pub fn launch(global: &Global, args: &LaunchArgs) -> ExitCode {
     let mut chosen = false;
     loop {
         out.term.tick();
-        waiting_keys(&mut out, &mut shared.waiting, args.wait);
+        shared.tick(&mut out);
+        for event in shared.keys(&mut out) {
+            send(event);
+        }
         let flow = match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(flow) => Some(flow),
             Err(RecvTimeoutError::Timeout) => None,
@@ -1234,7 +1489,7 @@ pub fn launch(global: &Global, args: &LaunchArgs) -> ExitCode {
                 }
             }
             State::Launching { .. } => shared.starting(&mut out, &flow, first),
-            State::DfuAgain { device, why, .. } if first => shared.dfu_again(&mut out, &flow, device, *why, "", args.wait),
+            State::DfuAgain { device, why, .. } => shared.dfu_again(&mut out, &flow, device, *why, "", args.wait, first),
             State::ChooseSystem { entries, selected, .. } if !chosen => {
                 out.term.live(None);
                 out.event(json!({"event": "systems", "entries": entries.iter().map(|e| json!({"id": e.id, "title": e.title, "kernel": e.kernel, "default": e.default})).collect::<Vec<_>>()}));
@@ -1339,6 +1594,114 @@ mod tests {
     fn dfu_steps_follow_the_buttons() {
         assert_eq!(steps(Sequence::HomePower).len(), 4);
         assert!(steps(Sequence::VolumeSequence).iter().any(|(p, _)| plain(p).contains("Volume Up")));
+    }
+
+    fn run(sequence: Sequence, phase: Phase) -> Run {
+        let device = orchard_flow::Device {
+            id: orchard_flow::DeviceId("1".into()),
+            board: "j71b".into(),
+            name: "iPad 6".into(),
+            model: orchard_flow::Model::IpadHome,
+            sequence,
+            support: orchard_flow::Support::Supported,
+        };
+        Run { device, phase }
+    }
+
+    fn rows(run: &Run, seconds: f32) -> Vec<String> {
+        recovery_block(run, seconds).iter().map(|l| plain(l)).collect()
+    }
+
+    #[test]
+    fn the_guided_run_lists_its_five_steps() {
+        let said = rows(&run(Sequence::HomePower, Phase::ready()), 0.);
+        assert_eq!(said[0], "  1  Press Enter to start");
+        assert_eq!(said[1].trim_end(), format!("  2  Get ready{} 3 s", " ".repeat(39)));
+        assert!(said[2].starts_with("  3  Hold Home and Power ") && said[2].ends_with(" 4 s"), "{}", said[2]);
+        assert!(said[3].starts_with("  4  Let go of Power, keep holding Home ") && said[3].ends_with("12 s"), "{}", said[3]);
+        assert_eq!(said[4], "  5  Let go when this changes");
+        assert_eq!(said[6], "  Having trouble? Press t for tips");
+        // The durations end in one column.
+        let ends: Vec<usize> = said[1..4].iter().map(|l| l.chars().count()).collect();
+        assert_eq!(ends, [ends[0]; 3]);
+        // No Home button to hold: Volume Down.
+        let said = rows(&run(Sequence::VolumeSequence, Phase::ready()), 0.);
+        assert!(said[2].starts_with("  3  Hold Volume Down and Power "));
+        assert!(said[3].starts_with("  4  Let go of Power, keep holding Volume Down "));
+    }
+
+    #[test]
+    fn the_lit_step_counts_down() {
+        let lit = |phase: Phase, seconds: f32| {
+            let run = run(Sequence::HomePower, phase);
+            let block = recovery_block(&run, seconds);
+            let at = block.iter().position(|l| l.first().is_some_and(|(_, color)| *color == BLUE)).unwrap();
+            (at, plain(&block[at]))
+        };
+        let (at, said) = lit(Phase::GetReady, 0.2);
+        assert!(at == 1 && said.contains(" 3 s  "), "{said}");
+        // Step 3 is one countdown of 4 s over the hold and the restart.
+        let (at, said) = lit(Phase::Hold, 0.5);
+        assert!(at == 2 && said.contains(" 4 s  "), "{said}");
+        let (at, said) = lit(Phase::Restarted, 0.5);
+        assert!(at == 2 && said.contains(" 2 s  "), "{said}");
+        let (at, said) = lit(Phase::LetGo, 11.5);
+        assert!(at == 3 && said.contains(" 1 s  "), "{said}");
+        // The bar is as wide whatever it shows.
+        let width = |said: &str| said.chars().filter(|c| matches!(c, '█' | '░')).count();
+        assert_eq!((width(&lit(Phase::GetReady, 0.).1), width(&lit(Phase::GetReady, 3.).1)), (COUNT_BAR, COUNT_BAR));
+        assert_eq!(countdown(&Phase::LetGo, 30.), Some((0, 1.)));
+        assert_eq!(countdown(&Phase::Waiting, 1.), None);
+        // Stop only until the restart went out.
+        for (phase, stop) in [(Phase::GetReady, true), (Phase::Hold, true), (Phase::Restarted, false), (Phase::LetGo, false), (Phase::Waiting, false)] {
+            let said = rows(&run(Sequence::HomePower, phase.clone()), 0.);
+            assert_eq!(said.last().unwrap() == "  Esc Stop", stop, "{phase:?}");
+        }
+    }
+
+    #[test]
+    fn the_guided_run_says_what_went_wrong() {
+        let first = |phase: Phase| {
+            let block = recovery_block(&run(Sequence::HomePower, phase), 0.);
+            (plain(&block[0]), block[0][1].1)
+        };
+        assert_eq!(first(Phase::Waiting), ("  That didn't work. Let go of all buttons. Your iPad is restarting, which can take up to a minute.".into(), YELLOW));
+        assert_eq!(
+            first(Phase::Ready { again: true, problem: None }),
+            ("  That didn't work. Your iPad is in recovery mode again. Start holding as soon as step 3 lights up.".into(), YELLOW)
+        );
+        // Why the installer couldn't reach it, muted, and before "again".
+        assert_eq!(first(Phase::Ready { again: true, problem: Some("the device did not answer".into()) }), ("  The device did not answer".into(), MUTED));
+        assert_eq!(recovery_note(&run(Sequence::HomePower, Phase::ready())), None);
+        assert_eq!(recovery_note(&run(Sequence::HomePower, Phase::Hold)), None);
+    }
+
+    #[test]
+    fn enter_starts_the_guided_run_and_esc_stops_it() {
+        let keys = |phase: Phase, typed: &str| recovery_events(&phase, &typed.chars().collect::<Vec<_>>());
+        assert_eq!(keys(Phase::ready(), "\n"), [Event::Continue]);
+        assert_eq!(keys(Phase::Ready { again: true, problem: None }, "\r"), [Event::Continue]);
+        // Once: a second Enter in the same moment starts nothing more.
+        assert_eq!(keys(Phase::ready(), "\n\n"), [Event::Continue]);
+        assert_eq!(keys(Phase::ready(), "q\x1bt"), []);
+        for phase in [Phase::GetReady, Phase::Hold] {
+            assert_eq!(keys(phase.clone(), "\x1b"), [Event::Cancel]);
+            assert_eq!(keys(phase.clone(), "q"), [Event::Cancel]);
+            assert_eq!(keys(phase, "\n"), []);
+        }
+        // An arrow key is not Esc, and the restart can't be taken back.
+        assert_eq!(keys(Phase::Hold, "\x1b[C\x1bOD"), []);
+        for phase in [Phase::Restarted, Phase::LetGo, Phase::Waiting] {
+            assert_eq!(keys(phase, "\x1bq\n"), []);
+        }
+        // Started and stopped in one go.
+        assert_eq!(keys(Phase::ready(), "\nq"), [Event::Continue, Event::Cancel]);
+    }
+
+    #[test]
+    fn the_guided_run_has_a_name_for_each_phase() {
+        let names: Vec<_> = [Phase::ready(), Phase::GetReady, Phase::Hold, Phase::Restarted, Phase::LetGo, Phase::Waiting].iter().map(phase_name).collect();
+        assert_eq!(names, ["ready", "get-ready", "hold", "restarted", "let-go", "waiting"]);
     }
 
     #[test]

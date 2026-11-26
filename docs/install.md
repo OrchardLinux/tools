@@ -65,6 +65,13 @@ orchard2 --json install NAME --yes --no-ssh \
 - **The device is connected in another mode** (running iPadOS, recovery
   mode, the install system): its name, that mode, and the steps for its own
   buttons.
+- **The device is in recovery mode**, in a terminal: a guided run takes the
+  steps' place, and the hold takes seconds. Enter starts it; the lit step
+  counts down while you hold the buttons, and orchard2 restarts the device
+  at the right moment. Esc (or q) stops it until that restart has gone out.
+  When the device comes back in recovery mode instead, the steps stand
+  again. DFU mode reached by hand counts as before. Without a terminal
+  nobody can press Enter, so the usual steps show.
 - **More than one iPhone or iPad is connected**: nothing goes on until only
   one is. `--ecid` or `--location` names the one a run is for; then no other
   is found or started, but two connected still stop it
