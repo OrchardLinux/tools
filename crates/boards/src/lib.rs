@@ -7,6 +7,8 @@ pub mod data;
 pub mod firmware_build;
 pub mod install_env;
 pub mod install_plan;
+pub mod kernel_package;
 pub mod pack;
 pub mod peripheral;
+pub mod release;
 pub mod routes;

@@ -154,6 +154,7 @@ mod tests {
             architecture: "arm64".into(),
             stages: stages.iter().map(|s| (*s).into()).collect(),
             image_format: "im4p".into(),
+            page_size: 16384,
         }
     }
 

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>platform-application</key><true/>
+    <key>com.apple.private.security.no-container</key><true/>
+    <key>com.apple.private.security.no-sandbox</key><true/>
+    <key>com.apple.private.security.disk-device-access</key><true/>
+    <key>com.apple.security.iokit-user-client-class</key>
+    <array><string>AppleAPFSUserClient</string><string>AppleKeyStoreUserClient</string></array>
+    <!-- Adding and removing the app on the home screen (register-app, unregister-app). -->
+    <key>com.apple.lsapplicationworkspace.rebuildappdatabases</key><true/>
+    <key>com.apple.private.MobileContainerManager.allowed</key><true/>
+    <!-- Opening the app once the helper starts (LaunchServices, SpringBoard). -->
+    <key>com.apple.springboard.launchapplications</key><true/>
+    <key>com.apple.frontboard.launchapplications</key><true/>
+    <key>com.apple.springboard.opensensitiveurl</key><true/>
+    <!-- Quitting the app before it is unregistered. -->
+    <key>com.apple.multitasking.termination</key><true/>
+    <!-- The downloads. -->
+    <key>com.apple.security.network.client</key><true/>
+</dict></plist>

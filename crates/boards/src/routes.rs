@@ -359,6 +359,7 @@ source = "s"
             architecture: "arm64".into(),
             stages: vec![],
             image_format: "im4p".into(),
+            page_size: 16384,
         }
     }
 

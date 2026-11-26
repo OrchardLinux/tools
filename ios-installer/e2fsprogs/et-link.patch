@@ -1,0 +1,10 @@
+--- a/lib/et/et_c.awk
++++ b/lib/et/et_c.awk
+@@ -241,1 +241,1 @@
+-	print "static struct et_list link = { 0, 0 };" > outfile
++	print "static struct et_list et_link = { 0, 0 };" > outfile
+@@ -260,2 +260,2 @@
+-	print "        if (!link.table)" > outfile
+-	print "            et = &link;" > outfile
++	print "        if (!et_link.table)" > outfile
++	print "            et = &et_link;" > outfile

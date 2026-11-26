@@ -33,6 +33,7 @@ aarch64).
 | `docs` | What `orchard2` does, command by command |
 | `TODO.md` | What is decided but not done |
 | `companion` | The iPad app that splits the storage, with its helper |
+| `crates/inapp`, `ios-installer` | The installer that runs on the device itself: its engine, app and helper ([`ios-installer/README.md`](ios-installer/README.md)) |
 | `packaging` | Release builds, stamping (`stamp.py`) and `install.sh` |
 | `vendor` | Patched or pinned third-party code (see each `PATCHED.md`) |
 
