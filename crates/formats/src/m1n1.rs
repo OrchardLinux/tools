@@ -13,7 +13,7 @@ const LOGO_TAG: &[u8] = b"m1n1_logo_256128";
 pub const LOGO_SIZE: usize = LOGO_TAG.len() + 4 * (256 * 256 + 128 * 128);
 /// A splash (orchard's boot contract): `OSPL`, width and height as LE u32,
 /// then width × height XRGB8888 pixels. Orchard's m1n1 draws it centred in
-/// place of its own logo (boot/m1n1 patch 0014).
+/// place of its own logo.
 const SPLASH_TAG: &[u8] = b"OSPL";
 const INITRAMFS_TAG: &[u8] = b"m1n1_initramfs";
 
