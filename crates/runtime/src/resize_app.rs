@@ -19,6 +19,8 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 /// The app's members in the release, below its top folder.
 const APP: &str = "out/device/ResizeAPFS.app/";
 const HELPER: &str = "out/device/resize-helper";
+const OLDER_APP: &str = "out/device-ios12/ResizeAPFS.app/";
+const OLDER_HELPER: &str = "out/device-ios12/resize-helper";
 const ENTRY: &str = "out/device/resize-overlay-entry";
 /// The helper's launchd job: the one property list in the release's Device
 /// folder. Its file name is the one the release's entry program loads.
@@ -36,6 +38,16 @@ pub struct App {
     job: Vec<u8>,
     /// The job's file name, as the release's entry program loads it.
     job_name: String,
+    /// The build for iOS 12 to 14, where the release has one.
+    pub older: Option<Older>,
+}
+
+/// The app and its helper as built for iOS 12 to 14, which the checkra1n
+/// route copies onto the device for one session.
+pub struct Older {
+    /// The app bundle's files: path inside the bundle and contents.
+    pub app: Vec<(String, Vec<u8>)>,
+    pub helper: Vec<u8>,
 }
 
 fn format(message: impl Into<String>) -> Error {
@@ -91,12 +103,22 @@ pub fn latest(executor: &Executor) -> Result<App> {
             files.push((path.to_owned(), read(&format!("{APP}{path}"))?, 0o644));
         }
     }
+    let mut older_app = Vec::new();
+    for name in &names {
+        if let Some(path) = name.strip_prefix(&top).and_then(|n| n.strip_prefix(OLDER_APP)).filter(|p| !p.is_empty() && !p.ends_with('/')) {
+            older_app.push((path.to_owned(), read(&format!("{OLDER_APP}{path}"))?));
+        }
+    }
+    let older = match older_app.is_empty() {
+        true => None,
+        false => Some(Older { app: older_app, helper: read(OLDER_HELPER)? }),
+    };
     let info = files.iter().find(|(p, _, _)| p == "Info.plist").ok_or_else(|| format("the app has no Info.plist"))?;
     let executable = Value::from_reader(std::io::Cursor::new(&info.1))
         .ok()
         .and_then(|v| v.as_dictionary()?.get("CFBundleExecutable")?.as_string().map(str::to_owned))
         .ok_or_else(|| format("the app names no executable"))?;
-    Ok(App { version, files, executable, helper, entry, job, job_name })
+    Ok(App { version, files, executable, helper, entry, job, job_name, older })
 }
 
 impl App {

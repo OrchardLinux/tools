@@ -98,6 +98,13 @@ pub enum Command {
     /// Get Resize APFS, the app that resizes iPadOS, onto the device and
     /// running
     Resize(crate::commands::resize::Args),
+    /// Pipe stdin and stdout to a port on a device running iOS, through
+    /// usbmuxd (an ssh ProxyCommand for the checkra1n access route)
+    #[command(hide = true)]
+    UsbmuxProxy {
+        port: u16,
+        udid: String,
+    },
     /// List connected devices
     Devices(DevicesArgs),
     /// Wait until one device shows up in a mode

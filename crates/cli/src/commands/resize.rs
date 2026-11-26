@@ -10,6 +10,7 @@ use orchard_device::session::Session;
 use orchard_runtime::driver::Options;
 use orchard_usb::{Host, Mode};
 use serde::Serialize;
+use std::io::IsTerminal;
 use std::time::{Duration, Instant};
 
 /// Short forms of `--access ROUTE`.
@@ -53,9 +54,13 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     let catalog = Catalog::open(&data)?;
     let routes = routes::read(&catalog)?;
     routes.named(Kind::Access, route)?;
-    if route != "palera1n" {
-        return Err(Error::new(Code::Unsupported, format!("this version gets the app onto a device by palera1n only, not by {route} yet"))
-            .hint("resize-apfs's own release does it: ./resize-apfs boot"));
+    if !matches!(route, "palera1n" | "checkra1n") {
+        return Err(Error::new(Code::Unsupported, format!("this version gets the app onto a device by palera1n and checkra1n, not by {route} yet"))
+            .hint("resize-apfs's own release does it: ./resize-apfs boot --dopamine"));
+    }
+    // checkra1n's session ends when the person says so: that needs a terminal.
+    if route == "checkra1n" && !std::io::stdin().is_terminal() {
+        return Err(Error::new(Code::Unsupported, "the checkra1n route takes the app off the device when you say you are done, which needs a terminal"));
     }
 
     let (events, _log) = std::sync::mpsc::channel();
@@ -69,8 +74,16 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     // Everything is made before the device is touched.
     say("Fetching Resize APFS");
     let app = orchard_runtime::resize_app::latest(&executor)?;
-    say(&format!("Resize APFS {}: preparing iPadOS", app.version));
-    let overlay = app.overlay(&executor)?;
+    let overlay = match route {
+        "palera1n" => {
+            say(&format!("Resize APFS {}: preparing iPadOS", app.version));
+            Some(app.overlay(&executor)?)
+        }
+        _ => None,
+    };
+    if route == "checkra1n" && app.older.is_none() {
+        return Err(Error::new(Code::NotFound, format!("Resize APFS {} has no build for iOS 12 to 14", app.version)));
+    }
 
     let found = super::run::find(global, Duration::from_secs(args.wait))?;
     let selector = Selector { ecid: found.identity.ecid.clone(), location: Some(found.location.clone()), mode: Some(Mode::Dfu) };
@@ -85,10 +98,31 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     }
     say(&format!("{} at {}", seen.device.name, session.device().location));
 
-    say("Starting iPadOS with Resize APFS");
-    orchard_runtime::chain::boot_ipados_with(&executor, &mut session, &overlay)?;
-    session.wait_for(Mode::Normal, Duration::from_secs(args.timeout))?;
-    Ok(Started { board: board.name, route: route.to_owned(), version: app.version, seconds: started.elapsed().as_secs_f64() }.into())
+    if let Some(overlay) = &overlay {
+        say("Starting iPadOS with Resize APFS");
+        orchard_runtime::chain::boot_ipados_with(&executor, &mut session, overlay)?;
+        session.wait_for(Mode::Normal, Duration::from_secs(args.timeout))?;
+        return Ok(Started { board: board.name, route: route.to_owned(), version: app.version, seconds: started.elapsed().as_secs_f64(), removed: false }.into());
+    }
+    // checkra1n: the session holds the device while checkra1n and iOS run;
+    // the app is there until the person says they are done.
+    let older = app.older.as_ref().expect("checked above");
+    let mut done = || -> Result<()> {
+        loop {
+            eprint!("When you are done, type done and press Enter to take Resize APFS off the device: ");
+            let mut line = String::new();
+            if std::io::stdin().read_line(&mut line)? == 0 {
+                return Err(Error::new(Code::Refused, "the terminal closed; Resize APFS stays on the device until the next session removes it"));
+            }
+            if line.trim().eq_ignore_ascii_case("done") {
+                return Ok(());
+            }
+            eprintln!("Resize APFS stays on the device.");
+        }
+    };
+    orchard_runtime::access_checkra1n::run(&executor, older, &say, &mut done)?;
+    drop(session);
+    Ok(Started { board: board.name, route: route.to_owned(), version: app.version, seconds: started.elapsed().as_secs_f64(), removed: true }.into())
 }
 
 #[derive(Serialize)]
@@ -97,14 +131,47 @@ struct Started {
     route: String,
     version: String,
     seconds: f64,
+    /// The checkra1n session is over and the app is off the device again.
+    removed: bool,
 }
 
 impl Report for Started {
     fn human(&self) -> Vec<u8> {
+        if self.removed {
+            return format!("Resize APFS {} is off {} again ({}).\n", self.version, self.board, self.route).into_bytes();
+        }
         format!(
             "iPadOS is starting on {} with Resize APFS {} ({}, {:.0} s)\nUnlock the device: Resize APFS appears on the Home Screen within a minute.\n",
             self.board, self.version, self.route, self.seconds
         )
         .into_bytes()
     }
+}
+
+/// stdin and stdout piped to `port` on the device `udid`, until either side
+/// closes: what `ssh` runs as its ProxyCommand to reach a device over the cable.
+pub fn usbmux_proxy(port: u16, udid: &str) -> Result<Output> {
+    use orchard_runtime::usbmux;
+    use std::io::{Read, Write};
+    let stream = usbmux::connect(std::path::Path::new(usbmux::SOCKET), udid, port)?;
+    let mut to_device = stream.try_clone()?;
+    let mut from_device = stream;
+    std::thread::spawn(move || {
+        let mut buffer = [0u8; 65536];
+        let mut stdin = std::io::stdin().lock();
+        while let Ok(n @ 1..) = stdin.read(&mut buffer) {
+            if to_device.write_all(&buffer[..n]).is_err() {
+                break;
+            }
+        }
+        let _ = to_device.shutdown(std::net::Shutdown::Write);
+    });
+    let mut buffer = [0u8; 65536];
+    let mut stdout = std::io::stdout().lock();
+    while let Ok(n @ 1..) = from_device.read(&mut buffer) {
+        if stdout.write_all(&buffer[..n]).and_then(|()| stdout.flush()).is_err() {
+            break;
+        }
+    }
+    std::process::exit(0)
 }

@@ -33,9 +33,25 @@ and the iOS version it runs, by `routes.toml` in the board data.
 | `dopamine` | the app is installed and gets access by itself, without DFU mode | A8 to A13 and later, by iOS version |
 
 `--access ROUTE` names one; `--palera1n`, `--checkra1n` and `--dopamine`
-are its short forms. This version runs `palera1n`, which is also taken when
-none is named; for the other two, resize-apfs's own release has
-`./resize-apfs boot`.
+are its short forms. palera1n is taken when none is named. This version
+runs `palera1n` and `checkra1n`; for `dopamine`, resize-apfs's own release
+has `./resize-apfs boot --dopamine`.
+
+### checkra1n
+
+On iOS 12 to 14 nothing can be put into the start itself, so the app is
+copied onto the device once iOS runs, and taken off again at the end:
+
+1. checkra1n starts iOS from DFU mode. Unlock the device.
+2. The app and its helper are copied over the cable, and the app appears on
+   the Home Screen.
+3. Resize in the app. When you are done, type `done` in the terminal: the
+   helper is stopped and the app removed. While a resize still runs,
+   nothing is stopped; you are asked again.
+
+The run needs a terminal and stays connected until then. A session that
+ended before its cleanup is undone at the start of the next one. It uses
+the computer's own `ssh` program.
 
 DFU mode does not tell the iOS version, so a device on iOS 14 or older is
 only refused by palera1n itself.

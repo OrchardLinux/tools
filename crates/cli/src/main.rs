@@ -44,6 +44,7 @@ fn main() -> ExitCode {
         }
         args::Command::Run(args) => commands::run::run(&cli.global, &args),
         args::Command::Resize(args) => commands::resize::run(&cli.global, &args),
+        args::Command::UsbmuxProxy { port, udid } => commands::resize::usbmux_proxy(port, &udid),
         args::Command::Session { .. } | args::Command::Shell { .. } | args::Command::Exec { .. } => {
             unreachable!("handled above")
         }
