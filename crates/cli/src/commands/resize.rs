@@ -153,8 +153,8 @@ impl Report for Started {
 pub fn usbmux_proxy(port: u16, udid: &str) -> Result<Output> {
     use orchard_runtime::usbmux;
     use std::io::{Read, Write};
-    let stream = usbmux::connect(std::path::Path::new(usbmux::SOCKET), udid, port)?;
-    let mut to_device = stream.try_clone()?;
+    let stream = usbmux::connect(std::path::Path::new(usbmux::SOCKET), udid, port).map_err(|e| e.context("connecting to the device"))?;
+    let mut to_device = stream.try_clone().map_err(|e| Error::from(e).context("sharing the connection"))?;
     let mut from_device = stream;
     std::thread::spawn(move || {
         let mut buffer = [0u8; 65536];

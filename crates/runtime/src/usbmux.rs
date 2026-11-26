@@ -109,7 +109,12 @@ pub fn connect(socket: &Path, udid: &str, port: u16) -> Result<UnixStream> {
     // usbmuxd takes the port in network byte order.
     message.insert("PortNumber".into(), Value::Integer(u64::from(port.swap_bytes()).into()));
     send(&mut stream, 2, message)?;
-    let reply = receive(&mut stream)?;
+    // usbmuxd answers at once for a device that takes connections; a
+    // device that is locked since its start, or asleep, gives no answer.
+    let reply = receive(&mut stream).map_err(|e| match e.code {
+        Code::Io => Error::new(Code::Timeout, "the device does not answer over the cable").hint("unlock the device and keep it awake"),
+        _ => e,
+    })?;
     match reply.get("Number").and_then(Value::as_unsigned_integer) {
         Some(0) => {
             stream.set_read_timeout(None)?;
