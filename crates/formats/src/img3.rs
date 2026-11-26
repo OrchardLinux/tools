@@ -19,6 +19,32 @@ pub struct Image<'a> {
     pub encrypted: bool,
 }
 
+/// An unencrypted, unsigned IMG3 of type `kind` (as Apple writes it, such
+/// as `krnl`) around `data`: a patched iBoot takes it as it would Apple's.
+pub fn unsigned(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+    let ident: Vec<u8> = kind.iter().rev().copied().collect();
+    let padded = data.len().next_multiple_of(4);
+    let mut tags = Vec::with_capacity(44 + padded);
+    tags.extend(b"EPYT");
+    tags.extend(32u32.to_le_bytes());
+    tags.extend(4u32.to_le_bytes());
+    tags.extend(&ident);
+    tags.extend([0; 16]);
+    tags.extend(b"ATAD");
+    tags.extend((12 + padded as u32).to_le_bytes());
+    tags.extend((data.len() as u32).to_le_bytes());
+    tags.extend(data);
+    tags.resize(44 + padded, 0);
+    let mut image = Vec::with_capacity(20 + tags.len());
+    image.extend(b"3gmI");
+    image.extend((20 + tags.len() as u32).to_le_bytes());
+    image.extend((tags.len() as u32).to_le_bytes());
+    image.extend((tags.len() as u32).to_le_bytes());
+    image.extend(&ident);
+    image.extend(tags);
+    image
+}
+
 fn word(bytes: &[u8], at: usize) -> Result<usize> {
     Ok(u32::from_le_bytes(
         bytes

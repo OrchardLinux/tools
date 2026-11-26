@@ -30,6 +30,10 @@ fn logo_ok(logo: &[u8]) -> bool {
     w > 0 && h > 0 && w <= 4096 && h <= 4096 && logo.len() as u64 == 12 + w * h * 4
 }
 const MACHO_ARM64: [u8; 8] = [0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0, 0, 1];
+/// The 32-bit build (A5 to A6X): `MH_MAGIC`, CPU type ARM.
+const MACHO_ARM: [u8; 8] = [0xce, 0xfa, 0xed, 0xfe, 0x0c, 0, 0, 0];
+const LC_SEGMENT: u32 = 1;
+const PAGE: usize = 4096;
 
 /// What m1n1 is to boot. Device trees keep their order.
 #[derive(Debug, Clone, Copy, Default)]
@@ -47,8 +51,82 @@ pub fn is_macho(m1n1: &[u8]) -> bool {
     m1n1.starts_with(&MACHO_ARM64)
 }
 
-/// Puts the payload behind `m1n1`. The Mach-O build's payload ends with
-/// four zero bytes; the plain binary's ends with the image.
+/// Whether `m1n1` is the 32-bit Mach-O build, which a 32-bit iBEC starts.
+pub fn is_macho_arm(m1n1: &[u8]) -> bool {
+    m1n1.starts_with(&MACHO_ARM)
+}
+
+fn word(bytes: &[u8], at: usize) -> Result<u32> {
+    let four = bytes.get(at..at + 4).ok_or(Error("m1n1's Mach-O header is cut short"))?;
+    Ok(u32::from_le_bytes(four.try_into().expect("4 bytes")))
+}
+
+/// Where the `__LAST` segment command of the 32-bit build is. iBoot loads
+/// what the segment covers, so a payload behind m1n1 has to be in it; the
+/// build leaves it empty at the end of the file.
+fn last_segment(macho: &[u8]) -> Result<usize> {
+    let commands = word(macho, 16)? as usize;
+    let end = 28usize.checked_add(word(macho, 20)? as usize).filter(|end| *end <= macho.len()).ok_or(Error("m1n1's Mach-O header is cut short"))?;
+    let mut at = 28;
+    for _ in 0..commands {
+        let size = word(macho, at + 4)? as usize;
+        if size < 8 || at + size > end {
+            return Err(Error("m1n1's Mach-O has an invalid load command"));
+        }
+        let name = macho.get(at + 8..at + 24).unwrap_or_default();
+        if word(macho, at)? == LC_SEGMENT && size >= 56 && name.starts_with(b"__LAST\0") {
+            let empty = word(macho, at + 28)? == 0 && word(macho, at + 36)? == 0;
+            let at_end = word(macho, at + 32)? as usize == macho.len() && word(macho, at + 24)? as usize % PAGE == 0;
+            if !empty || !at_end {
+                return Err(Error("m1n1 already carries a payload, or is not as orchard builds it"));
+            }
+            return Ok(at);
+        }
+        at += size;
+    }
+    Err(Error("m1n1 has no __LAST segment for a payload"))
+}
+
+/// The 32-bit build with `payload` behind it, its last segment sized to it;
+/// eight zero bytes end the payload.
+fn behind_arm(macho: &[u8], payload: &[&[u8]]) -> Result<Vec<u8>> {
+    let at = last_segment(macho)?;
+    let size = payload.iter().map(|p| p.len()).sum::<usize>() + 8;
+    if macho.len() + size > MAX_IMAGE {
+        return Err(Error("the image would be larger than 128 MiB"));
+    }
+    let mut image = macho.to_vec();
+    for part in payload {
+        image.extend_from_slice(part);
+    }
+    image.extend_from_slice(&[0; 8]);
+    image[at + 28..at + 32].copy_from_slice(&(size.next_multiple_of(PAGE) as u32).to_le_bytes());
+    image[at + 36..at + 40].copy_from_slice(&(size as u32).to_le_bytes());
+    Ok(image)
+}
+
+/// What a 32-bit iBEC starts with `bootx`: an IMG3 of type `krnl` holding
+/// `macho` in Apple's LZSS container, unencrypted and unsigned. `macho` is
+/// the 32-bit build as it is, or as [`pack`] left it.
+pub fn kernel_image_arm(macho: &[u8]) -> Result<Vec<u8>> {
+    if !is_macho_arm(macho) {
+        return Err(Error("not m1n1's 32-bit Mach-O build"));
+    }
+    // m1n1 alone still gets the end of an (empty) payload behind it.
+    let alone;
+    let macho = match last_segment(macho) {
+        Ok(_) => {
+            alone = behind_arm(macho, &[])?;
+            &alone[..]
+        }
+        Err(_) => macho,
+    };
+    Ok(crate::img3::unsigned(b"krnl", &crate::lzss::compress(macho)?))
+}
+
+/// Puts the payload behind `m1n1`. The 64-bit Mach-O build's payload ends
+/// with four zero bytes; the plain binary's ends with the image; the 32-bit
+/// Mach-O build's is covered by its last segment and takes a zImage.
 pub fn pack(m1n1: &[u8], payload: &Payload) -> Result<Vec<u8>> {
     if m1n1.is_empty() {
         return Err(Error("m1n1 is empty"));
@@ -75,6 +153,22 @@ pub fn pack(m1n1: &[u8], payload: &Payload) -> Result<Vec<u8>> {
         None => None,
     };
 
+    if is_macho_arm(m1n1) {
+        // m1n1 reads a zImage's length from its header: padded, so that
+        // what follows stays aligned.
+        let padding = [0u8; 4];
+        let mut parts: Vec<&[u8]> = Vec::new();
+        parts.extend(payload.logo);
+        parts.extend(bootargs.as_deref());
+        parts.extend(payload.dtbs);
+        parts.push(payload.kernel);
+        parts.push(&padding[..payload.kernel.len().next_multiple_of(4) - payload.kernel.len()]);
+        if let Some((header, archive)) = &initramfs {
+            parts.push(header);
+            parts.push(archive);
+        }
+        return behind_arm(m1n1, &parts);
+    }
     let mut parts: Vec<&[u8]> = vec![m1n1];
     parts.extend(payload.logo);
     parts.extend(bootargs.as_deref());
@@ -145,6 +239,55 @@ fn check_dtb(dtb: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A 32-bit Mach-O with one empty `__LAST` segment at its end, as
+    /// orchard builds m1n1 for the 32-bit chips.
+    fn macho_arm() -> Vec<u8> {
+        let mut m = MACHO_ARM.to_vec();
+        m.extend([0u8; 8]);
+        m.extend(1u32.to_le_bytes()); // one load command
+        m.extend(56u32.to_le_bytes()); // of 56 bytes
+        m.extend(0u32.to_le_bytes());
+        m.extend(LC_SEGMENT.to_le_bytes());
+        m.extend(56u32.to_le_bytes());
+        m.extend(b"__LAST\0\0\0\0\0\0\0\0\0\0");
+        m.extend(0x8000u32.to_le_bytes()); // vmaddr
+        m.extend(0u32.to_le_bytes()); // vmsize
+        m.extend(84u32.to_le_bytes()); // fileoff: the end of the file
+        m.extend([0u8; 20]);
+        assert_eq!(m.len(), 84);
+        m
+    }
+
+    #[test]
+    fn the_32_bit_build_takes_its_payload_in_its_last_segment() {
+        let macho = macho_arm();
+        let tree = dtb(40);
+        let dtbs = [tree.as_slice()];
+        let payload = Payload { logo: None, bootargs: Some("a=b"), dtbs: &dtbs, kernel: b"zImag", initramfs: Some(b"cpio") };
+        let image = pack(&macho, &payload).unwrap();
+        // Variables, tree, kernel padded to 4, tag and size, archive, 8 zeros.
+        let size = "chosen.bootargs=a=b\n".len() + 40 + 8 + INITRAMFS_TAG.len() + 4 + 4 + 8;
+        assert_eq!(image.len(), macho.len() + size);
+        assert_eq!(word(&image, 28 + 28).unwrap() as usize, PAGE);
+        assert_eq!(word(&image, 28 + 36).unwrap() as usize, size);
+        assert!(image.ends_with(&[b'c', b'p', b'i', b'o', 0, 0, 0, 0, 0, 0, 0, 0]));
+        // Packed once: a second payload is refused.
+        assert!(pack(&image, &payload).is_err());
+
+        // For bootx: an IMG3 of type krnl around the LZSS container.
+        let wrapped = kernel_image_arm(&image).unwrap();
+        assert_eq!(&wrapped[..4], b"3gmI");
+        assert_eq!(&wrapped[16..20], b"lnrk");
+        let parsed = crate::img3::Image::parse(&wrapped).unwrap();
+        let (plain, _) = crate::lzss::decompress(&parsed.decode(None).unwrap(), 1 << 20).unwrap();
+        assert_eq!(plain, image);
+        // m1n1 alone gets the end of an empty payload.
+        let alone = kernel_image_arm(&macho).unwrap();
+        let (plain, _) = crate::lzss::decompress(&crate::img3::Image::parse(&alone).unwrap().decode(None).unwrap(), 1 << 20).unwrap();
+        assert_eq!(plain.len(), macho.len() + 8);
+        assert!(kernel_image_arm(&MACHO_ARM64).is_err());
+    }
 
     /// The smallest header `check_dtb` accepts, padded to `size` bytes.
     fn dtb(size: u32) -> Vec<u8> {
