@@ -3,7 +3,7 @@
 //! Each is taken finished where orchard publishes it for this state, and
 //! otherwise built by its recipe and kept in the cache.
 use crate::platform::descriptor;
-use crate::{copy_file, invalid, json, kernel, published, recipes, Build, RELEASES};
+use crate::{invalid, json, kernel, published, recipes, Build, RELEASES};
 use orchard_cache::component::Key;
 use orchard_cache::{Code, Context, Error, Result};
 use std::ffi::OsStr;
@@ -181,22 +181,32 @@ pub fn pongo(build: &Build) -> Result<PathBuf> {
 }
 
 /// orchard's m1n1, built here: `m1n1.bin`. One m1n1 starts every Apple
-/// device; the board only picks its device tree.
+/// device; the board only picks its device tree. Its source is
+/// OrchardLinux/m1n1 at the commit the recipe's `upstream.lock` names.
 pub fn build_m1n1(build: &Build) -> Result<PathBuf> {
     let root = &build.root;
-    if !has_patches(&root.join("boot/m1n1/patches")) {
+    if !root.join("boot/m1n1/upstream.lock").is_file() {
         return Err(Error::new(
             Code::NotFound,
-            "the data has no m1n1 patches (boot/m1n1/patches)",
+            "the data names no m1n1 commit (boot/m1n1/upstream.lock)",
         )
         .hint("supply --loader FILE"));
+    }
+    // Older data kept m1n1 as patch layers on another base: built without
+    // them it would be an m1n1 that starts no device.
+    if root.join("boot/m1n1/series").exists() {
+        return Err(Error::new(
+            Code::Unsupported,
+            "this data keeps m1n1 as patch files (boot/m1n1/series), which this orchard2 no longer applies",
+        )
+        .hint("use newer orchard data, or supply --loader FILE"));
     }
     let inputs = build.contract.m1n1.clone();
     let entry = build.component(
         "m1n1",
         &mut || Ok(Key::plain(key_of(build, &inputs)?)),
         &mut |stage| {
-            // One tree per patch set: a changed series starts a fresh tree
+            // One tree per m1n1 commit: a moved lock starts a fresh tree
             // instead of resuming one the recipe would refuse. Crates are shared.
             let key = key_of(build, &inputs)?;
             let work = build.cache.recipe_work("m1n1", &key)?;
@@ -205,12 +215,6 @@ pub fn build_m1n1(build: &Build) -> Result<PathBuf> {
                 build.cache.work().join(".cargo-m1n1"),
             );
             let builder = root.join("boot/m1n1/build");
-            // The recipe records this patch by its path and resumes only with
-            // the same one: every checkout with these inputs uses one copy.
-            let patches = build.cache.work().join(".m1n1-patches").join(&key);
-            std::fs::create_dir_all(&patches).context(patches.display())?;
-            let patch = patches.join("m1n1.patch");
-            copy_file(&root.join("boot/quiet/m1n1.patch"), &patch)?;
             // Quiet, as CI builds it: black, no m1n1 logo, until m1n1 paints the system's splash.
             let mut argv: Vec<&OsStr> = vec![
                 builder.as_os_str(),
@@ -221,32 +225,19 @@ pub fn build_m1n1(build: &Build) -> Result<PathBuf> {
                 work.as_os_str(),
                 "--cargo-dir".as_ref(),
                 cargo.as_os_str(),
-                "--extra-patch".as_ref(),
-                patch.as_os_str(),
                 "--extra-cflags".as_ref(),
                 "-DQUIET_BOOT".as_ref(),
             ];
-            let applied = std::fs::read_to_string(work.join("applied-patches"));
-            if applied.is_ok_and(|text| text.contains(&*patch.to_string_lossy())) {
+            if work.join("applied-patches").is_file() {
                 argv.push("--resume".as_ref());
             } else if work.exists() {
-                // An earlier attempt stopped before its patches were applied,
-                // or named the patch in a checkout.
+                // An earlier attempt stopped before its source was ready.
                 std::fs::remove_dir_all(&work).context(work.display())?;
             }
             build.command(&argv, &[])
         },
     )?;
     Ok(entry.join("m1n1.bin"))
-}
-
-fn has_patches(directory: &Path) -> bool {
-    std::fs::read_dir(directory).is_ok_and(|items| {
-        items.flatten().any(|item| {
-            let path = item.path();
-            path.extension().is_some_and(|e| e == "patch") || (path.is_dir() && has_patches(&path))
-        })
-    })
 }
 
 /// A board's profile for Cascadia's loader.
