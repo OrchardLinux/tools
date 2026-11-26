@@ -54,6 +54,9 @@ pub struct Executor {
     pongo: Option<PathBuf>,
     /// The boot route asked for (`--boot`, else ORCHARD_BOOT).
     boot: Option<String>,
+    /// An m1n1 for the launcher to start instead of the published one
+    /// (testing a build): the form the boot route takes.
+    m1n1: Option<PathBuf>,
     /// One download per file at a time: whoever comes second waits and takes
     /// the finished file (two writers on one partial file broke each other).
     downloads: Arc<Mutex<std::collections::HashMap<String, Arc<Mutex<()>>>>>,
@@ -70,7 +73,7 @@ impl Executor {
     }
 
     pub fn new(data: Option<&Path>, cache: &Path, events: Sender<Event>) -> Executor {
-        Executor { explicit_data: data.map(Path::to_owned), data: Arc::default(), cache: cache.to_owned(), events, release: Arc::default(), kernel: Arc::default(), index: String::new(), companion: None, overlay: Arc::default(), verified: Arc::default(), pongo: None, boot: crate::flags::boot(), downloads: Arc::default(), tools: Arc::default(), serials: Arc::default() }
+        Executor { explicit_data: data.map(Path::to_owned), data: Arc::default(), cache: cache.to_owned(), events, release: Arc::default(), kernel: Arc::default(), index: String::new(), companion: None, overlay: Arc::default(), verified: Arc::default(), pongo: None, boot: crate::flags::boot(), m1n1: None, downloads: Arc::default(), tools: Arc::default(), serials: Arc::default() }
     }
 
     /// A device's serial number was seen (iBoot says it in recovery mode).
@@ -257,6 +260,17 @@ impl Executor {
     pub fn with_pongo(mut self, path: &Path) -> Executor {
         self.pongo = Some(path.to_owned());
         self
+    }
+
+    /// Has the launcher start this m1n1 instead of the published one.
+    pub fn with_m1n1(mut self, path: &Path) -> Executor {
+        self.m1n1 = Some(path.to_owned());
+        self
+    }
+
+    /// The launcher's m1n1 given for this run, if one was.
+    pub fn given_m1n1(&self) -> Result<Option<Vec<u8>>> {
+        self.m1n1.as_deref().map(|path| std::fs::read(path).map_err(|e| Error::new(Code::NotFound, format!("{}: {e}", path.display())))).transpose()
     }
 
     /// Takes this boot route instead of the first that fits.

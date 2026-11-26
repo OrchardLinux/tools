@@ -12,7 +12,7 @@ use orchard_flow::{Again, App, Event, Flow, Layout, Link, Seen, Sequence, State,
 use orchard_runtime::driver::{self, Observer, Options};
 use serde_json::{json, Value};
 use std::io::BufRead;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -145,6 +145,10 @@ pub struct LaunchArgs {
     /// A scripted device instead of USB (development, tests)
     #[arg(long, hide = true)]
     pub demo: bool,
+    /// An m1n1 to start instead of the published one, in the form the boot
+    /// route takes (testing a build)
+    #[arg(long, hide = true)]
+    pub m1n1: Option<PathBuf>,
 }
 
 /// The distribution's release index for SOURCE: a URL or file as it is, else
@@ -555,11 +559,12 @@ impl Observer for Relay {
     fn quit(&mut self) {}
 }
 
-fn start(app: App, global: &Global, index: Option<String>, boot: Option<&str>, demo: bool) -> Result<(driver::Handle, Receiver<Flow>), String> {
+fn start(app: App, global: &Global, index: Option<String>, boot: Option<&str>, m1n1: Option<&Path>, demo: bool) -> Result<(driver::Handle, Receiver<Flow>), String> {
     let (tx, rx) = mpsc::channel();
     let mut options = Options::new(app);
     options.index = index;
     options.boot = boot.map(str::to_owned);
+    options.m1n1 = m1n1.map(Path::to_owned);
     // The board data and cache the person names, as every other command.
     options.data = global.data.clone();
     if let Some(cache) = &global.cache {
@@ -1102,7 +1107,7 @@ pub fn install(global: &Global, args: &InstallArgs) -> ExitCode {
     }
     catch_interrupts();
     out.term.live_restart(vec![s("Reading the release", SUB)]);
-    let (handle, rx) = match start(App::Installer, global, Some(index), args.boot.as_deref().or(args.short.route()), args.demo) {
+    let (handle, rx) = match start(App::Installer, global, Some(index), args.boot.as_deref().or(args.short.route()), None, args.demo) {
         Ok(h) => h,
         Err(e) => {
             out.fail(format!("Couldn't start: {e}"));
@@ -1488,7 +1493,7 @@ fn secret_pair(out: &mut Out, label: &str, again: &str, flag: &str, given: Optio
 pub fn launch(global: &Global, args: &LaunchArgs) -> ExitCode {
     let mut out = Out { term: Term::new(args.log.as_deref()), json: global.json };
     catch_interrupts();
-    let (handle, rx) = match start(App::Launcher, global, None, args.boot.as_deref().or(args.short.route()), args.demo) {
+    let (handle, rx) = match start(App::Launcher, global, None, args.boot.as_deref().or(args.short.route()), args.m1n1.as_deref(), args.demo) {
         Ok(h) => h,
         Err(e) => {
             out.fail(format!("Couldn't start: {e}"));

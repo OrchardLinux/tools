@@ -28,6 +28,8 @@ pub struct Options {
     pub companion: Option<PathBuf>,
     /// A Pongo to use instead of the release's (testing a build).
     pub pongo: Option<PathBuf>,
+    /// An m1n1 for the launcher to start instead of the published one.
+    pub m1n1: Option<PathBuf>,
     /// The boot route to take (`--boot`); None: ORCHARD_BOOT, else the
     /// first in the board data that fits the device.
     pub boot: Option<String>,
@@ -52,6 +54,7 @@ impl Options {
             companion: None,
             pongo: None,
             boot: None,
+            m1n1: None,
             only: None,
             fetch: true,
             live: false,
@@ -81,6 +84,9 @@ impl Options {
         }
         if let Some(boot) = &self.boot {
             executor = executor.with_boot(boot);
+        }
+        if let Some(m1n1) = &self.m1n1 {
+            executor = executor.with_m1n1(m1n1);
         }
         Ok(executor)
     }

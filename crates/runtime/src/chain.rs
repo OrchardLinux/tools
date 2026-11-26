@@ -444,11 +444,14 @@ pub fn boot_ipados(executor: &Executor, device: &Device) -> Result<()> {
 /// the host (orchard's `orchard launch`).
 pub fn start_m1n1(executor: &Executor, device: &Device) -> Result<orchard_usb::Device> {
     let mut session = session(device)?;
+    let given = executor.given_m1n1()?;
     if executor.boot_route(&device.board)?.name == "ibss" {
-        crate::ibss::start(executor, &mut session, &device.board, None, |m1n1| Ok(m1n1.to_vec()))?;
+        crate::ibss::start(executor, &mut session, &device.board, None, |m1n1| Ok(given.unwrap_or_else(|| m1n1.to_vec())))?;
     } else {
-        let tools = executor.orchard_tools()?;
-        let m1n1 = std::fs::read(executor.download(&tools.m1n1)?)?;
+        let m1n1 = match given {
+            Some(m1n1) => m1n1,
+            None => std::fs::read(executor.download(&executor.orchard_tools()?.m1n1)?)?,
+        };
         start_image(executor, &mut session, &device.board, &m1n1)?;
     }
     match session.wait_for(Mode::M1n1, Duration::from_secs(30)) {
