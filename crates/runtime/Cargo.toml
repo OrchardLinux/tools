@@ -11,6 +11,7 @@ libc = "0.2"
 orchard-flow = { path = "../flow" }
 orchard-usb.workspace = true
 orchard-boards.workspace = true
+orchard-device.workspace = true
 orchard-cache.workspace = true
 orchard-formats.workspace = true
 sha2.workspace = true

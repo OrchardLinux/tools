@@ -60,6 +60,12 @@ pub struct InstallArgs {
     /// The lock screen PIN (6 digits): a file, or - for stdin; asked when not given
     #[arg(long)]
     pub pin_file: Option<PathBuf>,
+    /// The boot route from DFU mode (palera1n, checkra1n, ...); otherwise
+    /// ORCHARD_BOOT, else the first that fits the device
+    #[arg(long, value_name = "ROUTE")]
+    pub boot: Option<String>,
+    #[command(flatten)]
+    pub short: BootOnlyFlags,
     /// Seconds to wait for each step the person does (DFU mode, a cable); 0 waits for ever
     #[arg(long, default_value = "0")]
     pub wait: u64,
@@ -71,6 +77,51 @@ pub struct InstallArgs {
     pub demo: bool,
 }
 
+/// Short forms of `--boot ROUTE` where the command takes boot routes only.
+#[derive(clap::Args)]
+#[group(multiple = false)]
+pub struct BootFlags {
+    /// Short for --boot ibss
+    #[arg(long, conflicts_with = "boot")]
+    pub ibss: bool,
+    /// Short for --boot palera1n
+    #[arg(long, conflicts_with = "boot")]
+    pub palera1n: bool,
+    /// Short for --boot checkra1n
+    #[arg(long, conflicts_with = "boot")]
+    pub checkra1n: bool,
+    /// Short for --boot autogo
+    #[arg(long, conflicts_with = "boot")]
+    pub autogo: bool,
+}
+
+impl BootFlags {
+    fn route(&self) -> Option<&'static str> {
+        [(self.ibss, "ibss"), (self.palera1n, "palera1n"), (self.checkra1n, "checkra1n"), (self.autogo, "autogo")]
+            .into_iter()
+            .find_map(|(set, name)| set.then_some(name))
+    }
+}
+
+/// Short forms of `--boot ROUTE` on a command that also takes access
+/// routes: only the routes that are boot routes and nothing else.
+#[derive(clap::Args)]
+#[group(multiple = false)]
+pub struct BootOnlyFlags {
+    /// Short for --boot ibss
+    #[arg(long, conflicts_with = "boot")]
+    pub ibss: bool,
+    /// Short for --boot autogo
+    #[arg(long, conflicts_with = "boot")]
+    pub autogo: bool,
+}
+
+impl BootOnlyFlags {
+    fn route(&self) -> Option<&'static str> {
+        [(self.ibss, "ibss"), (self.autogo, "autogo")].into_iter().find_map(|(set, name)| set.then_some(name))
+    }
+}
+
 #[derive(clap::Args)]
 pub struct LaunchArgs {
     /// Only list the installed systems
@@ -79,6 +130,12 @@ pub struct LaunchArgs {
     /// Start exactly this boot entry
     #[arg(long)]
     pub entry: Option<String>,
+    /// The boot route from DFU mode (palera1n, checkra1n, ...); otherwise
+    /// ORCHARD_BOOT, else the first that fits the device
+    #[arg(long, value_name = "ROUTE")]
+    pub boot: Option<String>,
+    #[command(flatten)]
+    pub short: BootFlags,
     /// Seconds to wait for DFU mode; 0 waits for ever
     #[arg(long, default_value = "0")]
     pub wait: u64,
@@ -498,10 +555,11 @@ impl Observer for Relay {
     fn quit(&mut self) {}
 }
 
-fn start(app: App, global: &Global, index: Option<String>, demo: bool) -> Result<(driver::Handle, Receiver<Flow>), String> {
+fn start(app: App, global: &Global, index: Option<String>, boot: Option<&str>, demo: bool) -> Result<(driver::Handle, Receiver<Flow>), String> {
     let (tx, rx) = mpsc::channel();
     let mut options = Options::new(app);
     options.index = index;
+    options.boot = boot.map(str::to_owned);
     // The board data and cache the person names, as every other command.
     options.data = global.data.clone();
     if let Some(cache) = &global.cache {
@@ -1044,7 +1102,7 @@ pub fn install(global: &Global, args: &InstallArgs) -> ExitCode {
     }
     catch_interrupts();
     out.term.live_restart(vec![s("Reading the release", SUB)]);
-    let (handle, rx) = match start(App::Installer, global, Some(index), args.demo) {
+    let (handle, rx) = match start(App::Installer, global, Some(index), args.boot.as_deref().or(args.short.route()), args.demo) {
         Ok(h) => h,
         Err(e) => {
             out.fail(format!("Couldn't start: {e}"));
@@ -1430,7 +1488,7 @@ fn secret_pair(out: &mut Out, label: &str, again: &str, flag: &str, given: Optio
 pub fn launch(global: &Global, args: &LaunchArgs) -> ExitCode {
     let mut out = Out { term: Term::new(args.log.as_deref()), json: global.json };
     catch_interrupts();
-    let (handle, rx) = match start(App::Launcher, global, None, args.demo) {
+    let (handle, rx) = match start(App::Launcher, global, None, args.boot.as_deref().or(args.short.route()), args.demo) {
         Ok(h) => h,
         Err(e) => {
             out.fail(format!("Couldn't start: {e}"));

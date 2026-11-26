@@ -9,6 +9,7 @@ pub mod demo;
 pub mod driver;
 pub mod exec;
 pub mod flags;
+pub mod ibss;
 pub mod install;
 pub mod kernel_package;
 pub mod launcher;

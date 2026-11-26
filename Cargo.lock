@@ -3930,6 +3930,7 @@ dependencies = [
  "libc",
  "orchard-boards",
  "orchard-cache",
+ "orchard-device",
  "orchard-flow",
  "orchard-formats",
  "orchard-usb",

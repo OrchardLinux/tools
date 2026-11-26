@@ -99,7 +99,7 @@ to the run's log.
 
 | Variable | Does |
 | --- | --- |
-| `ORCHARD_ENTRY=checkra1n` | checkra1n runs the exploit and starts Pongo instead of palera1n (`palera1n`: the default) |
+| `ORCHARD_BOOT=ROUTE` | the boot route, as `--boot ROUTE` ([install.md](install.md#how-the-device-is-entered)); `--boot` counts over it |
 | `ORCHARD_PALERA1N_BETA=0` | palera1n v2.4 instead of the 3.0 beta |
 | `ORCHARD_PORT_RESET_SECONDS=N` | seconds after the exploit before the USB port is reset (Linux); 0: no reset |
 | `ORCHARD_KEEP_AWAKE=1` | keeps the CPU out of deep sleep while the exploit runs (Linux) |

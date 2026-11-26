@@ -24,7 +24,9 @@ The run ends when the start command is out; the system continues on the
 device by itself.
 
 Waiting for DFU mode, naming one device, the boards it works on and how the
-device is entered are the same as for [install](install.md#waiting-for-dfu-mode).
+device is entered are the same as for [install](install.md#waiting-for-dfu-mode):
+`--boot ROUTE`, with `--ibss`, `--palera1n` and `--checkra1n` as its short
+forms here, where a route can only mean the boot route.
 That includes the guided run from recovery mode in a terminal, and the
 usual DFU steps without one.
 `--wait SECONDS` and `--log FILE` too.

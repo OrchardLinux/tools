@@ -23,6 +23,10 @@ const SETTLE_SECONDS: u64 = 15;
 /// How long Pongo may take to show up on USB once palera1n has ended (seen
 /// 40–42 s on an iPad Air with a Raspberry Pi 4 host, orchard#239).
 const PONGO_SECONDS: u64 = 60;
+/// How long a device may take to come back after checkm8 before the person
+/// is asked to reconnect it (it came back by itself after 7 and 8 s on a
+/// j71b over a direct USB-C cable).
+const BACK_SECONDS: Duration = Duration::from_secs(12);
 /// A full boot uploads the patchfinder, ramdisk and overlay before iPadOS starts.
 const IPADOS_SECONDS: u64 = 240;
 
@@ -40,7 +44,7 @@ static LOCATION: std::sync::Mutex<Option<(String, String)>> = std::sync::Mutex::
 
 /// `device` in `mode`, if it is there. Any other Apple device on USB, in any
 /// mode, is an error (orchard_usb::others).
-fn the_device(device: &Device, mode: Mode) -> Result<Option<orchard_usb::Device>> {
+pub(crate) fn the_device(device: &Device, mode: Mode) -> Result<Option<orchard_usb::Device>> {
     let listed = orchard_usb::list().map_err(|e| fail(e.to_string()))?;
     let mut known = LOCATION.lock().expect("location lock");
     let location = known.as_ref().filter(|(id, _)| *id == device.id.0).map(|(_, at)| at.clone());
@@ -58,6 +62,13 @@ fn the_device(device: &Device, mode: Mode) -> Result<Option<orchard_usb::Device>
 /// The install payload for this device: m1n1, the layer's kernel, initrd and
 /// device tree, and the install tools with the device's ECID.
 pub fn payload(executor: &Executor, device: &Device) -> Result<Vec<u8>> {
+    let m1n1 = std::fs::read(executor.download(&executor.orchard_tools()?.m1n1)?)?;
+    payload_behind(executor, device, &m1n1)
+}
+
+/// The install payload behind `m1n1`: its plain build for Pongo, its Mach-O
+/// build for a patched iBoot.
+fn payload_behind(executor: &Executor, device: &Device, m1n1: &[u8]) -> Result<Vec<u8>> {
     let rel = executor.release()?;
     let layer = &rel
         .platform_for(&device.board)
@@ -69,9 +80,8 @@ pub fn payload(executor: &Executor, device: &Device) -> Result<Vec<u8>> {
     let ecid = u64::from_str_radix(&device.id.0, 16).map_err(|_| fail("the device's ECID is not hex"))?;
     let tools = std::fs::read(executor.download(&rel.install_tools)?)?;
     let add_on = install_env::add_on(&tools, &install_env::Device { ecid })?;
-    let m1n1 = std::fs::read(executor.download(&executor.orchard_tools()?.m1n1)?)?;
     let logo = rel.logo.as_ref().map(|l| executor.download(l).and_then(|p| Ok(std::fs::read(p)?))).transpose()?;
-    install_env::payload(&m1n1, logo.as_deref(), &boot, &add_on)
+    install_env::payload(m1n1, logo.as_deref(), &boot, &add_on)
 }
 
 /// Runs palera1n on the device in DFU: checks it is the user's device
@@ -261,20 +271,28 @@ fn restarted(log: &std::path::Path) -> Error {
     fail(format!("{RESTARTED}{why}"))
 }
 
-/// palera1n's exploit into Pongo, then Pongo on USB. A failed attempt with
+/// The tool that takes a device from DFU mode to Pongo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tool {
+    Palera1n,
+    /// The unpatched official checkra1n.
+    Checkra1n,
+}
+
+/// The tool's exploit into Pongo, then Pongo on USB. A failed attempt with
 /// the device still (or again) in DFU mode is tried again, up to
 /// START_WINDOW, and the flow hears of each new attempt. iOS on USB ends it:
 /// the device restarted, and only DFU mode by hand starts over.
-fn into_pongo(executor: &Executor, device: &Device, pongo_image: &std::path::Path) -> Result<orchard_usb::Device> {
+fn into_pongo(executor: &Executor, device: &Device, pongo_image: &std::path::Path, with: Tool) -> Result<orchard_usb::Device> {
     let until = Instant::now() + START_WINDOW;
     let mut attempt = 1u32;
     // ORCHARD_KEEP_AWAKE: no deep CPU sleep for as long as the exploit runs.
     let _awake = crate::flags::stay_awake();
     loop {
         let args = [std::ffi::OsString::from("-p"), "-k".into(), pongo_image.as_os_str().to_owned()];
-        let ran = match crate::flags::entry() {
-            crate::flags::Entry::Checkra1n => run_checkra1n(executor, device, pongo_image, PALERA1N_SECONDS),
-            crate::flags::Entry::Palera1n => run_palera1n(executor, device, &args, PALERA1N_SECONDS),
+        let ran = match with {
+            Tool::Checkra1n => run_checkra1n(executor, device, pongo_image, PALERA1N_SECONDS),
+            Tool::Palera1n => run_palera1n(executor, device, &args, PALERA1N_SECONDS),
         };
         let failed = match ran {
             Ok(()) => {
@@ -359,7 +377,10 @@ impl Progress {
                     }
                 }
                 if wait.is_none() {
-                    wait = dropped(&log, crate::replug::timing()).map(|settle| (Instant::now(), settle));
+                    // Without a port reset to try first, the notice asks the
+                    // person to act: only once the device is clearly late.
+                    let late = |settle: Duration| if resetting.is_none() { settle.max(BACK_SECONDS) } else { settle };
+                    wait = dropped(&log, crate::replug::timing()).map(|settle| (Instant::now(), late(settle)));
                 }
                 let back = returned(&log);
                 let gave_up = resetting.as_ref().is_none_or(|done| done.load(Ordering::Relaxed));
@@ -399,18 +420,23 @@ pub fn boot_ipados(executor: &Executor, device: &Device) -> Result<()> {
     let overlay = executor.overlay()?;
     // Orchard's Pongo (or `--pongo`'s), as every other boot.
     let ours = executor.pongo_image()?;
-    into_pongo(executor, device, &ours)?;
+    // palera1n goes on from its own Pongo start.
+    into_pongo(executor, device, &ours, Tool::Palera1n)?;
     let second = vec![std::ffi::OsString::from("-l"), "-o".into(), overlay.into_os_string(), "-k".into(), ours.into_os_string()];
     run_palera1n_from(executor, device, Mode::Pongo, &second, IPADOS_SECONDS)
 }
 
-/// The launcher's loader: palera1n → Pongo → the release's m1n1 → `bootm`,
-/// then m1n1's proxy on USB. m1n1 reads the device's boot partition itself;
+/// The launcher's loader, by the boot route: palera1n or checkra1n → Pongo →
+/// the release's m1n1 → `bootm`, or the `ibss` route; then m1n1's proxy on USB. m1n1 reads the device's boot partition itself;
 /// nothing else comes from the host (orchard's `orchard launch`).
 pub fn start_m1n1(executor: &Executor, device: &Device) -> Result<orchard_usb::Device> {
-    let tools = executor.orchard_tools()?;
-    let m1n1 = std::fs::read(executor.download(&tools.m1n1)?)?;
-    start_from_pongo(executor, device, &m1n1)?;
+    if executor.boot_route(&device.board)?.name == "ibss" {
+        crate::ibss::start_m1n1(executor, device)?;
+    } else {
+        let tools = executor.orchard_tools()?;
+        let m1n1 = std::fs::read(executor.download(&tools.m1n1)?)?;
+        start_from_pongo(executor, device, &m1n1)?;
+    }
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         if let Some(usb) = the_device(device, Mode::M1n1)? {
@@ -423,9 +449,14 @@ pub fn start_m1n1(executor: &Executor, device: &Device) -> Result<orchard_usb::D
     }
 }
 
-/// palera1n → Pongo → payload → `bootm`. Never retried by itself: a failure
-/// goes back to the flow, which asks for DFU again.
+/// The install system by the boot route: palera1n or checkra1n → Pongo →
+/// payload → `bootm`, or the `ibss` route with the payload behind m1n1.
+/// Never retried by itself: a failure goes back to the flow, which asks for
+/// DFU again.
 pub fn boot_install_env(executor: &Executor, device: &Device) -> Result<()> {
+    if executor.boot_route(&device.board)?.name == "ibss" {
+        return crate::ibss::start(executor, device, |m1n1| payload_behind(executor, device, m1n1));
+    }
     let payload = payload(executor, device)?;
     start_from_pongo(executor, device, &payload)
 }
@@ -435,8 +466,14 @@ pub fn boot_install_env(executor: &Executor, device: &Device) -> Result<()> {
 /// installer), or m1n1 does (the launcher). bootm's own answer may not come
 /// (Pongo is gone once the image runs), so only what shows up next confirms it.
 fn start_from_pongo(executor: &Executor, device: &Device, image: &[u8]) -> Result<()> {
+    let route = executor.boot_route(&device.board)?;
+    let with = match route.name.as_str() {
+        "palera1n" => Tool::Palera1n,
+        "checkra1n" => Tool::Checkra1n,
+        other => return Err(Error::new(Code::Unsupported, format!("the install system is not started by the {other} route yet; launch is"))),
+    };
     let pongo_image = executor.pongo_image()?;
-    let usb = into_pongo(executor, device, &pongo_image)?;
+    let usb = into_pongo(executor, device, &pongo_image, with)?;
     let mut pongo = Pongo::open(&usb).map_err(|e| fail(e.to_string()))?;
     pongo.send(image, Duration::from_secs(60)).map_err(|e| fail(e.to_string()))?;
     let _ = pongo.command("bootm", Duration::from_secs(10));

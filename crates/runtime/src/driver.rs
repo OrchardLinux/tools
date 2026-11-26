@@ -28,6 +28,9 @@ pub struct Options {
     pub companion: Option<PathBuf>,
     /// A Pongo to use instead of the release's (testing a build).
     pub pongo: Option<PathBuf>,
+    /// The boot route to take (`--boot`); None: ORCHARD_BOOT, else the
+    /// first in the board data that fits the device.
+    pub boot: Option<String>,
     /// The one device this run is for; any other is not worked on.
     pub only: Option<crate::Only>,
     /// Download and build assets; off only to watch the flow without work.
@@ -48,6 +51,7 @@ impl Options {
             local: None,
             companion: None,
             pongo: None,
+            boot: None,
             only: None,
             fetch: true,
             live: false,
@@ -74,6 +78,9 @@ impl Options {
         }
         if let Some(pongo) = &self.pongo {
             executor = executor.with_pongo(pongo);
+        }
+        if let Some(boot) = &self.boot {
+            executor = executor.with_boot(boot);
         }
         Ok(executor)
     }
@@ -126,6 +133,7 @@ pub fn start(options: Options, observer: impl Observer) -> Result<Handle> {
     let (tx, rx) = mpsc::channel();
     let executor = options.executor(tx.clone())?;
     let catalog = Catalog::open(&executor.data()?)?;
+    executor.check_boot()?;
     let handle = Handle { events: tx.clone(), executor: executor.clone() };
     let driver = Driver {
         app: options.app,

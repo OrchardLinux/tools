@@ -6,9 +6,8 @@
 //!   port reset (Linux); 0 turns the reset off.
 //! - `ORCHARD_PALERA1N_BETA=0`: runs palera1n v2.4 (pinned, checked like the
 //!   beta) instead of the 3.0 beta.
-//! - `ORCHARD_ENTRY=palera1n` or `checkra1n`: the tool that runs the exploit
-//!   and starts Pongo; palera1n without it. What follows from Pongo is the
-//!   same.
+//! - `ORCHARD_BOOT=NAME`: the boot route (`routes.toml` in the board data),
+//!   as `--boot NAME`, which counts over it.
 //! - `ORCHARD_KEEP_AWAKE=1`: keeps the CPU out of its deep sleep states while
 //!   the exploit runs (Linux, `/dev/cpu_dma_latency`, which must be writable:
 //!   root's by default), for hosts where checkm8 only succeeds under load.
@@ -35,32 +34,9 @@ pub fn palera1n_pin() -> Option<(&'static orchard_flow::assets::Pin, &'static st
     }
 }
 
-/// The tool that takes a device from DFU mode to Pongo.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Entry {
-    Palera1n,
-    /// The unpatched official checkra1n.
-    Checkra1n,
-}
-
-impl Entry {
-    /// The entry a name stands for.
-    fn named(name: &str) -> Option<Entry> {
-        match name {
-            "palera1n" => Some(Entry::Palera1n),
-            "checkra1n" => Some(Entry::Checkra1n),
-            _ => None,
-        }
-    }
-}
-
-/// The entry: palera1n, on every board, unless ORCHARD_ENTRY names another.
-pub fn entry() -> Entry {
-    entry_from(var("ORCHARD_ENTRY").as_deref())
-}
-
-fn entry_from(asked: Option<&str>) -> Entry {
-    asked.and_then(Entry::named).unwrap_or(Entry::Palera1n)
+/// The boot route ORCHARD_BOOT names, for a run that was given no `--boot`.
+pub fn boot() -> Option<String> {
+    var("ORCHARD_BOOT")
 }
 
 /// The checkra1n to run on this computer.
@@ -102,27 +78,13 @@ pub fn stay_awake() -> Option<Awake> {
 
 /// One line per switch that is set (and understood), for the log.
 pub fn log_active() {
-    for name in ["ORCHARD_PORT_RESET_SECONDS", "ORCHARD_PALERA1N_BETA", "ORCHARD_ENTRY", "ORCHARD_KEEP_AWAKE"] {
+    for name in ["ORCHARD_PORT_RESET_SECONDS", "ORCHARD_PALERA1N_BETA", "ORCHARD_BOOT", "ORCHARD_KEEP_AWAKE"] {
         if let Some(value) = var(name) {
             let understood = match name {
                 "ORCHARD_PORT_RESET_SECONDS" => port_reset().is_some(),
-                "ORCHARD_ENTRY" => Entry::named(&value).is_some(),
                 _ => true,
             };
             eprintln!("flags: {name}={value}{}", if understood { "" } else { " (not understood, ignored)" });
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn palera1n_unless_the_environment_names_the_other() {
-        assert_eq!(entry_from(None), Entry::Palera1n);
-        assert_eq!(entry_from(Some("palera1n")), Entry::Palera1n);
-        assert_eq!(entry_from(Some("checkra1n")), Entry::Checkra1n);
-        assert_eq!(entry_from(Some("1")), Entry::Palera1n);
     }
 }

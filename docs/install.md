@@ -95,12 +95,26 @@ board.
 
 ## How the device is entered
 
-From DFU mode palera1n runs the boot ROM exploit and starts Pongo, on every
-board. `ORCHARD_ENTRY=checkra1n` has checkra1n do it instead
-([reference.md](reference.md#environment)). Both are pinned by size and
-SHA-256 and kept in the cache. `install` has no option for it: choosing
-entries and chains is the boot commands'
-([boot-commands.md](boot-commands.md)).
+A **boot route** takes the device from DFU mode to the install system. Which
+routes a device has follows from its chip, by `routes.toml` in the board
+data; the first that fits is taken.
+
+| Route | Is |
+| --- | --- |
+| `palera1n` | palera1n runs the boot ROM exploit and starts Pongo, which takes the install system |
+| `checkra1n` | the same with checkra1n |
+| `ibss` | gaster enters the boot ROM, and Apple's own iBSS (and iBEC, where the chip loads one), patched, takes the install system. The firmware is fetched from Apple, and its keys are read from the device the first time |
+
+`--boot ROUTE` names one, else `ORCHARD_BOOT`
+([reference.md](reference.md#environment)). `--ibss` is short for
+`--boot ibss`. A route that does not work on the device's chip ends the run
+and says which do. palera1n and checkra1n are pinned by size and SHA-256 and
+kept in the cache, as is gaster.
+
+Resizing iPadOS starts it through palera1n, whatever the boot route.
+
+Board data from before `routes.toml` has the one route there was then,
+palera1n; to name another, use newer data (`--data DIR`).
 
 ## What it uses
 

@@ -52,6 +52,8 @@ pub struct Executor {
     verified: Arc<Mutex<HashMap<PathBuf, Checked>>>,
     /// A Pongo to use instead of the release's (`--pongo`, testing a build).
     pongo: Option<PathBuf>,
+    /// The boot route asked for (`--boot`, else ORCHARD_BOOT).
+    boot: Option<String>,
     /// One download per file at a time: whoever comes second waits and takes
     /// the finished file (two writers on one partial file broke each other).
     downloads: Arc<Mutex<std::collections::HashMap<String, Arc<Mutex<()>>>>>,
@@ -68,7 +70,7 @@ impl Executor {
     }
 
     pub fn new(data: Option<&Path>, cache: &Path, events: Sender<Event>) -> Executor {
-        Executor { explicit_data: data.map(Path::to_owned), data: Arc::default(), cache: cache.to_owned(), events, release: Arc::default(), kernel: Arc::default(), index: String::new(), companion: None, overlay: Arc::default(), verified: Arc::default(), pongo: None, downloads: Arc::default(), tools: Arc::default(), serials: Arc::default() }
+        Executor { explicit_data: data.map(Path::to_owned), data: Arc::default(), cache: cache.to_owned(), events, release: Arc::default(), kernel: Arc::default(), index: String::new(), companion: None, overlay: Arc::default(), verified: Arc::default(), pongo: None, boot: crate::flags::boot(), downloads: Arc::default(), tools: Arc::default(), serials: Arc::default() }
     }
 
     /// A device's serial number was seen (iBoot says it in recovery mode).
@@ -166,7 +168,7 @@ impl Executor {
                 // The one that runs (ORCHARD_PALERA1N_BETA=0: v2.4).
                 let (pin, release) = crate::flags::palera1n_pin()
                     .ok_or_else(|| Error::new(Code::NotFound, "palera1n publishes no build for this computer"))?;
-                // checkra1n is fetched when a start needs it (ORCHARD_ENTRY).
+                // checkra1n is fetched when a start needs it (the checkra1n boot route).
                 self.palera1n(pin, release).map(drop)
             }
             Asset::KernelPackage => {
@@ -255,6 +257,33 @@ impl Executor {
     pub fn with_pongo(mut self, path: &Path) -> Executor {
         self.pongo = Some(path.to_owned());
         self
+    }
+
+    /// Takes this boot route instead of the first that fits.
+    pub fn with_boot(mut self, name: &str) -> Executor {
+        self.boot = Some(name.to_owned());
+        self
+    }
+
+    /// The boot route for `board`: the one asked for, which must work on its
+    /// chip, else the first in the data that does. Board data from before
+    /// routes.toml has palera1n, the one route there was then.
+    pub fn boot_route(&self, board: &str) -> Result<orchard_boards::routes::Route> {
+        use orchard_boards::routes::{self, Kind};
+        let catalog = orchard_boards::catalog::Catalog::open(&self.data()?)?;
+        if !routes::present(&catalog) && self.boot.is_none() {
+            return Ok(routes::Route { name: "palera1n".into(), kind: Kind::Boot, ends: Some("m1n1".into()), named: false, fits: Vec::new(), source: String::new() });
+        }
+        let chip = catalog.chip(catalog.board(board)?.chip)?;
+        routes::read(&catalog)?.pick(Kind::Boot, &chip, None, self.boot.as_deref()).cloned()
+    }
+
+    /// Fails when a boot route was asked for that the data does not have.
+    pub fn check_boot(&self) -> Result<()> {
+        use orchard_boards::routes::{self, Kind};
+        let Some(asked) = &self.boot else { return Ok(()) };
+        let catalog = orchard_boards::catalog::Catalog::open(&self.data()?)?;
+        routes::read(&catalog)?.named(Kind::Boot, asked).map(|_| ())
     }
 
     /// orchard2's cache directory.

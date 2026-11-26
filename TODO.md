@@ -32,7 +32,9 @@ Until then:
   the title and the hint (`Flow::in_use`), and the windows show them on the
   "more than one device" screen's layout. Not looked at in a window yet.
 - **`--via`, `--entry`, `--chain`, `--from`** belong to the boot commands.
-  `install` and `launch` take none; `ORCHARD_ENTRY` is their only switch.
+  `install` and `launch` take `--boot ROUTE` (`routes.toml` in the board
+  data), each route one function in `crates/runtime` (`chain.rs`,
+  `ibss.rs`).
 - **The boot paths' data** (`boot-paths.toml`, `boot.json` schema 2) is
   only on orchard's `boot-paths` branch, and the catalog is being
   rethought. Do not build on its present shape.
@@ -105,7 +107,8 @@ tests and the scripted demo only:
   Enter and Esc, the countdown): seen in the demo
   (`ORCHARD_DEMO_RECOVERY=1 orchard2 launch --demo`), not with a device;
 - the lock in the runtime;
-- `ORCHARD_ENTRY=checkra1n`;
+- the `checkra1n` boot route, and `install` by the `ibss` route (`launch`
+  by it reached m1n1 on a j71b);
 - `devices` asking a device that runs iOS for its name and ECID;
 - that `install --ssh` knows the unit (`user-UNIT`, the old host key
   forgotten): it takes the id from the install environment's USB serial,
