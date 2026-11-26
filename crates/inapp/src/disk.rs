@@ -104,7 +104,12 @@ impl Disk {
         if self.device {
             // The disk is in use by iOS: a shared lock, as resize-apfs's
             // partition table writer takes it.
+            // Linux has no such flag; there the installer only ever writes
+            // a disk kept in a file (its tests), never a device.
+            #[cfg(any(target_os = "ios", target_os = "macos"))]
             options.custom_flags(libc::O_SHLOCK | libc::O_NONBLOCK | libc::O_NOFOLLOW);
+            #[cfg(not(any(target_os = "ios", target_os = "macos")))]
+            options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
         }
         let file = options.open(&self.path).map_err(|e| io(e, "opening the disk for its partition table"))?;
         let pad = |bytes: &[u8]| {
