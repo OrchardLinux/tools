@@ -50,6 +50,9 @@ pub struct Chip {
     /// The chip's boot image format, `im4p` (64-bit IMG4) or `img3` (32-bit).
     #[serde(default)]
     pub image_format: String,
+    /// The page size its kernel runs with, in bytes.
+    #[serde(default)]
+    pub page_size: u32,
 }
 
 /// A feature from `features.toml`: its key and its label.

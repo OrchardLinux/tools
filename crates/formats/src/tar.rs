@@ -15,6 +15,10 @@ pub struct Archive<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct File<'a> {
     pub path: String,
+    /// The permission bits.
+    pub mode: u32,
+    /// When it was last changed, in seconds since 1970.
+    pub mtime: u64,
     pub data: &'a [u8],
 }
 
@@ -79,7 +83,7 @@ pub fn read(bytes: &[u8]) -> Result<Archive<'_>> {
                     }
                 };
                 if matches!(kind, b'0' | 0) {
-                    archive.files.push(File { path, data });
+                    archive.files.push(File { path, mode: octal(&header[100..108]).unwrap_or(0o644) as u32 & 0o7777, mtime: octal(&header[136..148]).unwrap_or(0), data });
                 }
             }
         }

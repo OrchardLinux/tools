@@ -34,7 +34,7 @@ pub fn chip(stages: &[&str]) -> Chip {
         soc: "soc".into(),
         architecture: "arm64".into(),
         stages: stages.iter().map(|s| (*s).into()).collect(),
-        image_format: "im4p".into(),
+        image_format: "im4p".into(), page_size: 16384
     }
 }
 

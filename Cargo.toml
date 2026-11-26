@@ -10,6 +10,7 @@ members = [
     "crates/cli",
     "crates/flow",
     "crates/runtime",
+    "crates/inapp",
     "crates/app",
 ]
 resolver = "2"

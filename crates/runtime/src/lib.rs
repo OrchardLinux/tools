@@ -10,7 +10,7 @@ pub mod driver;
 pub mod exec;
 pub mod flags;
 pub mod install;
-pub mod kernel_package;
+pub use orchard_boards::kernel_package;
 pub mod launcher;
 pub mod stamp;
 pub mod orchard_tools;
@@ -25,7 +25,7 @@ pub mod usb_access;
 mod held;
 pub mod usbmux;
 pub mod replug;
-pub mod release;
+pub use orchard_boards::release;
 pub mod tools;
 
 use orchard_boards::catalog::{Board, Catalog};

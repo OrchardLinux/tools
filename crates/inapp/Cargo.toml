@@ -1,0 +1,31 @@
+[package]
+name = "orchard-inapp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "The installer that runs on the device itself: its flow, its downloads and the install."
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+libc = "0.2"
+orchard-boards.workspace = true
+orchard-cache.workspace = true
+orchard-formats.workspace = true
+sha2.workspace = true
+flate2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+getrandom = "0.3"
+# The root image and the kernel package are zstd streams. A decoder in Rust:
+# the disk, not the decoder, limits the install, and nothing has to be built
+# in C for the device.
+ruzstd = "0.8"
+
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+sha2 = { workspace = true, features = ["asm"] }
+
+[dev-dependencies]
+tempfile.workspace = true

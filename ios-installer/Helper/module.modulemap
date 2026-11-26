@@ -1,0 +1,4 @@
+module InstallerEngine {
+    header "engine.h"
+    export *
+}
