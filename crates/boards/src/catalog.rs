@@ -422,17 +422,30 @@ impl Board {
     /// in its `boot.json`: eight hexadecimal addresses and where they come
     /// from.
     pub fn cascadia(&self) -> Result<orchard_formats::cascadia::Profile> {
-        let mut data = self
-            .boot_data()?
-            .loaders
-            .remove("cascadia")
-            .ok_or_else(|| {
-                Error::new(
-                    Code::NotFound,
-                    "the board's boot data has nothing for Cascadia's loader",
-                )
-                .context(&self.name)
-            })?;
+        // orchard's main keeps them in a file of their own beside boot.json.
+        let own = self.dir.join("cascadia.toml");
+        let from_boot = self.boot_data()?.loaders.remove("cascadia");
+        let mut data = match (from_boot, own.is_file()) {
+            (Some(data), _) => data,
+            (None, true) => {
+                let text = std::fs::read_to_string(&own).context(own.display())?;
+                let table: toml::Table = toml::from_str(&text).map_err(|e| Error::new(Code::Format, e.message().to_owned())).context(own.display())?;
+                let mut data = serde_json::Map::new();
+                for (key, value) in table {
+                    match value {
+                        // Addresses are numbers there, hexadecimal text here.
+                        toml::Value::Integer(n) if key != "schema" => {
+                            data.insert(key, format!("{n:#x}").into());
+                        }
+                        _ => {}
+                    }
+                }
+                data
+            }
+            (None, false) => {
+                return Err(Error::new(Code::NotFound, "the board's data has nothing for Cascadia's loader").context(&self.name));
+            }
+        };
         let what = format!("{}: loaders.cascadia in boot.json", self.name);
         data.remove("source");
         let mut address = |key: &str| -> Result<u32> {
@@ -617,6 +630,9 @@ struct ChainRecipeFile {
 #[derive(Deserialize)]
 struct PlainBootFile {
     firmware: Vec<PlainFirmware>,
+    /// What a boot method cannot derive itself, by method name.
+    #[serde(default)]
+    methods: BTreeMap<String, serde_json::Map<String, serde_json::Value>>,
 }
 
 #[derive(Deserialize)]
@@ -636,7 +652,26 @@ fn plain_boot_data(text: &str) -> Result<BootData> {
         let inputs = f.inputs.into_iter().map(convert_input).collect::<Result<_>>()?;
         firmware.insert(f.ipsw.build.clone(), Firmware { ipsw: f.ipsw, inputs, keys: f.keys });
     }
-    Ok(BootData { firmware, chains: BTreeMap::new(), loaders: BTreeMap::new() })
+    // `recovery-autogo` holds the addresses of the 32-bit autogo iBEC: the
+    // `iboot-autogo` chain, iBoot32Patcher on both stages and the autogo
+    // hook on the iBEC.
+    let mut chains = BTreeMap::new();
+    if let Some(method) = file.methods.get("recovery-autogo") {
+        let text = |key: &str| method.get(key).and_then(|v| v.as_str()).ok_or_else(|| Error::new(Code::Format, format!("recovery-autogo has no {key}")));
+        let patcher = BootStep { name: "iboot32patcher".into(), params: Default::default() };
+        let mut hook = serde_json::Map::new();
+        for (ours, theirs) in [("hook", "autogo_hook"), ("original", "autogo_hook_original"), ("trampoline", "autogo_trampoline"), ("cache_flush", "cache_flush"), ("done_flag", "done_flag"), ("usb_continue", "usb_continue")] {
+            hook.insert(ours.into(), text(theirs)?.into());
+        }
+        let recipe = ChainRecipe {
+            firmware: text("build")?.to_owned(),
+            patch: [("iBSS".to_owned(), vec![patcher.clone()]), ("iBEC".to_owned(), vec![patcher, BootStep { name: "autogo".into(), params: hook }])].into(),
+            outputs: BTreeMap::new(),
+            source: text("source").unwrap_or_default().to_owned(),
+        };
+        chains.insert("iboot-autogo".to_owned(), vec![recipe]);
+    }
+    Ok(BootData { firmware, chains, loaders: BTreeMap::new() })
 }
 
 /// Parses `boot.json` into a board's boot data: schema 1 names the firmware

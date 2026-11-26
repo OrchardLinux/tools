@@ -75,7 +75,7 @@ pub struct Args {
     /// Upload the kernel through m1n1's proxy even where one upload would do
     #[arg(long)]
     proxy: bool,
-    /// The boot route from DFU mode (palera1n, checkra1n, ibss); otherwise
+    /// The boot route from DFU mode (palera1n, checkra1n, ibss, autogo); otherwise
     /// ORCHARD_BOOT, else the first that fits the device
     #[arg(long, value_name = "ROUTE")]
     boot: Option<String>,
@@ -105,6 +105,8 @@ struct Shortcut {
     bootargs: Option<String>,
     #[serde(default)]
     firmware: bool,
+    /// Cascadia's loader, for the autogo route.
+    loader: Option<PathBuf>,
 }
 
 /// The Linux a run is to boot, where it boots one: what the options name,
@@ -116,6 +118,7 @@ struct Wanted {
     initramfs: PathBuf,
     bootargs: Option<String>,
     firmware: bool,
+    loader: Option<PathBuf>,
 }
 
 fn wanted(args: &Args, file: Option<(Shortcut, &Path)>) -> Result<Option<Wanted>> {
@@ -129,6 +132,7 @@ fn wanted(args: &Args, file: Option<(Shortcut, &Path)>) -> Result<Option<Wanted>
     let initramfs = args.initramfs.clone().or(file.initramfs.map(from_file));
     let bootargs = args.bootargs.clone().or(file.bootargs);
     let firmware = args.firmware || file.firmware;
+    let loader = args.build.loader().map(Path::to_owned).or(file.loader.map(from_file));
     let Some(kernel) = kernel else {
         return match !dtbs.is_empty() || initramfs.is_some() || bootargs.is_some() || firmware || args.proxy {
             true => Err(invalid("a device tree, an initramfs, boot arguments, --firmware and --proxy are for a kernel: give --kernel")),
@@ -141,7 +145,7 @@ fn wanted(args: &Args, file: Option<(Shortcut, &Path)>) -> Result<Option<Wanted>
     if dtbs.is_empty() {
         return Err(invalid("a kernel needs the board's device tree: give --dtb"));
     }
-    Ok(Some(Wanted { kernel, dtbs, initramfs, bootargs, firmware }))
+    Ok(Some(Wanted { kernel, dtbs, initramfs, bootargs, firmware, loader }))
 }
 
 /// The run.toml `source` stands for: the file itself, the one in the
@@ -214,8 +218,13 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     let executor = options.executor(events)?;
     executor.check_boot()?;
     let route = executor.boot_route(&device.board)?;
-    if route.ends.as_deref() != Some("m1n1") {
-        return Err(Error::new(Code::Unsupported, format!("run starts m1n1; the {} route ends elsewhere", route.name)));
+    // Routes end in m1n1, or in Cascadia's loader, which boots Linux itself.
+    let autogo = route.ends.as_deref() == Some("cascadia");
+    if !autogo && route.ends.as_deref() != Some("m1n1") {
+        return Err(Error::new(Code::Unsupported, format!("run starts m1n1 or Cascadia's loader; the {} route ends elsewhere", route.name)));
+    }
+    if autogo && (local_m1n1.is_some() || args.proxy || args.bare) {
+        return Err(invalid("this route starts Linux with Cascadia's loader: --m1n1, --proxy and --bare are for the routes that end in m1n1"));
     }
     let ibss = route.name == "ibss";
     // The 32-bit chips take a 32-bit m1n1 and a zImage.
@@ -248,7 +257,7 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
         }
         None => None,
     };
-    let wanted = wanted(args, file.as_ref().map(|(file, path)| (Shortcut { kernel: file.kernel.clone(), dtb: file.dtb.clone(), initramfs: file.initramfs.clone(), bootargs: file.bootargs.clone(), firmware: file.firmware }, path.as_path())))?;
+    let wanted = wanted(args, file.as_ref().map(|(file, path)| (Shortcut { kernel: file.kernel.clone(), dtb: file.dtb.clone(), initramfs: file.initramfs.clone(), bootargs: file.bootargs.clone(), firmware: file.firmware, loader: file.loader.clone() }, path.as_path())))?;
     let kernel = wanted.as_ref().map(|w| read(&w.kernel)).transpose()?;
     let dtbs = wanted.as_ref().map_or(Ok(Vec::new()), |w| w.dtbs.iter().map(|path| read(path)).collect::<Result<Vec<_>>>())?;
     let mut initramfs = wanted.as_ref().map(|w| read(&w.initramfs)).transpose()?.unwrap_or_default();
@@ -343,10 +352,40 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
         }
     };
 
-    say(&format!("Starting m1n1 by the {} route", route.name));
+    // Cascadia's bundle: its loader, the kernel, the board's tree and the
+    // initramfs, at the board's addresses.
+    let bundle = match autogo {
+        false => None,
+        true => {
+            let Some(kernel) = linux else {
+                return Err(invalid("this route boots a Linux: give --kernel, --dtb and --initramfs, or a built project"));
+            };
+            let loader = match wanted.as_ref().and_then(|w| w.loader.as_ref()) {
+                Some(path) => read(path)?,
+                None => {
+                    say("Getting Cascadia's loader");
+                    let published = orchard_runtime::orchard_tools::published(&format!("cascadia-{}.bin", board.name))?;
+                    std::fs::read(executor.download(&published)?)?
+                }
+            };
+            // The loader takes the command line from the tree's /chosen.
+            let mut dtb = own_dtb()?.clone();
+            if let Some(bootargs) = &bootargs {
+                let mut tree = fdt::Tree::read(&dtb)?;
+                let chosen = tree.root.children.iter_mut().find(|node| node.name == "chosen").ok_or_else(|| invalid("the device tree has no /chosen for the boot arguments"))?;
+                chosen.set("bootargs", [bootargs.as_bytes(), b"\0"].concat());
+                dtb = tree.write();
+            }
+            Some(orchard_formats::cascadia::bundle(&loader, kernel, &dtb, &initramfs, &board.cascadia()?, original.identity.serial_number.as_deref())?)
+        }
+    };
+
+    say(&format!("Starting {} by the {} route", if autogo { "Linux" } else { "m1n1" }, route.name));
     let deadline = Deadline::after(Duration::from_secs(args.timeout));
     let device_started = Instant::now();
-    if ibss {
+    if let Some(bundle) = &bundle {
+        orchard_runtime::autogo::start(&executor, &mut session, &device.board, args.keys.as_deref(), bundle)?;
+    } else if ibss {
         orchard_runtime::ibss::start(&executor, &mut session, &device.board, args.keys.as_deref(), image)?;
     } else {
         let published = match &local_m1n1 {

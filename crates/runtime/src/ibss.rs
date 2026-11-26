@@ -183,43 +183,7 @@ fn start_arm(
     let images = firmware.finish(store)?;
     let devicetree = plan.input(board, store, "DeviceTree")?;
 
-    if session.check()?.mode != Mode::Dfu {
-        return Err(fail("the device is no longer in DFU mode"));
-    }
-    match session.device().identity.pwned.clone().as_deref() {
-        Some("checkm8") => {
-            say("Starting the patched iBSS on the entered boot ROM");
-            let mut dfu = session.dfu()?;
-            dfu.start_pwned(Pwned::Checkm8, pack::file(&images, "ibss.raw")?, session.timeout(Duration::from_secs(60))?).map_err(usb::error)?;
-            drop(dfu);
-            say("Waiting for the iBSS");
-            if let Some(mark) = &session.wait_again(Duration::from_secs(30))?.identity.pwned {
-                return Err(fail(format!("the boot ROM is back (marked {mark}); the iBSS did not start")));
-            }
-            say("Sending the patched iBEC");
-            let mut dfu = session.dfu()?;
-            dfu.send(pack::file(&images, "ibec.encrypted.img3")?, session.timeout(Duration::from_secs(60))?).map_err(usb::error)?;
-        }
-        // DFU mode without a mark: kDFU, where the iBSS runs already. An
-        // untouched boot ROM looks the same and refuses the upload.
-        None => {
-            say("Sending the patched iBEC to the iBSS (kDFU)");
-            let mut dfu = session.dfu()?;
-            dfu.send(pack::file(&images, "ibec.plain.img3")?, session.timeout(Duration::from_secs(60))?).map_err(usb::error)?;
-        }
-        Some(other) => return Err(fail(format!("the boot ROM was entered by {other}, which this route does not start from"))),
-    }
-
-    say("Waiting for the patched iBEC");
-    session.wait_for(Mode::Recovery, Duration::from_secs(60))?;
-    let opening = Instant::now() + session.timeout(Duration::from_secs(10))?;
-    let mut recovery = loop {
-        match session.recovery() {
-            Ok(recovery) => break recovery,
-            Err(e) if e.code == Code::Usb && Instant::now() < opening => std::thread::sleep(Duration::from_millis(200)),
-            Err(e) => return Err(e),
-        }
-    };
+    let mut recovery = into_ibec(session, &images, say)?;
     say("Sending the device tree");
     recovery.send(&devicetree, session.timeout(Duration::from_secs(60))?).map_err(usb::error)?;
     acknowledged(recovery.command("devicetree", session.timeout(Duration::from_secs(10))?).map_err(usb::error)?, "devicetree")?;
@@ -228,4 +192,51 @@ fn start_arm(
     say("Starting m1n1");
     recovery.command("bootx", session.timeout(Duration::from_secs(10))?).map_err(usb::error)?;
     Ok(())
+}
+
+/// On a 32-bit board: starts the patched iBSS and sends the patched iBEC of
+/// `images`, then returns the iBEC in recovery mode. From a boot ROM that
+/// checkm8 from a Pico entered, the iBSS is started and the iBEC goes
+/// encrypted as the firmware's own is; in kDFU the iBSS runs already and
+/// the device's key is off, so the iBEC goes unencrypted. The pauses are
+/// Project Cascadia's (`devices/a5/tools/flash.sh`).
+pub(crate) fn into_ibec(session: &mut Session<Host>, images: &boot_firmware::Images, say: &mut dyn FnMut(&str)) -> Result<Box<dyn orchard_device::host::RecoveryMode>> {
+    if session.check()?.mode != Mode::Dfu {
+        return Err(fail("the device is no longer in DFU mode"));
+    }
+    match session.device().identity.pwned.clone().as_deref() {
+        Some("checkm8") => {
+            say("Starting the patched iBSS on the entered boot ROM");
+            let mut dfu = session.dfu()?;
+            dfu.start_pwned(Pwned::Checkm8, pack::file(images, "ibss.raw")?, session.timeout(Duration::from_secs(60))?).map_err(usb::error)?;
+            drop(dfu);
+            std::thread::sleep(Duration::from_secs(2));
+            say("Waiting for the iBSS");
+            if let Some(mark) = &session.wait_again(Duration::from_secs(30))?.identity.pwned {
+                return Err(fail(format!("the boot ROM is back (marked {mark}); the iBSS did not start")));
+            }
+            say("Sending the patched iBEC");
+            let mut dfu = session.dfu()?;
+            dfu.send(pack::file(images, "ibec.encrypted.img3")?, session.timeout(Duration::from_secs(60))?).map_err(usb::error)?;
+        }
+        // DFU mode without a mark: kDFU, where the iBSS runs already. An
+        // untouched boot ROM looks the same and refuses the upload.
+        None => {
+            say("Sending the patched iBEC to the iBSS (kDFU)");
+            let mut dfu = session.dfu()?;
+            dfu.send(pack::file(images, "ibec.plain.img3")?, session.timeout(Duration::from_secs(60))?).map_err(usb::error)?;
+        }
+        Some(other) => return Err(fail(format!("the boot ROM was entered by {other}, which this route does not start from"))),
+    }
+    std::thread::sleep(Duration::from_secs(1));
+    say("Waiting for the patched iBEC");
+    session.wait_for(Mode::Recovery, Duration::from_secs(60))?;
+    let opening = Instant::now() + session.timeout(Duration::from_secs(10))?;
+    loop {
+        match session.recovery() {
+            Ok(recovery) => return Ok(recovery),
+            Err(e) if e.code == Code::Usb && Instant::now() < opening => std::thread::sleep(Duration::from_millis(200)),
+            Err(e) => return Err(e),
+        }
+    }
 }

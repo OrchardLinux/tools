@@ -155,6 +155,11 @@ fn attached_board(global: &Global, root: &Path) -> Option<String> {
 }
 
 impl BuildArgs {
+    /// The loader given to use as it is.
+    pub fn loader(&self) -> Option<&Path> {
+        self.loader.as_deref()
+    }
+
     pub fn directory(&self) -> &Path {
         &self.directory
     }

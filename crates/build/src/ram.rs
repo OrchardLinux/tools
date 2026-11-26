@@ -538,8 +538,13 @@ fn assemble(build: &Build, output: &Path, payload: &Payload) -> Result<Value> {
     run.insert("kernel".into(), kernel.to_string_lossy().into_owned().into());
     run.insert("dtb".into(), dtbs.iter().map(|d| toml::Value::from(d.to_string_lossy().into_owned())).collect::<Vec<_>>().into());
     run.insert("initramfs".into(), "initramfs.cpio.gz".into());
-    if !payload.bootargs.is_empty() {
+    // A Cascadia bundle takes its command line from the device tree.
+    if !payload.bootargs.is_empty() && profile.is_none() {
         run.insert("bootargs".into(), payload.bootargs.to_owned().into());
+    }
+    // Cascadia's loader starts the bundle on the 32-bit boards (the autogo route).
+    if profile.is_some() {
+        run.insert("loader".into(), parts.loader.to_string_lossy().into_owned().into());
     }
     write_text(&output.join("run.toml"), &run.to_string())?;
     Ok(receipt)

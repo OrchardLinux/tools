@@ -75,6 +75,21 @@ fn fetch() -> Result<Tools> {
     Ok(Tools { pongo: pin("pongo.bin")?, m1n1: pin("m1n1.bin")?, board_data: pin("board-data.tar.gz")? })
 }
 
+/// One more file of orchard's newest release, by its name there, with the
+/// hash the release lists for it.
+pub fn published(name: &str) -> Result<Receipt> {
+    let mut sums = Http::probe(&format!("{LATEST}/SHA256SUMS"), TIMEOUT)?;
+    let size = sums.size() as usize;
+    let text = String::from_utf8(sums.read_at(0, size)?).map_err(|_| Error::new(Code::Format, "SHA256SUMS is not UTF-8"))?;
+    let sha256 = text
+        .lines()
+        .find_map(|l| l.split_once("  ").filter(|(_, n)| n.trim_start_matches("./") == name).map(|(h, _)| h.to_owned()))
+        .ok_or_else(|| Error::new(Code::NotFound, format!("orchard's release has no {name}")))?;
+    let url = format!("{LATEST}/{name}");
+    let bytes = Http::probe(&url, TIMEOUT)?.size();
+    Ok(Receipt { url, bytes, sha256, expanded_bytes: None })
+}
+
 fn to_json(r: &Receipt) -> Value {
     json!({"url": r.url, "bytes": r.bytes, "sha256": r.sha256})
 }

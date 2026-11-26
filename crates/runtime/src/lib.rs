@@ -5,6 +5,7 @@
 //! opened or sent. Effects are carried out by executors added one at a time.
 pub mod access_checkra1n;
 pub mod access_dopamine;
+pub mod autogo;
 pub mod chain;
 pub mod companion;
 pub mod demo;

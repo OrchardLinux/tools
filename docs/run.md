@@ -10,7 +10,7 @@ RAM on the device in DFU mode. Nothing is installed.
 
 The device is started by its boot route
 ([install.md](install.md#how-the-device-is-entered)): `--boot ROUTE`, or
-`--ibss`, `--palera1n`, `--checkra1n`. m1n1 then boots the kernel, which
+`--ibss`, `--palera1n`, `--checkra1n`, `--autogo`. m1n1 then boots the kernel, which
 goes up in one upload behind it where it fits. What is too large for a
 patched iBoot's upload (more than 40 MiB by the `ibss` route) goes through
 m1n1's proxy once it runs; `--proxy` asks for that way whatever the size.
@@ -21,6 +21,7 @@ m1n1's proxy once it runs; `--proxy` asks for that way whatever the size.
 | boot files of your own | `--kernel K --dtb D… --initramfs I [--bootargs "…"]`: nothing is built |
 | start m1n1 alone and leave it waiting on USB | `--bare` |
 | use a local m1n1 | `--m1n1 FILE`: the plain build for palera1n and checkra1n, the Mach-O build for ibss |
+| use a local loader of Cascadia's on the autogo route | `--loader FILE`, as for `build` |
 | give the ibss route its firmware keys | `--keys FILE` (also `ORCHARD_FIRMWARE_KEYS`): see [Firmware keys](data-and-firmware.md#firmware-keys) |
 | add the board's peripheral firmware to the initramfs | `--firmware` |
 | end once the start has gone out, for a system that never shows up on USB | `--no-wait` |
@@ -43,10 +44,28 @@ orchard2 run --m1n1 m1n1-armv7.macho --keys keys.json \
 
 Apple's iBSS and iBEC are sent patched, the iBEC takes Apple's device tree
 and m1n1's 32-bit build as its kernel, and `bootx` starts it. No 32-bit
-m1n1 is published yet, so `--m1n1` is needed, and the firmware's keys come
-from `--keys` (they are public for these boards). The kernel is a zImage
-and goes up behind m1n1; `--proxy` is not for these boards yet. Not run on
-a device.
+m1n1 is published yet, so `--m1n1` is needed. The firmware's keys are in
+the board data (`--keys` gives others). The kernel is a zImage and goes up
+behind m1n1; `--proxy` is not for these boards yet. Not run on a device.
+
+### autogo
+
+`--autogo` is the other route of these boards, Project Cascadia's, and the
+one they are known to boot by. It needs no m1n1: the patched iBEC enters
+what it is sent as soon as an upload ends, and is sent Cascadia's loader
+with the kernel, the board's device tree and the initramfs.
+
+```sh
+orchard2 run --autogo
+orchard2 run --autogo --kernel zImage --dtb board.dtb --initramfs initramfs.cpio.gz
+```
+
+The loader is the project's own build of it, `--loader FILE`, or the one
+Orchard publishes for the board. Boot arguments are the device tree's;
+`--bootargs` replaces them there. `--m1n1`, `--proxy` and `--bare` are for
+the routes that end in m1n1. Both routes start the same patched iBSS and
+iBEC the same way, so where `--ibss` fails and `--autogo` boots, the fault
+is in m1n1. Not run on a device.
 
 A distribution checkout is refused: its release is installed
 ([install.md](install.md)), not run.
@@ -63,6 +82,7 @@ dtb = ["/…/t8010-j71b.dtb", "/…/t8010-j171.dtb"]
 initramfs = "initramfs.cpio.gz"      # counted from the file's directory
 bootargs = "console=tty0 loglevel=7 rdinit=/init"
 firmware = true                      # as --firmware
+loader = "/…/loader.bin"             # Cascadia's, on a 32-bit build
 ```
 
 `--dtb`, `--initramfs`, `--bootargs` and `--firmware` on the command line
