@@ -36,6 +36,10 @@ pub struct Args {
     access: Option<String>,
     #[command(flatten)]
     short: AccessFlags,
+    /// dopamine: the Apple ID team to sign with, where Xcode is signed in to
+    /// several
+    #[arg(long, value_name = "ID")]
+    team: Option<String>,
     /// Seconds to wait for the device in DFU mode
     #[arg(long, default_value = "0")]
     wait: u64,
@@ -54,9 +58,13 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     let catalog = Catalog::open(&data)?;
     let routes = routes::read(&catalog)?;
     routes.named(Kind::Access, route)?;
-    if !matches!(route, "palera1n" | "checkra1n") {
-        return Err(Error::new(Code::Unsupported, format!("this version gets the app onto a device by palera1n and checkra1n, not by {route} yet"))
-            .hint("resize-apfs's own release does it: ./resize-apfs boot --dopamine"));
+    if !matches!(route, "palera1n" | "checkra1n" | "dopamine") {
+        return Err(Error::new(Code::Unsupported, format!("this version does not run the {route} access route")));
+    }
+    // Signing needs Xcode's account here; elsewhere resize-apfs's own
+    // release signs with xtool.
+    if route == "dopamine" && !cfg!(target_os = "macos") {
+        return Err(Error::new(Code::Unsupported, "this version signs the app on a Mac with Xcode only").hint("resize-apfs's own release does it with xtool: ./resize-apfs boot --dopamine"));
     }
     // checkra1n's session ends when the person says so: that needs a terminal.
     if route == "checkra1n" && !std::io::stdin().is_terminal() {
@@ -85,6 +93,9 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
         return Err(Error::new(Code::NotFound, format!("Resize APFS {} has no build for iOS 12 to 14", app.version)));
     }
 
+    if route == "dopamine" {
+        return dopamine(&executor, &app, args, &say, started);
+    }
     let found = super::run::find(global, Duration::from_secs(args.wait))?;
     let selector = Selector { ecid: found.identity.ecid.clone(), location: Some(found.location.clone()), mode: Some(Mode::Dfu) };
     let mut session = Session::start(Host, &selector, None)?;
@@ -143,6 +154,52 @@ impl Report for Started {
         format!(
             "iPadOS is starting on {} with Resize APFS {} ({}, {:.0} s)\nUnlock the device: Resize APFS appears on the Home Screen within a minute.\n",
             self.board, self.version, self.route, self.seconds
+        )
+        .into_bytes()
+    }
+}
+
+/// The route without DFU: the device runs iOS, unlocked, with Developer
+/// Mode on. The app is installed for good, and gets access by itself when
+/// it is opened.
+fn dopamine(executor: &orchard_runtime::exec::Executor, app: &orchard_runtime::resize_app::App, args: &Args, say: &dyn Fn(&str), started: Instant) -> Result<Output> {
+    use orchard_runtime::access_dopamine;
+    let access = app.access.as_ref().ok_or_else(|| Error::new(Code::NotFound, format!("Resize APFS {} has no build for the route without DFU", app.version)))?;
+    let udid = access_dopamine::device()?;
+    let work = std::env::temp_dir().join(format!("orchard2-teams-{}", std::process::id()));
+    std::fs::create_dir_all(&work)?;
+    let teams = access_dopamine::teams(&work);
+    let _ = std::fs::remove_dir_all(&work);
+    let teams = teams?;
+    let team = match (&args.team, teams.as_slice()) {
+        (Some(id), _) => teams.iter().find(|(team, _)| team.eq_ignore_ascii_case(id)).ok_or_else(|| Error::new(Code::NotFound, format!("Xcode is not signed in to a team {id}")))?,
+        (None, [one]) => one,
+        (None, []) => return Err(Error::new(Code::NotFound, "Xcode is not signed in to an Apple ID").hint("add yours in Xcode > Settings > Accounts, then run this again")),
+        (None, several) => {
+            let names: Vec<String> = several.iter().map(|(id, name)| format!("{id} ({name})")).collect();
+            return Err(Error::new(Code::Ambiguous, "Xcode is signed in to several teams").hint(format!("choose one with --team: {}", names.join(", "))));
+        }
+    };
+    say(&format!("Signing with the Apple ID Xcode is signed in to ({})", team.1));
+    say("The device needs Developer Mode on: Settings > Privacy & Security > Developer Mode");
+    access_dopamine::install(executor, access, &team.0, &udid, say)?;
+    Ok(Installed { version: app.version.clone(), seconds: started.elapsed().as_secs_f64() }.into())
+}
+
+#[derive(Serialize)]
+struct Installed {
+    version: String,
+    seconds: f64,
+}
+
+impl Report for Installed {
+    fn human(&self) -> Vec<u8> {
+        format!(
+            "Resize APFS {} is installed ({:.0} s).\n\
+             Before opening it the first time, trust your Apple ID on the device: Settings > General > VPN & Device Management.\n\
+             Then open Resize APFS and tap Continue. The screen restarts once; unlock the device when it comes back.\n\
+             A free Apple ID signs the app for 7 days: run this again when it stops opening.\n",
+            self.version, self.seconds
         )
         .into_bytes()
     }

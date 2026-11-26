@@ -4,6 +4,7 @@
 //! [`orchard_flow::Event::Detached`]. Discovery only lists devices; nothing is
 //! opened or sent. Effects are carried out by executors added one at a time.
 pub mod access_checkra1n;
+pub mod access_dopamine;
 pub mod chain;
 pub mod companion;
 pub mod demo;

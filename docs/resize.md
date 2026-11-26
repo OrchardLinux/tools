@@ -33,9 +33,7 @@ and the iOS version it runs, by `routes.toml` in the board data.
 | `dopamine` | the app is installed and gets access by itself, without DFU mode | A8 to A13 and later, by iOS version |
 
 `--access ROUTE` names one; `--palera1n`, `--checkra1n` and `--dopamine`
-are its short forms. palera1n is taken when none is named. This version
-runs `palera1n` and `checkra1n`; for `dopamine`, resize-apfs's own release
-has `./resize-apfs boot --dopamine`.
+are its short forms. palera1n is taken when none is named.
 
 ### checkra1n
 
@@ -55,6 +53,31 @@ the computer's own `ssh` program.
 
 DFU mode does not tell the iOS version, so a device on iOS 14 or older is
 only refused by palera1n itself.
+
+### dopamine
+
+Without DFU mode. The app is installed on the device and stays there; it
+gets storage access by itself when it is opened.
+
+1. Turn on Developer Mode: Settings > Privacy & Security > Developer Mode.
+   The device restarts; confirm.
+2. Connect the device, unlock it and trust the computer.
+3. `orchard2 resize --dopamine` puts Resize APFS into the pinned official
+   Dopamine app, signs it with the Apple ID Xcode is signed in to and
+   installs it. With several teams in Xcode, `--team ID` names one.
+4. On the device, trust your Apple ID: Settings > General > VPN & Device
+   Management.
+5. Open Resize APFS and tap Continue. The screen restarts once; unlock the
+   device when it comes back.
+
+A free Apple ID signs the app for 7 days; run the command again when it
+stops opening. Signing happens on your computer, with your account, for
+your device. This version signs on a Mac with Xcode; on Linux,
+resize-apfs's own release signs with xtool (`./resize-apfs boot
+--dopamine`).
+
+A device that was started through DFU never opens this installed copy by
+itself: its helper stays idle there.
 
 ## Options
 

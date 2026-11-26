@@ -21,6 +21,7 @@ const APP: &str = "out/device/ResizeAPFS.app/";
 const HELPER: &str = "out/device/resize-helper";
 const OLDER_APP: &str = "out/device-ios12/ResizeAPFS.app/";
 const OLDER_HELPER: &str = "out/device-ios12/resize-helper";
+const ACCESS: &str = "out/device/access/";
 const ENTRY: &str = "out/device/resize-overlay-entry";
 /// The helper's launchd job: the one property list in the release's Device
 /// folder. Its file name is the one the release's entry program loads.
@@ -40,6 +41,18 @@ pub struct App {
     job_name: String,
     /// The build for iOS 12 to 14, where the release has one.
     pub older: Option<Older>,
+    /// The app's part for the route without DFU, where the release has one.
+    pub access: Option<Access>,
+}
+
+/// What goes into the pinned Dopamine app to make it Resize APFS: the
+/// library with the app's interface, its Info.plist to take names, icon and
+/// fonts from, and its resources (the helper among them).
+pub struct Access {
+    pub info: Vec<u8>,
+    pub library: Vec<u8>,
+    /// Path below the app bundle and contents.
+    pub resources: Vec<(String, Vec<u8>)>,
 }
 
 /// The app and its helper as built for iOS 12 to 14, which the checkra1n
@@ -113,12 +126,22 @@ pub fn latest(executor: &Executor) -> Result<App> {
         true => None,
         false => Some(Older { app: older_app, helper: read(OLDER_HELPER)? }),
     };
+    let mut resources = Vec::new();
+    for name in &names {
+        if let Some(path) = name.strip_prefix(&top).and_then(|n| n.strip_prefix(ACCESS)).and_then(|n| n.strip_prefix("Resources/")).filter(|p| !p.is_empty() && !p.ends_with('/')) {
+            resources.push((path.to_owned(), read(&format!("{ACCESS}Resources/{path}"))?));
+        }
+    }
+    let access = match names.iter().any(|n| n.strip_prefix(&top) == Some(&format!("{ACCESS}ResizeAccess.dylib")[..])) {
+        true => Some(Access { info: read(&format!("{ACCESS}Info.plist"))?, library: read(&format!("{ACCESS}ResizeAccess.dylib"))?, resources }),
+        false => None,
+    };
     let info = files.iter().find(|(p, _, _)| p == "Info.plist").ok_or_else(|| format("the app has no Info.plist"))?;
     let executable = Value::from_reader(std::io::Cursor::new(&info.1))
         .ok()
         .and_then(|v| v.as_dictionary()?.get("CFBundleExecutable")?.as_string().map(str::to_owned))
         .ok_or_else(|| format("the app names no executable"))?;
-    Ok(App { version, files, executable, helper, entry, job, job_name, older })
+    Ok(App { version, files, executable, helper, entry, job, job_name, older, access })
 }
 
 impl App {
