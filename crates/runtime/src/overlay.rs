@@ -32,8 +32,8 @@ const LOADER_APP: &str = "/palera1nLoader.app";
 const DAEMONS: &str = "/Library/LaunchDaemons";
 const HELPER: &str = "/usr/libexec/orchard-companion";
 const ENTRY: &str = "/usr/libexec/orchard-companion-entry";
-const JOB: &str = "/Library/LaunchDaemons/dev.orchard.companion.plist";
-const LABEL: &str = "dev.orchard.companion";
+const JOB: &str = "/Library/LaunchDaemons/org.orchardlinux.companion.plist";
+const LABEL: &str = "org.orchardlinux.companion";
 /// The host's secret for this boot, readable by root only.
 const TOKEN: &str = "/usr/share/orchard-companion/token";
 /// The system the installer installs, for the iPad app's words.

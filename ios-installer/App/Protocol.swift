@@ -113,7 +113,7 @@ final class HelperClient {
         self.elevate = elevate
     }
     private static let limit = 1 << 20
-    private let queue = DispatchQueue(label: "dev.orchard.installer.helper")
+    private let queue = DispatchQueue(label: "org.orchardlinux.installer.helper")
     private var descriptor: Int32 = -1
     private var token = ""
 

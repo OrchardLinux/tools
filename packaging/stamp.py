@@ -66,7 +66,7 @@ def stamp_macos(generic, out, stamp, name, slug):
         exe.chmod(0o755)  # zipfile drops modes
         info = app / "Contents/Info.plist"
         plist = plistlib.loads(info.read_bytes())
-        plist.update(CFBundleName=f"Install {name}", CFBundleDisplayName=f"Install {name}", CFBundleIdentifier=f"dev.orchard.install-{slug.lower()}")
+        plist.update(CFBundleName=f"Install {name}", CFBundleDisplayName=f"Install {name}", CFBundleIdentifier=f"org.orchardlinux.install-{slug.lower()}")
         info.write_bytes(plistlib.dumps(plist))
         (app / "Contents/Resources/stamp.json").write_text(json.dumps(stamp))
         resign(app)

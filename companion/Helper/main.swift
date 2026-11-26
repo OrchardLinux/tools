@@ -19,7 +19,7 @@ let maxLine = 1 << 20
 @_silgen_name("oc_springboard_launch") func oc_springboard_launch(_ bundleID: UnsafePointer<CChar>) -> Int32
 @_silgen_name("oc_restart") func oc_restart() -> Int32
 
-let bundleID = "dev.orchard.companion"
+let bundleID = "org.orchardlinux.companion"
 let appPath = "/cores/binpack/Applications/palera1nLoader.app"
 let uicache = "/cores/binpack/usr/bin/uicache"
 let started = Date()

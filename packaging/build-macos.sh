@@ -41,8 +41,8 @@ PL
   rm -f "$out/$4"
   (cd "$stage" && ditto -c -k --sequesterRsrc --keepParent "$1.app" "../$4")
 }
-bundle "Orchard Installer" orchard-installer dev.orchard.installer Orchard-Installer-macOS.zip
-bundle "Orchard" orchard dev.orchard.launcher Orchard-macOS.zip
+bundle "Orchard Installer" orchard-installer org.orchardlinux.installer Orchard-Installer-macOS.zip
+bundle "Orchard" orchard org.orchardlinux.launcher Orchard-macOS.zip
 rm -rf "$stage"
 echo "$version" > "$out/VERSION"
 ls -lh "$out"/*macOS.zip

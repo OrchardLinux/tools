@@ -20,7 +20,9 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 const APP: &str = "out/device/ResizeAPFS.app/";
 const HELPER: &str = "out/device/resize-helper";
 const ENTRY: &str = "out/device/resize-overlay-entry";
-const JOB: &str = "Device/dev.omarchy.resize-apfs.plist";
+/// The helper's launchd job: the one property list in the release's Device
+/// folder. Its file name is the one the release's entry program loads.
+const JOBS: &str = "Device/";
 /// The most one member may unpack to.
 const MEMBER: u64 = 64 << 20;
 
@@ -32,6 +34,8 @@ pub struct App {
     helper: Vec<u8>,
     entry: Vec<u8>,
     job: Vec<u8>,
+    /// The job's file name, as the release's entry program loads it.
+    job_name: String,
 }
 
 fn format(message: impl Into<String>) -> Error {
@@ -74,7 +78,13 @@ pub fn latest(executor: &Executor) -> Result<App> {
     // Everything is below one folder named after the release.
     let top = names.first().and_then(|n| n.split_once('/')).map(|(top, _)| format!("{top}/")).ok_or_else(|| format("an empty ZIP"))?;
     let mut read = |name: &str| archive.read(&format!("{top}{name}"), MEMBER);
-    let (helper, entry, job) = (read(HELPER)?, read(ENTRY)?, read(JOB)?);
+    let job_name = names
+        .iter()
+        .filter_map(|n| n.strip_prefix(&top)?.strip_prefix(JOBS))
+        .find(|n| n.ends_with(".plist") && !n.contains('/'))
+        .ok_or_else(|| format("no launch daemon for the helper"))?
+        .to_owned();
+    let (helper, entry, job) = (read(HELPER)?, read(ENTRY)?, read(&format!("{JOBS}{job_name}"))?);
     let mut files = Vec::new();
     for name in &names {
         if let Some(path) = name.strip_prefix(&top).and_then(|n| n.strip_prefix(APP)).filter(|p| !p.is_empty() && !p.ends_with('/')) {
@@ -86,7 +96,7 @@ pub fn latest(executor: &Executor) -> Result<App> {
         .ok()
         .and_then(|v| v.as_dictionary()?.get("CFBundleExecutable")?.as_string().map(str::to_owned))
         .ok_or_else(|| format("the app names no executable"))?;
-    Ok(App { version, files, executable, helper, entry, job })
+    Ok(App { version, files, executable, helper, entry, job, job_name })
 }
 
 impl App {
@@ -106,12 +116,13 @@ impl App {
         arguments.push("--allow-writes".into());
         let mut bytes = Vec::new();
         job.to_writer_xml(&mut bytes).map_err(|e| format(e.to_string()))?;
+        let job_path = format!("/Library/LaunchDaemons/{}", self.job_name);
         let payload = Payload {
             app: &self.files,
             app_executable: &self.executable,
             helper: ("/usr/libexec/resize-helper", &self.helper),
             entry: ("/usr/libexec/resize-overlay-entry", &self.entry),
-            job: ("/Library/LaunchDaemons/dev.omarchy.resize-apfs.plist", bytes),
+            job: (&job_path, bytes),
             files: Vec::new(),
             boot_screen: Some(overlay::BOOT_SCREEN),
         };

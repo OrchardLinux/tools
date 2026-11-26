@@ -10,7 +10,7 @@ extension StorageAccess.Configuration {
         let asked = Bundle.main.url(forResource: "helper-arguments", withExtension: "txt")
             .flatMap { try? String(contentsOf: $0, encoding: .utf8) }?.split(separator: "\n").map(String.init) ?? []
         return StorageAccess.Configuration(
-            name: "Orchard Installer", state: "OrchardInstaller", folder: folder, label: "dev.orchard.installer",
+            name: "Orchard Installer", state: "OrchardInstaller", folder: folder, label: "org.orchardlinux.installer",
             // The helper, and next to it the e2fsprogs programs it runs.
             payloads: [("orchard-installer-helper", programs + "/orchard-installer-helper")]
                 + ["tune2fs", "resize2fs", "debugfs", "e2fsck"].map { ($0, programs + "/e2fsprogs/" + $0) },
@@ -19,6 +19,7 @@ extension StorageAccess.Configuration {
             // What the sessions over SSH left, and Resize APFS's helper: both apps are the
             // same app to iOS, so only one of them is on a device.
             leftovers: [folder + "/orchard-installer-helper", folder + "/helper.pid", folder + "/helper.log", folder + "/e2fsprogs",
+                        "/var/jb/Library/LaunchDaemons/org.orchardlinux.resize-apfs.installed-helper.plist",
                         "/var/jb/Library/LaunchDaemons/dev.omarchy.resize-apfs.plist"])
     }
 }

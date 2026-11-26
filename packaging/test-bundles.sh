@@ -34,6 +34,6 @@ SH
 PL
   /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$PWD/target/final/$1.app"
 }
-make "Install Omarchy A" dev.orchard.install-omarchy-a orchard-installer "--name 'Omarchy A' --wordmark '$wordmark'" live.log
-make "Orchard" dev.orchard.launcher orchard "" launcher.log
+make "Install Omarchy A" org.orchardlinux.install-omarchy-a orchard-installer "--name 'Omarchy A' --wordmark '$wordmark'" live.log
+make "Orchard" org.orchardlinux.launcher orchard "" launcher.log
 echo "Built target/final/Install Omarchy A.app and target/final/Orchard.app"

@@ -10,7 +10,7 @@ extern char **environ;
 int main(void) {
     pid_t pid = 0;
     char *const bootstrap[] = {"/cores/binpack/bin/launchctl", "bootstrap", "system",
-        "/cores/binpack/Library/LaunchDaemons/dev.orchard.companion.plist", NULL};
+        "/cores/binpack/Library/LaunchDaemons/org.orchardlinux.companion.plist", NULL};
     int result = posix_spawn(&pid, bootstrap[0], NULL, NULL, bootstrap, environ);
     if (!result) {
         int status = 0;

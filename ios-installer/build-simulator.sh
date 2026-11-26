@@ -1,7 +1,7 @@
 #!/bin/bash
 # Builds only the app, for the iOS simulator, into out-simulator/ to check the
 # screens: `xcrun simctl install booted out-simulator/OrchardInstaller.app`,
-# then `xcrun simctl launch booted dev.orchard.installer --mock I1.2`.
+# then `xcrun simctl launch booted org.orchardlinux.installer --mock I1.2`.
 # First the sources are compiled for arm64 iOS 12.0 as the device build does
 # (nothing is kept), so an API newer than iOS 12 fails here too.
 set -euo pipefail

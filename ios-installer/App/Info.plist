@@ -4,7 +4,7 @@
     <!-- What an unstamped installer installs (its wordmark is wordmark.svg). -->
     <key>OrchardSystem</key><string>Omarchy A</string>
     <key>CFBundleDisplayName</key><string>Orchard Installer</string>
-    <key>CFBundleIdentifier</key><string>dev.orchard.installer</string>
+    <key>CFBundleIdentifier</key><string>org.orchardlinux.installer</string>
     <key>CFBundleExecutable</key><string>OrchardInstaller</string>
     <key>CFBundleName</key><string>OrchardInstaller</string>
     <key>CFBundlePackageType</key><string>APPL</string>
