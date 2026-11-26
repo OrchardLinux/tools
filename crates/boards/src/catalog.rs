@@ -464,6 +464,10 @@ impl Board {
         match kind {
             Kind::Boot => {
                 let data = self.boot_data()?;
+                // Data that names the firmware and no chains: that firmware.
+                if let (true, Some(firmware)) = (data.chains.is_empty(), data.firmware.values().next()) {
+                    return Ok(Recipe { ipsw: firmware.ipsw.clone(), inputs: firmware.inputs.clone(), outputs: Vec::new() });
+                }
                 let (_, chain) = data.sole_chain().or_else(|_| {
                     // For a plain look at the firmware, any chain's recipe does.
                     let (name, recipes) = data.chains.iter().next().ok_or_else(|| {
