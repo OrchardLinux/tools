@@ -154,7 +154,27 @@ fn attached_board(global: &Global, root: &Path) -> Option<String> {
     )
 }
 
+impl BuildArgs {
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+}
+
 pub fn build(global: &Global, args: &BuildArgs) -> Result<Output> {
+    built(global, args).map(Into::into)
+}
+
+/// Builds the RAM payload of the project in `args`' directory and returns
+/// where it is. A distribution checkout is refused before anything is built.
+pub fn payload(global: &Global, args: &BuildArgs) -> Result<PathBuf> {
+    let directory = args.directory.canonicalize().context(args.directory.display())?;
+    if project::find_release(&directory)?.is_some() {
+        return Err(Error::new(Code::Unsupported, format!("{} is a distribution checkout: its release is installed, not run", directory.display())));
+    }
+    built(global, args).map(|built| PathBuf::from(built.output))
+}
+
+fn built(global: &Global, args: &BuildArgs) -> Result<Built> {
     orchard_build::catch_interrupts();
     let store = Store::open(global.cache.as_deref())?;
     let directory = args
@@ -222,8 +242,7 @@ pub fn build(global: &Global, args: &BuildArgs) -> Result<Output> {
                 None
             },
             commands: built.commands.display().to_string(),
-        }
-        .into());
+        });
     }
     for (flag, given) in [
         ("--packages", args.packages.is_some()),
@@ -256,8 +275,7 @@ pub fn build(global: &Global, args: &BuildArgs) -> Result<Output> {
             None
         },
         commands: built.commands.display().to_string(),
-    }
-    .into())
+    })
 }
 
 /// Where an inputs document was written.

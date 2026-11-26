@@ -1,31 +1,38 @@
 # run
 
 ```sh
-orchard2 run [SOURCE] [--kernel K --dtb D… --initramfs I] [--bootargs "…"] [--boot ROUTE]
+orchard2 run [DIRECTORY] [--boot ROUTE]
 ```
 
-starts m1n1 on the device in DFU mode, on any board, by its boot route
+builds the project in DIRECTORY (this one by default), as
+[`build`](build.md) does and with its options, and boots what it built in
+RAM on the device in DFU mode. Nothing is installed.
+
+The device is started by its boot route
 ([install.md](install.md#how-the-device-is-entered)): `--boot ROUTE`, or
-`--ibss`, `--palera1n`, `--checkra1n`.
+`--ibss`, `--palera1n`, `--checkra1n`. m1n1 then boots the kernel, which
+goes up in one upload behind it where it fits. What is too large for a
+patched iBoot's upload (more than 40 MiB by the `ibss` route) goes through
+m1n1's proxy once it runs; `--proxy` asks for that way whatever the size.
 
-- **Without a kernel** m1n1 is started and waits on USB.
-- **With a kernel**, its device tree and an initramfs, m1n1 boots that
-  Linux in RAM. They go up in one upload behind m1n1 where they fit. What
-  is too large for a patched iBoot's upload (more than 40 MiB by the
-  `ibss` route) goes through m1n1's proxy once it runs; `--proxy` asks for
-  that way whatever the size.
+| To | Give |
+| --- | --- |
+| boot the last build as it is | `--no-build` |
+| boot files of your own | `--kernel K --dtb D… --initramfs I [--bootargs "…"]`: nothing is built |
+| start m1n1 alone and leave it waiting on USB | `--bare` |
+| use a local m1n1 | `--m1n1 FILE`: the plain build for palera1n and checkra1n, the Mach-O build for ibss |
+| add the board's peripheral firmware to the initramfs | `--firmware` |
+| wait for DFU mode | `--wait SECONDS` |
+| bound the device work | `--timeout SECONDS` (300) |
 
-`--firmware` adds the board's peripheral firmware to the initramfs,
-`--m1n1 FILE` uses a local m1n1 instead of the published one (the plain
-build for palera1n and checkra1n, the Mach-O build for ibss), `--wait
-SECONDS` waits for DFU mode, and `--timeout SECONDS` (300) bounds the
-device work.
+A distribution checkout is refused: its release is installed
+([install.md](install.md)), not run.
 
-**The shortcut.** `orchard2 run SOURCE` reads the same options from a
-`run.toml`: the file itself, the one in a directory, or the one `orchard2
-build` left in a project for the board's platform
-(`out/PLATFORM/run.toml`). So `orchard2 build && orchard2 run .` boots what
-was built.
+## run.toml
+
+A build leaves `run`'s options for what it built in
+`out/PLATFORM/run.toml`, which is what `run` then reads. DIRECTORY can also
+be such a file, or a directory with one in it.
 
 ```toml
 kernel = "/…/Image.gz"
@@ -35,8 +42,8 @@ bootargs = "console=tty0 loglevel=7 rdinit=/init"
 firmware = true                      # as --firmware
 ```
 
-An option given on the command line counts over the file's. With several
-device trees, m1n1 takes the board's.
+`--dtb`, `--initramfs`, `--bootargs` and `--firmware` on the command line
+count over the file's. With several device trees, m1n1 takes the board's.
 
 Each boot route is one function in `crates/runtime`, the same that
 `install` and `launch` take, and follows the device through a session

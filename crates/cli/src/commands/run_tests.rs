@@ -28,11 +28,20 @@ fn a_kernel_comes_with_its_device_tree_and_initramfs() {
 }
 
 #[test]
-fn without_a_kernel_m1n1_alone_is_started() {
-    assert_eq!(wanted(&args(&[]), None).unwrap(), None);
-    assert_eq!(wanted(&args(&["--ibss", "--m1n1", "m1n1.macho"]), None).unwrap(), None);
-    assert!(wanted(&args(&["--bootargs", "quiet"]), None).is_err());
-    assert!(wanted(&args(&["--proxy"]), None).is_err());
+fn bare_starts_m1n1_alone_and_takes_no_linux() {
+    assert_eq!(wanted(&args(&["--bare"]), None).unwrap(), None);
+    assert_eq!(wanted(&args(&["--bare", "--ibss", "--m1n1", "m1n1.macho"]), None).unwrap(), None);
+    for linux in [&["--kernel", "k"][..], &["--bootargs", "quiet"], &["--proxy"], &["--no-build"]] {
+        assert!(!parses(&[&["--bare"], linux].concat()), "{linux:?}");
+    }
+}
+
+#[test]
+fn a_project_is_the_default_and_takes_the_builds_options() {
+    assert_eq!(args(&[]).build.directory(), Path::new("."));
+    let given = args(&["payload", "--device", "j71b", "--kernel-tree", "linux", "--no-build", "--checkra1n"]);
+    assert_eq!(given.build.directory(), Path::new("payload"));
+    assert!(given.no_build);
 }
 
 #[test]

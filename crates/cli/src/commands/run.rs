@@ -8,6 +8,7 @@
 //! the route's upload or `--proxy` asks for it. Without a kernel, m1n1 is
 //! started and left waiting on USB.
 use crate::args::Global;
+use crate::commands::build::{self, BuildArgs};
 use crate::commands::install::BootFlags;
 use crate::output::{self, Output, Report};
 use orchard_boards::catalog::{Catalog, Kind};
@@ -35,10 +36,18 @@ const SHORTCUT: &str = "run.toml";
 
 #[derive(clap::Args)]
 pub struct Args {
-    /// A run.toml, a directory with one, or a project whose build left one
-    /// (out/PLATFORM/run.toml): the options below, written down
-    source: Option<PathBuf>,
-    /// Linux kernel image; without one m1n1 is started and waits on USB
+    /// The project to build and boot (the build's own options apply), or
+    /// a run.toml or a directory with one: the options below, written down
+    #[command(flatten)]
+    build: BuildArgs,
+    /// Boot what the project's last build left, without building
+    #[arg(long, conflicts_with = "bare")]
+    no_build: bool,
+    /// Start m1n1 alone and leave it waiting on USB
+    #[arg(long, conflicts_with_all = ["kernel", "dtb", "initramfs", "bootargs", "firmware", "proxy"])]
+    bare: bool,
+    /// Linux kernel image, instead of a project's: with --dtb and
+    /// --initramfs, nothing is built or read from a file
     #[arg(long)]
     kernel: Option<PathBuf>,
     /// A Linux device tree; repeat for a kernel of several boards (m1n1
@@ -148,10 +157,24 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     let started = Instant::now();
     let say = |message: &str| output::progress(global, &format!("[{:.3}s] {message}", started.elapsed().as_secs_f64()));
 
-    // Without a file to read, what the options ask for is known now.
-    if args.source.is_none() {
+    // What to boot: m1n1 alone, the files the options name, a run.toml, or
+    // the project, built first. The board's platform names the file of a
+    // build that is taken as it is.
+    let directory = args.build.directory();
+    let explicit = args.bare || args.kernel.is_some();
+    if explicit {
         wanted(args, None)?;
     }
+    let file_at = match () {
+        _ if explicit => None,
+        _ if directory.is_file() => Some(directory.to_owned()),
+        _ if directory.join(SHORTCUT).is_file() => Some(directory.join(SHORTCUT)),
+        _ if args.no_build => None,
+        _ => {
+            say("Building");
+            Some(build::payload(global, &args.build)?.join(SHORTCUT))
+        }
+    };
     let local_m1n1 = args.m1n1.as_deref().map(read).transpose()?;
 
     let store = Store::open(global.cache.as_deref())?;
@@ -171,10 +194,37 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     let board = catalog.board(&device.board)?;
     say(&format!("{} at {}", device.name, original.location));
 
+    // The runtime's routes, as install and launch take them.
+    let (events, log) = std::sync::mpsc::channel();
+    let mut options = Options::new(orchard_flow::App::Launcher);
+    options.data = Some(data.clone());
+    if let Some(cache) = &global.cache {
+        options.cache = cache.clone();
+    }
+    options.boot = args.boot.clone().or(args.short.route().map(str::to_owned));
+    let executor = options.executor(events)?;
+    executor.check_boot()?;
+    let route = executor.boot_route(&device.board)?;
+    if route.ends.as_deref() != Some("m1n1") {
+        return Err(Error::new(Code::Unsupported, format!("run starts m1n1; the {} route ends elsewhere", route.name)));
+    }
+    let ibss = route.name == "ibss";
+    if let Some(m1n1) = &local_m1n1 {
+        if m1n1::is_macho(m1n1) != ibss {
+            return Err(invalid(match ibss {
+                true => "the ibss route takes m1n1's Mach-O build (m1n1-idevice.macho)",
+                false => "this route takes m1n1's plain build (m1n1.bin)",
+            }));
+        }
+    }
+
     // The Linux to boot: the options, and the build's file where one is named.
-    let file = match &args.source {
-        Some(source) => {
-            let path = shortcut(source, board.platform.as_deref())?;
+    let file_at = match file_at {
+        None if !explicit => Some(shortcut(directory, board.platform.as_deref())?),
+        at => at,
+    };
+    let file = match file_at {
+        Some(path) => {
             let text = std::fs::read_to_string(&path).context(path.display())?;
             let file: Shortcut = toml::from_str(&text).map_err(|e| Error::new(Code::Format, e.message().to_owned())).context(path.display())?;
             Some((file, path))
@@ -205,30 +255,6 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
             _ => Err(invalid("none of the device trees is named as the board's; give its --dtb alone")),
         }
     };
-
-    // The runtime's routes, as install and launch take them.
-    let (events, log) = std::sync::mpsc::channel();
-    let mut options = Options::new(orchard_flow::App::Launcher);
-    options.data = Some(data.clone());
-    if let Some(cache) = &global.cache {
-        options.cache = cache.clone();
-    }
-    options.boot = args.boot.clone().or(args.short.route().map(str::to_owned));
-    let executor = options.executor(events)?;
-    executor.check_boot()?;
-    let route = executor.boot_route(&device.board)?;
-    if route.ends.as_deref() != Some("m1n1") {
-        return Err(Error::new(Code::Unsupported, format!("run starts m1n1; the {} route ends elsewhere", route.name)));
-    }
-    let ibss = route.name == "ibss";
-    if let Some(m1n1) = &local_m1n1 {
-        if m1n1::is_macho(m1n1) != ibss {
-            return Err(invalid(match ibss {
-                true => "the ibss route takes m1n1's Mach-O build (m1n1-idevice.macho)",
-                false => "this route takes m1n1's plain build (m1n1.bin)",
-            }));
-        }
-    }
 
     // Optionally append board firmware as a second initramfs archive.
     // The temporary directory is removed as soon as its files are packed.
