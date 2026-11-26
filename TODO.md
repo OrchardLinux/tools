@@ -32,6 +32,21 @@ that `prep`, `load` and `boot` ran on is gone. Still to do:
   `src/orchard/` (`crates/build/src/ram.rs`). Drop the fallback once a
   nightly has them in `boot/session/`.
 
+## macOS asks before a new accessory connects
+
+Seen on a MacBook on 2026-11-27, twice: the first time a device shows up
+with USB ids this Mac has not seen at that port (Pongo, then a RAM-booted
+Linux), macOS asks "Allow accessory to connect?". Until it is answered the
+device is in the system's USB list (`ioreg -p IOUSB`) but is not handed to
+programs: `devices` does not list it, and `run` waited its whole time for
+Linux and ended with a timeout while Linux was up.
+
+To do: tell the two apart and say so ("macOS is asking whether to allow
+this accessory; click Allow") in `devices`, in a route's waits and on the
+windows' screens. What marks a held-back device in the registry has to be
+read off one while the question is open; the next new identity (the install
+system, an installed system) will ask again.
+
 ## Firmware of the 32-bit boards
 
 To do with the Cascadia flow, not before: reading a 32-bit board's firmware
