@@ -70,8 +70,12 @@ orchard2 --json install NAME --yes --no-ssh \
   counts down while you hold the buttons, and orchard2 restarts the device
   at the right moment. Esc (or q) stops it until that restart has gone out.
   When the device comes back in recovery mode instead, the steps stand
-  again. DFU mode reached by hand counts as before. Without a terminal
-  nobody can press Enter, so the usual steps show.
+  again. DFU mode reached by hand counts as before.
+- **The device is in recovery mode, without a terminal** (stdin or stderr
+  is piped or redirected): nobody can press Enter, so the usual DFU steps
+  show, and the run waits for DFU mode reached by hand. With `--json` the
+  `recovery` events are written either way
+  ([reference.md](reference.md#install-and-launch)).
 - **More than one iPhone or iPad is connected**: nothing goes on until only
   one is. `--ecid` or `--location` names the one a run is for; then no other
   is found or started, but two connected still stop it

@@ -25,6 +25,8 @@ device by itself.
 
 Waiting for DFU mode, naming one device, the boards it works on and how the
 device is entered are the same as for [install](install.md#waiting-for-dfu-mode).
+That includes the guided run from recovery mode in a terminal, and the
+usual DFU steps without one.
 `--wait SECONDS` and `--log FILE` too.
 
 Any Ctrl-C ends the run (exit status 8).
