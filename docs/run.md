@@ -23,6 +23,7 @@ m1n1's proxy once it runs; `--proxy` asks for that way whatever the size.
 | use a local m1n1 | `--m1n1 FILE`: the plain build for palera1n and checkra1n, the Mach-O build for ibss |
 | give the ibss route its firmware keys | `--keys FILE` (also `ORCHARD_FIRMWARE_KEYS`): see [Firmware keys](data-and-firmware.md#firmware-keys) |
 | add the board's peripheral firmware to the initramfs | `--firmware` |
+| end once the start has gone out, for a system that never shows up on USB | `--no-wait` |
 | wait for DFU mode | `--wait SECONDS` |
 | bound the device work | `--timeout SECONDS` (300) |
 

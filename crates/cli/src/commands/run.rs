@@ -81,6 +81,10 @@ pub struct Args {
     boot: Option<String>,
     #[command(flatten)]
     short: BootFlags,
+    /// End once the start has gone out, without waiting for m1n1 or Linux
+    /// to show up on USB: for a system that never does
+    #[arg(long)]
+    no_wait: bool,
     /// Seconds to wait for the device in DFU mode
     #[arg(long, default_value = "0")]
     wait: u64,
@@ -355,6 +359,8 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     drop(log);
 
     let reached = match (linux, through_proxy) {
+        // Through the proxy the start is only out once m1n1 has been talked to.
+        (None, _) | (Some(_), false) if args.no_wait => "The start has gone out; not waited for",
         (None, _) => {
             say("Waiting for m1n1");
             session.wait_for(Mode::M1n1, deadline.left()?)?;
@@ -367,9 +373,14 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
         }
         (Some(kernel), true) => {
             upload(&mut session, &deadline, &say, kernel, compressed, own_dtb()?, &initramfs, bootargs.as_deref())?;
-            say("Waiting for Linux");
-            session.wait_for(Mode::Linux, deadline.left()?)?;
-            "Linux is running in RAM"
+            match args.no_wait {
+                true => "The start has gone out; not waited for",
+                false => {
+                    say("Waiting for Linux");
+                    session.wait_for(Mode::Linux, deadline.left()?)?;
+                    "Linux is running in RAM"
+                }
+            }
         }
     };
     drop(session);
