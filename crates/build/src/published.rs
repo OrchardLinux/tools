@@ -89,7 +89,7 @@ pub fn keys_document(build: &Build, platforms: &[String]) -> Result<Value> {
         "schema": 1,
         "platforms": rows,
         "shared": {
-            "m1n1": {"key": m1n1, "asset": "m1n1.bin", "files": ["m1n1.bin", "m1n1-idevice.macho", "monitor-stub.macho"]},
+            "m1n1": {"key": m1n1, "asset": "m1n1.bin", "files": ["m1n1.bin", "m1n1-idevice.macho", "monitor-stub.macho", "m1n1-armv7.macho"]},
             "tools": {"key": tools, "asset": "tool-components.tar.gz"},
         },
     }))

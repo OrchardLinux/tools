@@ -65,7 +65,7 @@ pub struct Args {
     firmware: bool,
     /// A local m1n1 instead of Orchard's published one: the plain build for
     /// the palera1n and checkra1n routes, the Mach-O build for ibss (the
-    /// 32-bit one on a 32-bit board, where none is published yet)
+    /// 32-bit one on a 32-bit board)
     #[arg(long)]
     m1n1: Option<PathBuf>,
     /// Firmware key file for the ibss route, instead of the cache and the

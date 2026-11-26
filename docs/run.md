@@ -37,14 +37,14 @@ with a boot ROM that checkm8 from a Raspberry Pi Pico entered (it shows as
 there:
 
 ```sh
-orchard2 run --bare --m1n1 m1n1-armv7.macho --keys keys.json
-orchard2 run --m1n1 m1n1-armv7.macho --keys keys.json \
-    --kernel zImage --dtb board.dtb --initramfs initramfs.cpio.gz
+orchard2 run
+orchard2 run --bare
+orchard2 run --kernel zImage --dtb board.dtb --initramfs initramfs.cpio.gz
 ```
 
 Apple's iBSS and iBEC are sent patched, the iBEC takes Apple's device tree
-and m1n1's 32-bit build as its kernel, and `bootx` starts it. No 32-bit
-m1n1 is published yet, so `--m1n1` is needed. The firmware's keys are in
+and m1n1's 32-bit build as its kernel, and `bootx` starts it. The 32-bit
+m1n1 is Orchard's published one; `--m1n1 FILE` gives another. The firmware's keys are in
 the board data (`--keys` gives others). The kernel is a zImage and goes up
 behind m1n1; `--proxy` is not for these boards yet. Not run on a device.
 
