@@ -61,9 +61,14 @@ fn list(executor: &Executor, device: &Device) -> Result<(BootManager, Vec<Entry>
     let proxy = orchard_usb::m1n1::Proxy::open(&usb).map_err(|e| e.to_string())?;
     let mut manager = BootManager::new(proxy).map_err(|e| e.to_string())?;
     manager.storage_init().map_err(|e| e.to_string())?;
-    let entries = manager
-        .entries()
-        .map_err(|e| e.to_string())?
+    // A device with no boot partition has nothing installed: m1n1 says so
+    // as an error ("Expected exactly one XBOOTLDR boot partition, found 0"),
+    // which is no failed start.
+    let listed = match manager.entries() {
+        Err(e) if nothing_installed(&e.to_string()) => Vec::new(),
+        other => other.map_err(|e| e.to_string())?,
+    };
+    let entries = listed
         .into_iter()
         .filter(|e| e.problems.is_empty())
         .map(|e| Entry {
@@ -74,4 +79,22 @@ fn list(executor: &Executor, device: &Device) -> Result<(BootManager, Vec<Entry>
         })
         .collect();
     Ok((manager, entries))
+}
+
+/// Whether m1n1's answer to listing the entries means the device has no
+/// boot partition at all.
+fn nothing_installed(answer: &str) -> bool {
+    answer.contains("boot partition, found 0")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_boot_partition_is_nothing_installed_and_other_answers_are_failures() {
+        assert!(nothing_installed("m1n1 boot manager: Expected exactly one XBOOTLDR boot partition, found 0"));
+        assert!(!nothing_installed("m1n1 boot manager: Expected exactly one XBOOTLDR boot partition, found 2"));
+        assert!(!nothing_installed("m1n1 could not list the boot entries"));
+    }
 }
