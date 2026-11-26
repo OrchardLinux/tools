@@ -605,8 +605,43 @@ struct ChainRecipeFile {
     source: String,
 }
 
-/// Parses `boot.json` (schema 2) into a board's boot data.
+/// `boot.json` as orchard's main branch writes it (schema 1): the firmware
+/// builds the board's boot stages come from, and nothing about chains.
+#[derive(Deserialize)]
+struct PlainBootFile {
+    firmware: Vec<PlainFirmware>,
+}
+
+#[derive(Deserialize)]
+struct PlainFirmware {
+    ipsw: Ipsw,
+    inputs: BTreeMap<String, InputFile>,
+}
+
+fn plain_boot_data(text: &str) -> Result<BootData> {
+    let file: PlainBootFile =
+        serde_json::from_str(text).map_err(|e| Error::new(Code::Format, e.to_string()))?;
+    let mut firmware = BTreeMap::new();
+    for f in file.firmware {
+        let inputs = f.inputs.into_iter().map(convert_input).collect::<Result<_>>()?;
+        firmware.insert(f.ipsw.build.clone(), Firmware { ipsw: f.ipsw, inputs, keys: BTreeMap::new() });
+    }
+    Ok(BootData { firmware, chains: BTreeMap::new(), loaders: BTreeMap::new() })
+}
+
+/// Parses `boot.json` into a board's boot data: schema 1 names the firmware
+/// only, schema 2 also chains and loaders.
 fn boot_data(text: &str) -> Result<BootData> {
+    #[derive(Deserialize)]
+    struct Schema {
+        #[serde(default)]
+        schema: u32,
+    }
+    let seen: Schema =
+        serde_json::from_str(text).map_err(|e| Error::new(Code::Format, e.to_string()))?;
+    if seen.schema == 1 {
+        return plain_boot_data(text);
+    }
     let file: BootFile =
         serde_json::from_str(text).map_err(|e| Error::new(Code::Format, e.to_string()))?;
     check_schema(file.schema, 2)?;
@@ -1146,11 +1181,26 @@ mod tests {
         let (root, catalog) = sample();
         fs::write(
             root.path().join("devices/x1/boot.json"),
-            r#"{"schema":1,"firmware":{},"chains":{}}"#,
+            r#"{"schema":3,"firmware":{},"chains":{}}"#,
         )
         .unwrap();
         let e = catalog.board("x1").unwrap().boot_data().unwrap_err();
         assert_eq!(e.code, Code::Unsupported);
-        assert!(e.hint.unwrap().contains("data update"));
+    }
+
+    /// Schema 1 is what orchard's main branch writes: the firmware, no chains.
+    #[test]
+    fn reads_the_firmware_of_a_plain_boot_file() {
+        let (root, catalog) = sample();
+        fs::write(
+            root.path().join("devices/x1/boot.json"),
+            r#"{"schema":1,"device":"Test1,1","firmware":[{"ipsw":{"version":"1.0","build":"1A1","url":"https://e/x.ipsw","bytes":1,"sha256":"00"},
+               "selected_by":"x","inputs":{"iBSS":{"ipsw":{"zip":"a"},"sha256":"11"}}}],"methods":{}}"#,
+        )
+        .unwrap();
+        let data = catalog.board("x1").unwrap().boot_data().unwrap();
+        assert!(data.chains.is_empty());
+        assert_eq!(data.firmware["1A1"].ipsw.version, "1.0");
+        assert!(data.firmware["1A1"].inputs.contains_key("iBSS"));
     }
 }

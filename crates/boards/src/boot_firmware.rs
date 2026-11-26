@@ -251,13 +251,28 @@ struct Stage {
 impl Plan {
     pub fn new(catalog: &Catalog, board: &Board, chain: Option<&str>) -> Result<Self> {
         let data = board.boot_data()?;
-        let (chain, recipe) = match chain {
-            Some(name) => data.chain(name)?,
-            None => data.sole_chain()?,
+        let chip = catalog.chip(board.chip)?;
+        // The `iboot` chain needs no recipe on the 64-bit chips: the open
+        // patcher on every stage the chip loads, from the board's firmware.
+        let plain = match (chain, data.firmware.keys().next()) {
+            (Some("iboot"), Some(build)) if !data.chains.contains_key("iboot") && chip.image_format == "im4p" => {
+                let step = crate::catalog::BootStep { name: "hbootpatcher".into(), params: Default::default() };
+                Some(crate::catalog::ChainRecipe {
+                    firmware: build.clone(),
+                    patch: chip.stages.iter().map(|stage| (stage.clone(), vec![step.clone()])).collect(),
+                    outputs: Default::default(),
+                    source: "the open patcher on each stage of the chip".into(),
+                })
+            }
+            _ => None,
+        };
+        let (chain, recipe) = match (&plain, chain) {
+            (Some(recipe), _) => ("iboot", recipe),
+            (None, Some(name)) => data.chain(name)?,
+            (None, None) => data.sole_chain()?,
         };
         let firmware = data.recipe(recipe)?;
 
-        let chip = catalog.chip(board.chip)?;
         let flow = match chip.image_format.as_str() {
             "im4p" => Flow::Img4,
             "img3" => Flow::Img3,
