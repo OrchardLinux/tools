@@ -165,10 +165,12 @@ fn start_arm(
     say: &mut dyn FnMut(&str),
 ) -> Result<()> {
     say("Preparing m1n1");
-    // No 32-bit m1n1 is published yet: the caller brings one.
-    let m1n1 = image(&[])?;
+    // Orchard's published 32-bit m1n1, where the build that is current has
+    // one; else the caller brings it.
+    let published = loaders::resolve(store).and_then(|record| loaders::file(store, &record, "m1n1", "m1n1-armv7.macho")).unwrap_or_default();
+    let m1n1 = image(&published)?;
     if !orchard_formats::m1n1::is_macho_arm(&m1n1) {
-        return Err(Error::new(Code::InvalidInput, "this board takes m1n1's 32-bit Mach-O build, which is not published yet").hint("give it with --m1n1 FILE (m1n1-armv7.macho)"));
+        return Err(Error::new(Code::NotFound, "Orchard's current build publishes no 32-bit m1n1 for this board").hint("give one with --m1n1 FILE (m1n1-armv7.macho), or update: orchard2 data update"));
     }
     let kernel = orchard_formats::m1n1::kernel_image_arm(&m1n1).map_err(|e| Error::new(Code::Format, e.to_string()))?;
 
@@ -176,7 +178,7 @@ fn start_arm(
     let plan = boot_firmware::Plan::new(catalog, board, Some("iboot"))?;
     let firmware = plan.prepare(board, store, &Boot { chain: Some("iboot"), keys, im4m: None })?;
     if firmware.needs_device() {
-        return Err(Error::new(Code::NotFound, "the firmware's keys are not known, and no tool of ours reads them from this chip").hint("give them with --keys FILE"));
+        return Err(Error::new(Code::NotFound, "the firmware's keys are not in the board data, and no tool of ours reads them from this chip").hint("give them with --keys FILE"));
     }
     let images = firmware.finish(store)?;
     let devicetree = plan.input(board, store, "DeviceTree")?;

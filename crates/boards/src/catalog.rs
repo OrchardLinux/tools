@@ -623,6 +623,9 @@ struct PlainBootFile {
 struct PlainFirmware {
     ipsw: Ipsw,
     inputs: BTreeMap<String, InputFile>,
+    /// Public keys by archive member, where the firmware's are published.
+    #[serde(default)]
+    keys: BTreeMap<String, PublicKey>,
 }
 
 fn plain_boot_data(text: &str) -> Result<BootData> {
@@ -631,7 +634,7 @@ fn plain_boot_data(text: &str) -> Result<BootData> {
     let mut firmware = BTreeMap::new();
     for f in file.firmware {
         let inputs = f.inputs.into_iter().map(convert_input).collect::<Result<_>>()?;
-        firmware.insert(f.ipsw.build.clone(), Firmware { ipsw: f.ipsw, inputs, keys: BTreeMap::new() });
+        firmware.insert(f.ipsw.build.clone(), Firmware { ipsw: f.ipsw, inputs, keys: f.keys });
     }
     Ok(BootData { firmware, chains: BTreeMap::new(), loaders: BTreeMap::new() })
 }
