@@ -649,3 +649,51 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod documented {
+    use super::*;
+    use clap::CommandFactory;
+
+    /// Every command and every option is in `docs/`, which the published
+    /// documentation is made from.
+    #[test]
+    fn every_command_and_option_is_in_the_docs() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs");
+        let mut docs = String::new();
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "md") {
+                docs.push_str(&std::fs::read_to_string(path).unwrap());
+            }
+        }
+        // A name counts where it stands by itself: `--keep` is not `--keep-going`.
+        let stands = |name: &str| {
+            docs.match_indices(name).any(|(at, _)| {
+                let after = docs[at + name.len()..].chars().next();
+                let before = docs[..at].chars().next_back();
+                !after.is_some_and(|c| c.is_ascii_alphanumeric() || c == '-') && !before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '-')
+            })
+        };
+        let mut missing = Vec::new();
+        let mut open = vec![(String::new(), Cli::command())];
+        while let Some((path, command)) = open.pop() {
+            for arg in command.get_arguments().filter(|arg| !arg.is_hide_set()) {
+                if let Some(long) = arg.get_long().filter(|long| !matches!(*long, "help" | "version")) {
+                    if !stands(&format!("--{long}")) {
+                        missing.push(format!("{path} --{long}"));
+                    }
+                }
+            }
+            for sub in command.get_subcommands().filter(|sub| !sub.is_hide_set() && sub.get_name() != "help") {
+                let name = format!("{path} {}", sub.get_name()).trim().to_owned();
+                if !stands(&name) {
+                    missing.push(name.clone());
+                }
+                open.push((name, sub.clone()));
+            }
+        }
+        missing.sort();
+        assert!(missing.is_empty(), "not in docs/: {missing:#?}");
+    }
+}

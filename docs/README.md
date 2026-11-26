@@ -13,6 +13,7 @@ installer and the launcher are built on the same libraries; `install` and
 | open a shell on a running system, run a command, copy a file, allow SSH afterwards, save Apple's device tree | [remote.md](remote.md) |
 | see or clean what is cached | [cache.md](cache.md) |
 | list devices, name one, keep one for several commands | [devices.md](devices.md) |
+| boot a kernel in RAM, or start m1n1 alone | [boot-commands.md](boot-commands.md#run) |
 | take a device through a boot chain by hand | [boot-commands.md](boot-commands.md) |
 | talk to DFU mode, iBoot, Pongo or m1n1 directly | [low-level.md](low-level.md) |
 | look at board data and firmware | [data-and-firmware.md](data-and-firmware.md) |

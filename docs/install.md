@@ -105,6 +105,10 @@ data; the first that fits is taken.
 | `checkra1n` | the same with checkra1n |
 | `ibss` | gaster enters the boot ROM, and Apple's own iBSS (and iBEC, where the chip loads one), patched, takes the install system. The firmware is fetched from Apple, and its keys are read from the device the first time |
 
+The data also names `autogo` (`--autogo`), the 32-bit boards' route into
+Cascadia's loader, taken only when asked for by name. No command of this
+version starts it yet.
+
 `--boot ROUTE` names one, else `ORCHARD_BOOT`
 ([reference.md](reference.md#environment)). `--ibss` is short for
 `--boot ibss`. A route that does not work on the device's chip ends the run

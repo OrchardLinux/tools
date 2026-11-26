@@ -1,8 +1,9 @@
 # The boot commands
 
 `prep`, `load` and `boot` take a device through a boot chain step by step,
-on any board the orchard data describes a path for. `install` and `launch`
-do not use them yet; they have a fixed path of their own.
+on any board the orchard data describes a path for. `install`, `launch` and
+[`run`](#run) do not use them: they take a boot route
+([install.md](install.md#how-the-device-is-entered)).
 
 > **State of this part.** These commands read the boot paths from
 > `boot-paths.toml` and each board's chain recipes from its `boot.json`
