@@ -1,95 +1,132 @@
-//! One J71b RAM boot, from Linux build outputs to Linux, in execution order.
+//! A RAM boot: m1n1 on the device in DFU mode, alone or with a Linux it
+//! starts at once, by the board's boot route.
 //!
-//! `orchard2 run --kernel Image.gz --dtb j71b.dtb --initramfs initramfs.cpio.gz`
+//! `orchard2 run --kernel Image.gz --dtb board.dtb --initramfs initramfs.cpio.gz`
 //!
-//! The command uses the format, firmware and USB primitives directly. The
-//! only device helpers are the lock, deadline, USB error conversion and
-//! isolated gaster process. All boot decisions and transfers are below.
+//! The kernel, device tree and initramfs go up in one upload behind m1n1
+//! where they fit, and through m1n1's proxy where they are too large for
+//! the route's upload or `--proxy` asks for it. Without a kernel, m1n1 is
+//! started and left waiting on USB.
 use crate::args::Global;
+use crate::commands::install::BootFlags;
 use crate::output::{self, Output, Report};
-use orchard_boards::boot_firmware;
 use orchard_boards::catalog::{Catalog, Kind};
-use orchard_boards::data::{firmware::Inputs, loaders};
-use orchard_boards::{firmware_build::Boot, pack, peripheral};
+use orchard_boards::data::firmware::Inputs;
+use orchard_boards::{pack, peripheral};
 use orchard_cache::store::Store;
 use orchard_cache::{Code, Context, Error, Result};
-use orchard_device::{deadline::Deadline, host::Connect, lock::Lock, usb};
+use orchard_device::{deadline::Deadline, lock::Lock, usb};
 use orchard_formats::{cpio, fdt, m1n1};
+use orchard_runtime::driver::Options;
 use orchard_usb::m1n1::Proxy;
-use orchard_usb::{dfu::Dfu, recovery::Recovery, Device, Host, Mode, Sent};
+use orchard_usb::{Device, Mode};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+/// The most a patched iBoot is sent behind m1n1 in one upload: one took
+/// 42 MiB and refused 48 MiB on a j71b. More goes through m1n1's proxy.
+const IBOOT_UPLOAD: usize = 40 << 20;
+
 #[derive(clap::Args)]
 pub struct Args {
-    /// Linux kernel image
-    #[arg(long)]
-    kernel: PathBuf,
-    /// Linux device tree for J71b
-    #[arg(long)]
-    dtb: PathBuf,
+    /// Linux kernel image; without one m1n1 is started and waits on USB
+    #[arg(long, requires_all = ["dtb", "initramfs"])]
+    kernel: Option<PathBuf>,
+    /// The board's Linux device tree
+    #[arg(long, requires = "kernel")]
+    dtb: Option<PathBuf>,
     /// RAM filesystem archive
-    #[arg(long)]
-    initramfs: PathBuf,
+    #[arg(long, requires = "kernel")]
+    initramfs: Option<PathBuf>,
     /// Linux command line
-    #[arg(long)]
+    #[arg(long, requires = "kernel")]
     bootargs: Option<String>,
-    /// Append J71b peripheral firmware to the supplied initramfs
-    #[arg(long)]
+    /// Append the board's peripheral firmware to the initramfs
+    #[arg(long, requires = "kernel")]
     firmware: bool,
-    #[arg(long, default_value = "j71b", value_parser = ["j71b"])]
-    board: String,
-    #[arg(long, default_value = "ibss-recovery", value_parser = ["ibss-recovery"])]
-    chain: String,
-    /// Local Mach-O m1n1; otherwise use Orchard's published loader
+    /// A local m1n1 instead of Orchard's published one: the plain build for
+    /// the palera1n and checkra1n routes, the Mach-O build for ibss
     #[arg(long)]
     m1n1: Option<PathBuf>,
-    /// Firmware key override; otherwise use cached keys or acquire with gaster
-    #[arg(long)]
-    keys: Option<PathBuf>,
-    /// IM4M override; otherwise use the bundled A10 manifest
-    #[arg(long)]
-    im4m: Option<PathBuf>,
-    /// Total seconds for device work, after host inputs have been prepared
+    /// Upload the kernel through m1n1's proxy even where one upload would do
+    #[arg(long, requires = "kernel")]
+    proxy: bool,
+    /// The boot route from DFU mode (palera1n, checkra1n, ibss); otherwise
+    /// ORCHARD_BOOT, else the first that fits the device
+    #[arg(long, value_name = "ROUTE")]
+    boot: Option<String>,
+    #[command(flatten)]
+    short: BootFlags,
+    /// Seconds to wait for the device in DFU mode
+    #[arg(long, default_value = "0")]
+    wait: u64,
+    /// Total seconds for device work, after the files have been prepared
     #[arg(long, default_value = "300", value_parser = clap::value_parser!(u64).range(1..))]
     timeout: u64,
 }
 
 pub fn run(global: &Global, args: &Args) -> Result<Output> {
     let started = Instant::now();
-    let say = |message: &str| {
-        output::progress(
-            global,
-            &format!("[{:.3}s] {message}", started.elapsed().as_secs_f64()),
-        )
-    };
+    let say = |message: &str| output::progress(global, &format!("[{:.3}s] {message}", started.elapsed().as_secs_f64()));
 
-    let kernel = read(&args.kernel)?;
-    let dtb = read(&args.dtb)?;
-    fdt::Tree::read(&dtb)?;
-    let compressed = kernel.starts_with(&[0x1f, 0x8b]);
-    if !compressed && kernel.get(56..60) != Some(b"ARM\x64".as_slice()) {
-        return Err(invalid(
-            "kernel must be an ARM64 Image or gzip-compressed Image",
-        ));
+    let kernel = args.kernel.as_deref().map(read).transpose()?;
+    let dtb = args.dtb.as_deref().map(read).transpose()?;
+    let mut initramfs = args.initramfs.as_deref().map(read).transpose()?.unwrap_or_default();
+    if let Some(dtb) = &dtb {
+        fdt::Tree::read(dtb)?;
+    }
+    let compressed = kernel.as_ref().is_some_and(|k| k.starts_with(&[0x1f, 0x8b]));
+    if kernel.as_ref().is_some_and(|k| !compressed && k.get(56..60) != Some(b"ARM\x64".as_slice())) {
+        return Err(invalid("kernel must be an ARM64 Image or gzip-compressed Image"));
     }
     if args.bootargs.as_deref().is_some_and(|s| s.contains('\0')) {
         return Err(invalid("boot arguments contain a NUL byte"));
     }
-    let mut initramfs = read(&args.initramfs)?;
+    let local_m1n1 = args.m1n1.as_deref().map(read).transpose()?;
+
     let store = Store::open(global.cache.as_deref())?;
-    let catalog = Catalog::open(&global.data_dir()?)?;
-    let board = catalog.board("j71b")?;
-    let chip = catalog.chip(board.chip)?;
-    if chip.stages != ["iBSS"] || chip.image_format != "im4p" {
-        return Err(invalid("J71b requires the single-stage IMG4 iBSS recipe"));
+    let data = global.data_dir()?;
+    let catalog = Catalog::open(&data)?;
+
+    // The one device in DFU mode, and the board its chip and board numbers name.
+    let original = find(global, Duration::from_secs(args.wait))?;
+    let seen = orchard_runtime::identify(&catalog, &original)
+        .filter(|seen| !seen.device.board.is_empty())
+        .ok_or_else(|| Error::new(Code::Unsupported, "the device in DFU mode is no board the data knows"))?;
+    let device = seen.device;
+    let board = catalog.board(&device.board)?;
+    let lock = Lock::acquire(&original.location)?;
+    say(&format!("{} at {}", device.name, original.location));
+
+    // The runtime's routes, as install and launch take them.
+    let (events, log) = std::sync::mpsc::channel();
+    let mut options = Options::new(orchard_flow::App::Launcher);
+    options.data = Some(data.clone());
+    if let Some(cache) = &global.cache {
+        options.cache = cache.clone();
+    }
+    options.boot = args.boot.clone().or(args.short.route().map(str::to_owned));
+    let executor = options.executor(events)?;
+    executor.check_boot()?;
+    let route = executor.boot_route(&device.board)?;
+    if route.ends.as_deref() != Some("m1n1") {
+        return Err(Error::new(Code::Unsupported, format!("run starts m1n1; the {} route ends elsewhere", route.name)));
+    }
+    let ibss = route.name == "ibss";
+    if let Some(m1n1) = &local_m1n1 {
+        if m1n1::is_macho(m1n1) != ibss {
+            return Err(invalid(match ibss {
+                true => "the ibss route takes m1n1's Mach-O build (m1n1-idevice.macho)",
+                false => "this route takes m1n1's plain build (m1n1.bin)",
+            }));
+        }
     }
 
     // Optionally append board firmware as a second initramfs archive.
     // The temporary directory is removed as soon as its files are packed.
     if args.firmware {
-        say("Preparing J71b peripheral firmware");
+        say("Preparing the board's peripheral firmware");
         let recipe = board.recipe(Kind::Peripheral)?;
         let plan = peripheral::Plan::new(&recipe)?;
         if !plan.unsupported.is_empty() {
@@ -127,188 +164,107 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
         cpio::append(&mut initramfs, &files)?;
     }
 
-    say("Preparing bare Mach-O m1n1");
-    let loader = match &args.m1n1 {
-        Some(path) => read(path)?,
-        None => loaders::file(
-            &store,
-            &loaders::resolve(&store)?,
-            "m1n1",
-            "m1n1-idevice.macho",
-        )?,
-    };
-    if !m1n1::is_macho(&loader) {
-        return Err(invalid("iBSS/recovery needs ARM64 Mach-O m1n1"));
-    }
-    say("Preparing patched iBSS and the Apple recovery images");
-    // The catalog calls this recipe 'iboot'; this command fixes its sequence
-    // to J71b's single-stage iBSS/recovery boot.
-    let plan = boot_firmware::Plan::new(&catalog, &board, Some("iboot"))?;
-    let boot_firmware = format!("{} / {}", plan.firmware().version, plan.firmware().build);
-    say(&format!("Apple boot firmware: {boot_firmware}"));
-    let mut firmware = plan.prepare(
-        &board,
-        &store,
-        &Boot {
-            chain: Some("iboot"),
-            keys: args.keys.as_deref(),
-            im4m: args.im4m.as_deref(),
-        },
-    )?;
-    firmware.check_restore(&loader, None)?;
-    firmware.check_acquisition()?;
 
-    // Select only a J71b in DFU. The same physical port is followed for the
-    // rest of the command, checking identity whenever the device reports it.
-    let original = find_j71b(global, &board)?;
-    let lock = Lock::acquire(&original.location)?;
+    // What m1n1 is to boot goes behind it where the route's upload takes
+    // that much, else through its proxy once it runs.
+    let linux = kernel.as_ref().map(|kernel| (kernel, dtb.as_ref().expect("clap requires --dtb")));
+    let size = linux.map_or(0, |(kernel, dtb)| kernel.len() + dtb.len() + initramfs.len());
+    let through_proxy = linux.is_some() && (args.proxy || (ibss && size > IBOOT_UPLOAD));
+    let image = |m1n1: &[u8]| -> Result<Vec<u8>> {
+        let m1n1 = local_m1n1.as_deref().unwrap_or(m1n1);
+        match linux {
+            Some((kernel, dtb)) if !through_proxy => {
+                let dtbs = [dtb.as_slice()];
+                let linux = pack::Linux { kernel, dtbs: &dtbs, initramfs: Some(&initramfs), bootargs: args.bootargs.as_deref(), logo: None };
+                pack::m1n1(m1n1, Some(&linux))
+            }
+            _ => Ok(m1n1.to_vec()),
+        }
+    };
+
+    // The route's own lines, as they come.
+    let shown = std::thread::spawn(move || {
+        let mut last = String::new();
+        for event in log {
+            if let orchard_flow::Event::StartLog(lines) = event {
+                if let Some(line) = lines.last().filter(|line| **line != last) {
+                    eprintln!("  {line}");
+                    last = line.clone();
+                }
+            }
+        }
+    });
+    say(&format!("Starting m1n1 by the {} route", route.name));
     let deadline = Deadline::after(Duration::from_secs(args.timeout));
     let device_started = Instant::now();
-    let mut device = wait_for(&original, Mode::Dfu, &deadline)?;
-    say(&format!(
-        "J71b at {}, ECID {}",
-        device.location,
-        original.identity.ecid.as_deref().unwrap()
-    ));
+    if ibss {
+        orchard_runtime::ibss::start(&executor, &device, image)?;
+    } else {
+        let published = match &local_m1n1 {
+            Some(_) => Vec::new(),
+            None => std::fs::read(executor.download(&executor.orchard_tools()?.m1n1)?)?,
+        };
+        orchard_runtime::chain::start_image(&executor, &device, &image(&published)?)?;
+    }
+    drop(executor);
+    let _ = shown.join();
 
-    let already_pwned = match device.identity.pwned.as_deref() {
-        None => false,
-        Some("gaster") => true,
-        Some(_) => {
-            return Err(invalid(
-                "this command requires plain DFU or gaster-pwned DFU",
-            ))
+    let reached = match (linux, through_proxy) {
+        (None, _) => {
+            say("Waiting for m1n1");
+            wait_for(&original, Mode::M1n1, &deadline)?;
+            "m1n1 is waiting on USB"
+        }
+        (Some(_), false) => {
+            say("Waiting for Linux");
+            wait_for(&original, Mode::Linux, &deadline)?;
+            "Linux is running in RAM"
+        }
+        (Some((kernel, dtb)), true) => {
+            upload(&original, &deadline, &say, kernel, compressed, dtb, &initramfs, args.bootargs.as_deref())?;
+            say("Waiting for Linux");
+            wait_for(&original, Mode::Linux, &deadline)?;
+            "Linux is running in RAM"
         }
     };
-    let needs_keys = firmware.needs_device();
-    let worker = (!already_pwned || needs_keys)
-        .then(|| Host.gaster_worker(&store))
-        .transpose()?;
-
-    // Each worker call is bounded and inherits the device lock.
-    if !already_pwned {
-        say("Entering pwned DFU with gaster");
-        Host.gaster(
-            &device,
-            None,
-            worker.as_ref().expect("worker prepared for entry"),
-            deadline.step(Duration::from_secs(120))?,
-            &|child| lock.hand_to(child),
-        )?;
-        device = wait_for(&original, Mode::Dfu, &deadline)?;
+    drop(lock);
+    Ok(Booted {
+        reached,
+        board: board.name,
+        location: original.location,
+        route: route.name,
+        through_proxy,
+        total_seconds: started.elapsed().as_secs_f64(),
+        device_seconds: device_started.elapsed().as_secs_f64(),
     }
-    if device.identity.pwned.as_deref() != Some("gaster") {
-        return Err(invalid(
-            "gaster finished but the device is not in gaster-pwned DFU",
-        ));
-    }
+    .into())
+}
 
-    // A cold firmware build may need the device's AES engine once. After
-    // that, the firmware builder's cache supplies the same images directly.
-    if needs_keys {
-        say("Unwrapping the firmware keybags with gaster");
-        firmware.acquire(|bags| {
-            Host.gaster(
-                &device,
-                Some(bags),
-                worker.as_ref().expect("worker prepared for key acquisition"),
-                deadline.step(Duration::from_secs(120))?,
-                &|child| lock.hand_to(child),
-            )
-        })?;
-    }
-    let images = firmware.finish(&store)?;
-    let restore = pack::restore(&chip, &images, &loader, &[])?;
-    let ibss = pack::file(&images, "ibss.img4")?;
-
-    say("Resetting the pwned DFU receiver");
-    let mut dfu = Dfu::open(&device).map_err(usb::error)?;
-    dfu.clear_status(deadline.step(Duration::from_secs(10))?)
-        .map_err(usb::error)?;
-    dfu.reset().map_err(usb::error)?;
-    drop(dfu);
-    device = wait_for(&original, Mode::Dfu, &deadline)?;
-    if device.identity.pwned.as_deref() != Some("gaster") {
-        return Err(invalid("the device lost its gaster marker after reset"));
-    }
-
-    say("Sending patched iBSS");
-    let mut dfu = Dfu::open(&device).map_err(usb::error)?;
-    dfu.send(ibss, deadline.step(Duration::from_secs(60))?)
-        .map_err(usb::error)?;
-    drop(dfu);
-
-    say("Waiting for iBSS recovery");
-    device = wait_for(&original, Mode::Recovery, &deadline)?;
-    // Recovery may enumerate before macOS releases its exclusive handle.
-    let opening = Deadline::after(deadline.step(Duration::from_secs(10))?);
-    let mut recovery = loop {
-        match Recovery::open(&device) {
-            Ok(recovery) => break recovery,
-            Err(error)
-                if error.kind == orchard_usb::Kind::Busy || error.detail.contains("0xe00002c5") =>
-            {
-                // IOKit exclusive-access errors can arrive as Kind::Other.
-                if opening.left().is_err() {
-                    return Err(usb::error(error).hint(
-                        "recovery is still held by macOS or another program; close device-management apps before the next attempt",
-                    ));
-                }
-                std::thread::sleep(
-                    Duration::from_millis(200).min(opening.left().unwrap_or_default()),
-                );
-            }
-            Err(error) => return Err(usb::error(error)),
-        }
-    };
-
-    say("Sending the Apple device tree");
-    recovery
-        .send(&restore.devicetree, deadline.step(Duration::from_secs(60))?)
-        .map_err(usb::error)?;
-    acknowledged(
-        recovery
-            .command("devicetree", deadline.step(Duration::from_secs(10))?)
-            .map_err(usb::error)?,
-        "devicetree",
-    )?;
-
-    say("Sending the trust cache");
-    recovery
-        .send(&restore.trustcache, deadline.step(Duration::from_secs(60))?)
-        .map_err(usb::error)?;
-    acknowledged(
-        recovery
-            .command("firmware", deadline.step(Duration::from_secs(10))?)
-            .map_err(usb::error)?,
-        "firmware",
-    )?;
-
-    say("Sending bare m1n1 as the restore kernel");
-    recovery
-        .send(
-            &restore.kernelcache,
-            deadline.step(Duration::from_secs(120))?,
-        )
-        .map_err(usb::error)?;
-    say("Starting m1n1: bootx");
-    recovery
-        .command("bootx", deadline.step(Duration::from_secs(10))?)
-        .map_err(usb::error)?;
-    drop(recovery);
-
+/// The kernel, device tree and initramfs through m1n1's proxy, and the
+/// start of Linux from there: for what is too large for the route's upload.
+#[allow(clippy::too_many_arguments)]
+fn upload(
+    original: &Device,
+    deadline: &Deadline,
+    say: &dyn Fn(&str),
+    kernel: &[u8],
+    compressed: bool,
+    dtb: &[u8],
+    initramfs: &[u8],
+    bootargs: Option<&str>,
+) -> Result<()> {
     say("Waiting for the m1n1 proxy");
-    device = wait_for(&original, Mode::M1n1, &deadline)?;
     // The USB device appears before macOS finishes attaching its CDC driver.
     say("Opening the m1n1 proxy transport");
+    let mut device;
     let mut proxy = loop {
+        device = wait_for(original, Mode::M1n1, deadline)?;
         match Proxy::open(&device) {
             Ok(proxy) => break proxy,
             Err(error) if error.kind == orchard_usb::Kind::Disconnected => {
                 deadline
                     .sleep(Duration::from_millis(200))
                     .context("waiting for the m1n1 serial port")?;
-                device = wait_for(&original, Mode::M1n1, &deadline)?;
             }
             Err(error) => return Err(usb::error(error)),
         }
@@ -320,13 +276,12 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
         "m1n1 proxy connected over USB serial"
     });
 
-    let proxy_ready_seconds = device_started.elapsed().as_secs_f64();
 
     // Match proxyclient/tools/linux.py: leave 128 MiB for m1n1, then use
     // a separate 1 GiB host-managed heap. Reserve 512 MiB for the kernel
     // so decompression cannot overwrite the DTB or initramfs.
-    let heap = call(&mut proxy, &deadline, HEAPBLOCK_ALLOC, &[0])? + (128 << 20);
-    call(&mut proxy, &deadline, HEAPBLOCK_SET_LIMIT, &[heap])?;
+    let heap = call(&mut proxy, deadline, HEAPBLOCK_ALLOC, &[0])? + (128 << 20);
+    call(&mut proxy, deadline, HEAPBLOCK_SET_LIMIT, &[heap])?;
     let mut next = heap;
     let mut allocate = |alignment: u64, size: usize| -> Result<u64> {
         let address = next.next_multiple_of(alignment);
@@ -349,7 +304,6 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     let dtb_address = allocate(64, dtb.len())?;
     let initramfs_address = allocate(65536, initramfs.len())?;
 
-    let upload_started = Instant::now();
     say("Uploading the kernel through m1n1");
     proxy
         .write(upload_address, &kernel, deadline.left()?)
@@ -362,15 +316,14 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     proxy
         .write(initramfs_address, &initramfs, deadline.left()?)
         .map_err(usb::error)?;
-    let upload_seconds = upload_started.elapsed().as_secs_f64();
     call(
         &mut proxy,
-        &deadline,
+        deadline,
         KBOOT_SET_INITRD,
         &[initramfs_address, initramfs.len() as u64],
     )?;
 
-    if let Some(bootargs) = &args.bootargs {
+    if let Some(bootargs) = &bootargs {
         let name = b"bootargs\0";
         let value = [bootargs.as_bytes(), &[0]].concat();
         let name_address = allocate(8, name.len())?;
@@ -383,7 +336,7 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
             .map_err(usb::error)?;
         if (call(
             &mut proxy,
-            &deadline,
+            deadline,
             KBOOT_SET_CHOSEN,
             &[name_address, value_address],
         )? as i64)
@@ -394,9 +347,9 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     }
 
     say("Preparing Linux in m1n1");
-    call(&mut proxy, &deadline, CPUFREQ_INIT, &[])?;
-    call(&mut proxy, &deadline, SMP_START_SECONDARIES, &[])?;
-    if call(&mut proxy, &deadline, KBOOT_PREPARE_DT, &[dtb_address])? != 0 {
+    call(&mut proxy, deadline, CPUFREQ_INIT, &[])?;
+    call(&mut proxy, deadline, SMP_START_SECONDARIES, &[])?;
+    if call(&mut proxy, deadline, KBOOT_PREPARE_DT, &[dtb_address])? != 0 {
         return Err(Error::new(
             Code::Usb,
             "m1n1 could not prepare the Linux device tree",
@@ -406,7 +359,7 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
         say("Decompressing the kernel in m1n1");
         let size = call(
             &mut proxy,
-            &deadline,
+            deadline,
             GZDEC,
             &[
                 upload_address,
@@ -424,34 +377,19 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     };
     call(
         &mut proxy,
-        &deadline,
+        deadline,
         DC_CVAU,
         &[kernel_address, kernel_size],
     )?;
     call(
         &mut proxy,
-        &deadline,
+        deadline,
         IC_IVAU,
         &[kernel_address, kernel_size],
     )?;
-    let linux_started = Instant::now();
     say("Starting Linux");
-    call(&mut proxy, &deadline, KBOOT_BOOT, &[kernel_address])?;
-    drop(proxy);
-
-    say("Waiting for Linux");
-    let linux = wait_for(&original, Mode::Linux, &deadline)?;
-    Ok(Booted {
-        location: linux.location,
-        boot_firmware,
-        already_pwned,
-        total_seconds: started.elapsed().as_secs_f64(),
-        device_seconds: device_started.elapsed().as_secs_f64(),
-        proxy_ready_seconds,
-        upload_seconds,
-        linux_start_seconds: linux_started.elapsed().as_secs_f64(),
-    }
-    .into())
+    call(&mut proxy, deadline, KBOOT_BOOT, &[kernel_address])?;
+    Ok(())
 }
 
 // Helpers below do file/byte work or one bounded device observation.
@@ -475,32 +413,27 @@ fn call(proxy: &mut Proxy, deadline: &Deadline, operation: u64, args: &[u64]) ->
         .map_err(usb::error)
 }
 
-fn find_j71b(global: &Global, board: &orchard_boards::catalog::Board) -> Result<Device> {
-    let devices = orchard_usb::list().map_err(usb::error)?;
-    let candidates: Vec<_> = devices
-        .into_iter()
-        .filter(|device| {
-            device.mode == Mode::Dfu
-                && hex(device.identity.chip.as_deref()) == Some(u64::from(board.chip))
-                && hex(device.identity.board_id.as_deref()) == Some(u64::from(board.board))
-                && global
-                    .device
-                    .location
-                    .as_ref()
-                    .is_none_or(|p| p == &device.location)
-                && global.device.ecid.as_deref().is_none_or(|id| {
-                    hex(Some(id)).is_some() && hex(Some(id)) == hex(device.identity.ecid.as_deref())
-                })
-        })
-        .collect();
-    match candidates.as_slice() {
-        [device] if device.identity.ecid.is_some() => Ok(device.clone()),
-        [] => Err(Error::new(Code::NoDevice, "no matching J71b in DFU mode")),
-        [_] => Err(invalid("the J71b does not report its ECID")),
-        _ => Err(Error::new(
-            Code::Ambiguous,
-            "several J71b devices; select --ecid or --location",
-        )),
+/// The one device in DFU mode that --ecid and --location leave, waited for
+/// up to `wait`.
+fn find(global: &Global, wait: Duration) -> Result<Device> {
+    let until = Instant::now() + wait;
+    loop {
+        let devices = orchard_usb::list().map_err(usb::error)?;
+        let candidates: Vec<_> = devices
+            .into_iter()
+            .filter(|device| {
+                device.mode == Mode::Dfu
+                    && global.device.location.as_ref().is_none_or(|p| p == &device.location)
+                    && global.device.ecid.as_deref().is_none_or(|id| hex(Some(id)).is_some() && hex(Some(id)) == hex(device.identity.ecid.as_deref()))
+            })
+            .collect();
+        match candidates.as_slice() {
+            [device] if device.identity.ecid.is_some() => return Ok(device.clone()),
+            [_] => return Err(invalid("the device in DFU mode does not report its ECID")),
+            [] if Instant::now() < until => std::thread::sleep(Duration::from_millis(250)),
+            [] => return Err(Error::new(Code::NoDevice, "no device in DFU mode").hint("put the device in DFU mode; --wait SECONDS waits for it")),
+            _ => return Err(Error::new(Code::Ambiguous, "several devices in DFU mode; select --ecid or --location")),
+        }
     }
 }
 
@@ -538,16 +471,6 @@ fn wait_for(original: &Device, mode: Mode, deadline: &Deadline) -> Result<Device
     }
 }
 
-fn acknowledged(sent: Sent, command: &str) -> Result<()> {
-    match sent {
-        Sent::Acknowledged => Ok(()),
-        Sent::Unconfirmed => Err(Error::new(
-            Code::Usb,
-            format!("recovery {command} was not acknowledged"),
-        )),
-    }
-}
-
 fn hex(text: Option<&str>) -> Option<u64> {
     let text = text?;
     u64::from_str_radix(text.trim_start_matches("0x"), 16).ok()
@@ -563,27 +486,28 @@ fn invalid(message: &str) -> Error {
 
 #[derive(Serialize)]
 struct Booted {
+    reached: &'static str,
+    board: String,
     location: String,
-    boot_firmware: String,
-    already_pwned: bool,
+    route: String,
+    through_proxy: bool,
     total_seconds: f64,
     device_seconds: f64,
-    proxy_ready_seconds: f64,
-    upload_seconds: f64,
-    linux_start_seconds: f64,
 }
 
 impl Report for Booted {
     fn human(&self) -> Vec<u8> {
         format!(
-            "Linux is running in RAM on J71b at {}\n\
-             Apple boot firmware: {} (already pwned: {})\n\
-             Total command: {:.3}s; device work to Linux USB: {:.3}s\n\
-             Device work to proxy ready: {:.3}s; Linux uploads: {:.3}s; kernel start to Linux USB: {:.3}s\n",
-            self.location, self.boot_firmware, self.already_pwned,
-            self.total_seconds, self.device_seconds, self.proxy_ready_seconds,
-            self.upload_seconds, self.linux_start_seconds,
-        ).into_bytes()
+            "{} on {} at {}, by the {} route{}\nTotal: {:.1} s; device work: {:.1} s\n",
+            self.reached,
+            self.board,
+            self.location,
+            self.route,
+            if self.through_proxy { ", the kernel through m1n1's proxy" } else { "" },
+            self.total_seconds,
+            self.device_seconds,
+        )
+        .into_bytes()
     }
 }
 

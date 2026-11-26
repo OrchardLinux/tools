@@ -93,7 +93,7 @@ pub enum Command {
         /// Platforms (default: every arm64 platform)
         platform: Vec<String>,
     },
-    /// Boot Linux build outputs in RAM on J71b through iBSS/recovery
+    /// Start m1n1 from DFU mode, alone or with a Linux it boots in RAM
     Run(crate::commands::run::Args),
     /// List connected devices
     Devices(DevicesArgs),

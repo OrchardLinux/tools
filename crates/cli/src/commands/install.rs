@@ -96,7 +96,7 @@ pub struct BootFlags {
 }
 
 impl BootFlags {
-    fn route(&self) -> Option<&'static str> {
+    pub fn route(&self) -> Option<&'static str> {
         [(self.ibss, "ibss"), (self.palera1n, "palera1n"), (self.checkra1n, "checkra1n"), (self.autogo, "autogo")]
             .into_iter()
             .find_map(|(set, name)| set.then_some(name))

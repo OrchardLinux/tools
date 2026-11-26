@@ -461,6 +461,12 @@ pub fn boot_install_env(executor: &Executor, device: &Device) -> Result<()> {
     start_from_pongo(executor, device, &payload)
 }
 
+/// `image` by the boot route's tool into Pongo and started there: for a
+/// RAM boot of m1n1, alone or with a system behind it.
+pub fn start_image(executor: &Executor, device: &Device, image: &[u8]) -> Result<()> {
+    start_from_pongo(executor, device, image)
+}
+
 /// Both apps' start: palera1n → Pongo, then `image` to Pongo and `bootm`.
 /// What follows differs: the install system shows up on USB by itself (the
 /// installer), or m1n1 does (the launcher). bootm's own answer may not come

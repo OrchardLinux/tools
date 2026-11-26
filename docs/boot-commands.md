@@ -155,16 +155,25 @@ questions and steps ([launch.md](launch.md)).
 ## run
 
 ```sh
-orchard2 run --kernel K --dtb D --initramfs I
+orchard2 run [--kernel K --dtb D --initramfs I] [--bootargs "…"] [--boot ROUTE]
 ```
 
-is an older, single-purpose command: it boots Linux in RAM on a J71b (iPad
-6) through gaster and a patched iBoot, then uploads the kernel through
-m1n1's proxy. It knows no other board or chain, has no `--plan`, and needs
-gaster. `load` is the general way.
+starts m1n1 on the device in DFU mode, on any board, by its boot route
+([install.md](install.md#how-the-device-is-entered)): `--boot ROUTE`, or
+`--ibss`, `--palera1n`, `--checkra1n`.
 
-`--bootargs "…"` is the kernel's command line, `--firmware` adds the
-board's peripheral firmware to the initramfs, `--m1n1 FILE` uses a local
-m1n1 instead of the published one, `--keys FILE` and `--im4m FILE` replace
-the firmware keys and the manifest, and `--timeout SECONDS` (300) bounds
-the device work.
+- **Without a kernel** m1n1 is started and waits on USB.
+- **With a kernel**, its device tree and an initramfs, m1n1 boots that
+  Linux in RAM. They go up in one upload behind m1n1 where they fit. What
+  is too large for a patched iBoot's upload (more than 40 MiB by the
+  `ibss` route) goes through m1n1's proxy once it runs; `--proxy` asks for
+  that way whatever the size.
+
+`--firmware` adds the board's peripheral firmware to the initramfs,
+`--m1n1 FILE` uses a local m1n1 instead of the published one (the plain
+build for palera1n and checkra1n, the Mach-O build for ibss), `--wait
+SECONDS` waits for DFU mode, and `--timeout SECONDS` (300) bounds the
+device work.
+
+It does not use `prep` and `load`: each boot route is one function in
+`crates/runtime`, as for `install` and `launch`.
