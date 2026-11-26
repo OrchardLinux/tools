@@ -155,7 +155,7 @@ questions and steps ([launch.md](launch.md)).
 ## run
 
 ```sh
-orchard2 run [--kernel K --dtb D --initramfs I] [--bootargs "…"] [--boot ROUTE]
+orchard2 run [SOURCE] [--kernel K --dtb D… --initramfs I] [--bootargs "…"] [--boot ROUTE]
 ```
 
 starts m1n1 on the device in DFU mode, on any board, by its boot route
@@ -174,6 +174,23 @@ starts m1n1 on the device in DFU mode, on any board, by its boot route
 build for palera1n and checkra1n, the Mach-O build for ibss), `--wait
 SECONDS` waits for DFU mode, and `--timeout SECONDS` (300) bounds the
 device work.
+
+**The shortcut.** `orchard2 run SOURCE` reads the same options from a
+`run.toml`: the file itself, the one in a directory, or the one `orchard2
+build` left in a project for the board's platform
+(`out/PLATFORM/run.toml`). So `orchard2 build && orchard2 run .` boots what
+was built.
+
+```toml
+kernel = "/…/Image.gz"
+dtb = ["/…/t8010-j71b.dtb", "/…/t8010-j171.dtb"]
+initramfs = "initramfs.cpio.gz"      # counted from the file's directory
+bootargs = "console=tty0 loglevel=7 rdinit=/init"
+firmware = true                      # as --firmware
+```
+
+An option given on the command line counts over the file's. With several
+device trees, m1n1 takes the board's.
 
 It does not use `prep` and `load`: each boot route is one function in
 `crates/runtime`, as for `install` and `launch`.

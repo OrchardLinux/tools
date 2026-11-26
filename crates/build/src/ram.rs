@@ -176,6 +176,11 @@ fn assemble_directory(
     receipt["overlay"] =
         json!({"path": overlay, "sha256": recipes::key(directory, &["rootfs"], &[])?});
     receipt["firmware"] = json!(settings.firmware);
+    if settings.firmware {
+        let run = output.join("run.toml");
+        let text = std::fs::read_to_string(&run).context(run.display())?;
+        write_text(&run, &format!("{text}firmware = true\n"))?;
+    }
     receipt["kernel_tree"] = json!(given.kernel_tree);
     write_text(&output.join("build.json"), &pretty(&receipt))?;
     build.say(format!(
@@ -528,6 +533,15 @@ fn assemble(build: &Build, output: &Path, payload: &Payload) -> Result<Value> {
     for name in names {
         std::fs::rename(work.join(name), output.join(name)).context(output.join(name).display())?;
     }
+    // `run`'s own options for this build, written down: `orchard2 run DIR`.
+    let mut run = toml::Table::new();
+    run.insert("kernel".into(), kernel.to_string_lossy().into_owned().into());
+    run.insert("dtb".into(), dtbs.iter().map(|d| toml::Value::from(d.to_string_lossy().into_owned())).collect::<Vec<_>>().into());
+    run.insert("initramfs".into(), "initramfs.cpio.gz".into());
+    if !payload.bootargs.is_empty() {
+        run.insert("bootargs".into(), payload.bootargs.to_owned().into());
+    }
+    write_text(&output.join("run.toml"), &run.to_string())?;
     Ok(receipt)
 }
 

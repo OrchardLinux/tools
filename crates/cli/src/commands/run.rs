@@ -28,29 +28,36 @@ use std::time::{Duration, Instant};
 /// 42 MiB and refused 48 MiB on a j71b. More goes through m1n1's proxy.
 const IBOOT_UPLOAD: usize = 40 << 20;
 
+/// The file a build leaves for `run`, in a directory given to it.
+const SHORTCUT: &str = "run.toml";
+
 #[derive(clap::Args)]
 pub struct Args {
+    /// A run.toml, a directory with one, or a project whose build left one
+    /// (out/PLATFORM/run.toml): the options below, written down
+    source: Option<PathBuf>,
     /// Linux kernel image; without one m1n1 is started and waits on USB
-    #[arg(long, requires_all = ["dtb", "initramfs"])]
+    #[arg(long)]
     kernel: Option<PathBuf>,
-    /// The board's Linux device tree
-    #[arg(long, requires = "kernel")]
-    dtb: Option<PathBuf>,
+    /// A Linux device tree; repeat for a kernel of several boards (m1n1
+    /// takes the board's)
+    #[arg(long)]
+    dtb: Vec<PathBuf>,
     /// RAM filesystem archive
-    #[arg(long, requires = "kernel")]
+    #[arg(long)]
     initramfs: Option<PathBuf>,
     /// Linux command line
-    #[arg(long, requires = "kernel")]
+    #[arg(long)]
     bootargs: Option<String>,
     /// Append the board's peripheral firmware to the initramfs
-    #[arg(long, requires = "kernel")]
+    #[arg(long)]
     firmware: bool,
     /// A local m1n1 instead of Orchard's published one: the plain build for
     /// the palera1n and checkra1n routes, the Mach-O build for ibss
     #[arg(long)]
     m1n1: Option<PathBuf>,
     /// Upload the kernel through m1n1's proxy even where one upload would do
-    #[arg(long, requires = "kernel")]
+    #[arg(long)]
     proxy: bool,
     /// The boot route from DFU mode (palera1n, checkra1n, ibss); otherwise
     /// ORCHARD_BOOT, else the first that fits the device
@@ -66,22 +73,82 @@ pub struct Args {
     timeout: u64,
 }
 
+/// `run.toml`: `run`'s own options for a Linux, written down. Paths count
+/// from the file's directory.
+#[derive(Debug, Default, PartialEq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Shortcut {
+    kernel: Option<PathBuf>,
+    #[serde(default)]
+    dtb: Vec<PathBuf>,
+    initramfs: Option<PathBuf>,
+    bootargs: Option<String>,
+    #[serde(default)]
+    firmware: bool,
+}
+
+/// The Linux a run is to boot, where it boots one: what the options name,
+/// and for what they leave out, what the file does.
+#[derive(Debug, PartialEq)]
+struct Wanted {
+    kernel: PathBuf,
+    dtbs: Vec<PathBuf>,
+    initramfs: PathBuf,
+    bootargs: Option<String>,
+    firmware: bool,
+}
+
+fn wanted(args: &Args, file: Option<(Shortcut, &Path)>) -> Result<Option<Wanted>> {
+    let (file, base) = file.map(|(file, path)| (file, path.parent().unwrap_or(Path::new(".")).to_owned())).unwrap_or_default();
+    let from_file = |path: PathBuf| base.join(path);
+    let kernel = args.kernel.clone().or(file.kernel.map(from_file));
+    let dtbs = match args.dtb.is_empty() {
+        true => file.dtb.into_iter().map(from_file).collect(),
+        false => args.dtb.clone(),
+    };
+    let initramfs = args.initramfs.clone().or(file.initramfs.map(from_file));
+    let bootargs = args.bootargs.clone().or(file.bootargs);
+    let firmware = args.firmware || file.firmware;
+    let Some(kernel) = kernel else {
+        return match !dtbs.is_empty() || initramfs.is_some() || bootargs.is_some() || firmware || args.proxy {
+            true => Err(invalid("a device tree, an initramfs, boot arguments, --firmware and --proxy are for a kernel: give --kernel")),
+            false => Ok(None),
+        };
+    };
+    let Some(initramfs) = initramfs else {
+        return Err(invalid("a kernel needs an initramfs: give --initramfs"));
+    };
+    if dtbs.is_empty() {
+        return Err(invalid("a kernel needs the board's device tree: give --dtb"));
+    }
+    Ok(Some(Wanted { kernel, dtbs, initramfs, bootargs, firmware }))
+}
+
+/// The run.toml `source` stands for: the file itself, the one in the
+/// directory, or the one a build for `platform` left in the project.
+fn shortcut(source: &Path, platform: Option<&str>) -> Result<PathBuf> {
+    if source.is_file() {
+        return Ok(source.to_owned());
+    }
+    let direct = source.join(SHORTCUT);
+    if direct.is_file() {
+        return Ok(direct);
+    }
+    let built = platform.map(|platform| source.join("out").join(platform).join(SHORTCUT));
+    match built {
+        Some(built) if built.is_file() => Ok(built),
+        Some(built) => Err(Error::new(Code::NotFound, format!("no build for this board in {}", source.display())).hint(format!("orchard2 build makes {}", built.display()))),
+        None => Err(Error::new(Code::NotFound, format!("no {SHORTCUT} in {}", source.display()))),
+    }
+}
+
 pub fn run(global: &Global, args: &Args) -> Result<Output> {
     let started = Instant::now();
     let say = |message: &str| output::progress(global, &format!("[{:.3}s] {message}", started.elapsed().as_secs_f64()));
 
-    let kernel = args.kernel.as_deref().map(read).transpose()?;
-    let dtb = args.dtb.as_deref().map(read).transpose()?;
-    let mut initramfs = args.initramfs.as_deref().map(read).transpose()?.unwrap_or_default();
-    if let Some(dtb) = &dtb {
-        fdt::Tree::read(dtb)?;
-    }
-    let compressed = kernel.as_ref().is_some_and(|k| k.starts_with(&[0x1f, 0x8b]));
-    if kernel.as_ref().is_some_and(|k| !compressed && k.get(56..60) != Some(b"ARM\x64".as_slice())) {
-        return Err(invalid("kernel must be an ARM64 Image or gzip-compressed Image"));
-    }
-    if args.bootargs.as_deref().is_some_and(|s| s.contains('\0')) {
-        return Err(invalid("boot arguments contain a NUL byte"));
+    // Without a file to read, what the options ask for is known now.
+    if args.source.is_none() {
+        wanted(args, None)?;
     }
     let local_m1n1 = args.m1n1.as_deref().map(read).transpose()?;
 
@@ -98,6 +165,41 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     let board = catalog.board(&device.board)?;
     let lock = Lock::acquire(&original.location)?;
     say(&format!("{} at {}", device.name, original.location));
+
+    // The Linux to boot: the options, and the build's file where one is named.
+    let file = match &args.source {
+        Some(source) => {
+            let path = shortcut(source, board.platform.as_deref())?;
+            let text = std::fs::read_to_string(&path).context(path.display())?;
+            let file: Shortcut = toml::from_str(&text).map_err(|e| Error::new(Code::Format, e.message().to_owned())).context(path.display())?;
+            Some((file, path))
+        }
+        None => None,
+    };
+    let wanted = wanted(args, file.as_ref().map(|(file, path)| (Shortcut { kernel: file.kernel.clone(), dtb: file.dtb.clone(), initramfs: file.initramfs.clone(), bootargs: file.bootargs.clone(), firmware: file.firmware }, path.as_path())))?;
+    let kernel = wanted.as_ref().map(|w| read(&w.kernel)).transpose()?;
+    let dtbs = wanted.as_ref().map_or(Ok(Vec::new()), |w| w.dtbs.iter().map(|path| read(path)).collect::<Result<Vec<_>>>())?;
+    let mut initramfs = wanted.as_ref().map(|w| read(&w.initramfs)).transpose()?.unwrap_or_default();
+    let bootargs = wanted.as_ref().and_then(|w| w.bootargs.clone());
+    for dtb in &dtbs {
+        fdt::Tree::read(dtb)?;
+    }
+    let compressed = kernel.as_ref().is_some_and(|k| k.starts_with(&[0x1f, 0x8b]));
+    if kernel.as_ref().is_some_and(|k| !compressed && k.get(56..60) != Some(b"ARM\x64".as_slice())) {
+        return Err(invalid("kernel must be an ARM64 Image or gzip-compressed Image"));
+    }
+    if bootargs.as_deref().is_some_and(|s| s.contains('\0')) {
+        return Err(invalid("boot arguments contain a NUL byte"));
+    }
+    // Through the proxy m1n1 is given one tree: the board's, by its name.
+    let own_dtb = || -> Result<&Vec<u8>> {
+        let named = wanted.as_ref().and_then(|w| w.dtbs.iter().position(|path| path.file_stem().and_then(|s| s.to_str()) == board.dtb.as_deref()));
+        match (named, dtbs.as_slice()) {
+            (Some(at), _) => Ok(&dtbs[at]),
+            (None, [only]) => Ok(only),
+            _ => Err(invalid("none of the device trees is named as the board's; give its --dtb alone")),
+        }
+    };
 
     // The runtime's routes, as install and launch take them.
     let (events, log) = std::sync::mpsc::channel();
@@ -125,7 +227,7 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
 
     // Optionally append board firmware as a second initramfs archive.
     // The temporary directory is removed as soon as its files are packed.
-    if args.firmware {
+    if wanted.as_ref().is_some_and(|w| w.firmware) {
         say("Preparing the board's peripheral firmware");
         let recipe = board.recipe(Kind::Peripheral)?;
         let plan = peripheral::Plan::new(&recipe)?;
@@ -167,33 +269,21 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
 
     // What m1n1 is to boot goes behind it where the route's upload takes
     // that much, else through its proxy once it runs.
-    let linux = kernel.as_ref().map(|kernel| (kernel, dtb.as_ref().expect("clap requires --dtb")));
-    let size = linux.map_or(0, |(kernel, dtb)| kernel.len() + dtb.len() + initramfs.len());
+    let linux = kernel.as_ref();
+    let size = linux.map_or(0, |kernel| kernel.len() + dtbs.iter().map(Vec::len).sum::<usize>() + initramfs.len());
     let through_proxy = linux.is_some() && (args.proxy || (ibss && size > IBOOT_UPLOAD));
     let image = |m1n1: &[u8]| -> Result<Vec<u8>> {
         let m1n1 = local_m1n1.as_deref().unwrap_or(m1n1);
         match linux {
-            Some((kernel, dtb)) if !through_proxy => {
-                let dtbs = [dtb.as_slice()];
-                let linux = pack::Linux { kernel, dtbs: &dtbs, initramfs: Some(&initramfs), bootargs: args.bootargs.as_deref(), logo: None };
+            Some(kernel) if !through_proxy => {
+                let dtbs: Vec<&[u8]> = dtbs.iter().map(Vec::as_slice).collect();
+                let linux = pack::Linux { kernel, dtbs: &dtbs, initramfs: Some(&initramfs), bootargs: bootargs.as_deref(), logo: None };
                 pack::m1n1(m1n1, Some(&linux))
             }
             _ => Ok(m1n1.to_vec()),
         }
     };
 
-    // The route's own lines, as they come.
-    let shown = std::thread::spawn(move || {
-        let mut last = String::new();
-        for event in log {
-            if let orchard_flow::Event::StartLog(lines) = event {
-                if let Some(line) = lines.last().filter(|line| **line != last) {
-                    eprintln!("  {line}");
-                    last = line.clone();
-                }
-            }
-        }
-    });
     say(&format!("Starting m1n1 by the {} route", route.name));
     let deadline = Deadline::after(Duration::from_secs(args.timeout));
     let device_started = Instant::now();
@@ -207,7 +297,7 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
         orchard_runtime::chain::start_image(&executor, &device, &image(&published)?)?;
     }
     drop(executor);
-    let _ = shown.join();
+    drop(log);
 
     let reached = match (linux, through_proxy) {
         (None, _) => {
@@ -220,8 +310,8 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
             wait_for(&original, Mode::Linux, &deadline)?;
             "Linux is running in RAM"
         }
-        (Some((kernel, dtb)), true) => {
-            upload(&original, &deadline, &say, kernel, compressed, dtb, &initramfs, args.bootargs.as_deref())?;
+        (Some(kernel), true) => {
+            upload(&original, &deadline, &say, kernel, compressed, own_dtb()?, &initramfs, bootargs.as_deref())?;
             say("Waiting for Linux");
             wait_for(&original, Mode::Linux, &deadline)?;
             "Linux is running in RAM"
