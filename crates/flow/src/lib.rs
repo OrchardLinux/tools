@@ -510,6 +510,17 @@ impl Flow {
         };
         needed.iter().copied().find(|&a| *self.assets.get(a) != AssetState::Ready)
     }
+
+    /// The device is ready for the install (or it has begun, with nothing
+    /// written yet) while a file of the system is still downloading: the
+    /// file. Until it is there the install can't go on, and the account
+    /// step says so in place of "still getting ready", which is the device's.
+    pub fn downloading(&self) -> Option<Asset> {
+        match self.state {
+            State::CreateAccount { env: Some(_), .. } | State::Installing { percent: 0, streamed: false, .. } => self.waiting_for(),
+            _ => None,
+        }
+    }
 }
 
 impl Default for Flow {

@@ -38,8 +38,9 @@ and fails if it is missing or empty.
   free space, and adds a boot partition and a root.
 - With the device in recovery mode, `install` and `launch` guide it into
   DFU mode step by step.
-- `install` says that it is still downloading the system when the write
-  waits for that, instead of standing at "Writing the system 0%".
+- `install` says "Still downloading NAME" while the device is ready and
+  the system is not there yet, and starts the install when it is, instead
+  of standing at "Writing the system 0%".
 - `run` starts a RAM boot on every board by its route; `run SOURCE` takes
   the options `build` wrote; `--no-wait` ends once the start has gone out;
   in a distribution checkout it starts that distribution's installer system.
@@ -59,6 +60,9 @@ and fails if it is missing or empty.
 
 - With the device in recovery mode, the window guides it into DFU mode in
   five steps, with a countdown on the step that is running.
+- Create your account says "Still downloading NAME." and keeps Install off
+  while the device is ready and the system is not there yet, instead of
+  going on to "Writing the system" at 0%.
 - `ORCHARD_BUSY_CPU=1` turns on `--busy-cpu` for the windows; the longer USB
   port reset on Linux applies to them too.
 - The launcher's program file is `orchard-launcher`, so it no longer has the

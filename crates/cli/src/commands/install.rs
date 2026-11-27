@@ -556,17 +556,12 @@ struct Guided {
     drawn: Option<Option<(u32, usize)>>,
 }
 
-/// What the install still downloads before it can write, in words and as
-/// --json names it; None once it writes. The write's bar would stand at 0%
-/// for as long as the download takes, with nothing saying why.
+/// The download the install waits for with the device ready, in words and
+/// as --json names it. Otherwise the step would stand still (the write's
+/// bar at 0%) for as long as the download takes, with nothing saying why.
 fn download_said(flow: &Flow, name: &str) -> Option<(String, String)> {
-    let State::Installing { percent: 0, streamed: false, .. } = flow.state else { return None };
-    let asset = flow.waiting_for()?;
-    let said = match asset {
-        orchard_flow::assets::Asset::RootImage => format!("Still downloading {name}"),
-        _ => orchard_flow::for_device("Your iPad is getting ready").to_owned(),
-    };
-    Some((said, kebab(&format!("{asset:?}"))))
+    let asset = flow.downloading()?;
+    Some((format!("Still downloading {name}"), kebab(&format!("{asset:?}"))))
 }
 
 fn state_name(state: &State) -> String {
@@ -1449,9 +1444,24 @@ pub fn install(global: &Global, args: &InstallArgs) -> ExitCode {
                         out.term.live_restart(vec![s(orchard_flow::for_device("Your iPad is getting ready"), SUB)]);
                     }
                 }
-                if env.is_some() && account.valid() && !account_continued {
-                    account_continued = true;
-                    send(Event::Continue);
+                // The device is ready; the install goes on once the
+                // system's files are there too.
+                match download_said(&flow, &name) {
+                    Some((said, asset)) => {
+                        if download_shown.as_ref() != Some(&said) {
+                            out.event(json!({"event": "progress", "waiting_for": asset}));
+                            if !out.term.tty {
+                                out.sub(said.clone());
+                            }
+                            out.term.live_restart(vec![s(said.clone(), SUB)]);
+                            download_shown = Some(said);
+                        }
+                    }
+                    None if env.is_some() && account.valid() && !account_continued => {
+                        account_continued = true;
+                        send(Event::Continue);
+                    }
+                    None => {}
                 }
             }
             State::ConfirmErase { layout, .. } => {
@@ -1482,7 +1492,8 @@ pub fn install(global: &Global, args: &InstallArgs) -> ExitCode {
                     lost_said = false;
                 }
                 if let Some((said, asset)) = download_said(&flow, &name) {
-                    // Not writing yet: a download is still running.
+                    // Not writing yet (an install that continues comes
+                    // here without the account step's wait).
                     if download_shown.as_ref() != Some(&said) {
                         out.event(json!({"event": "progress", "waiting_for": asset}));
                         if !out.term.tty {
@@ -1824,22 +1835,26 @@ mod tests {
     #[test]
     fn an_install_that_still_downloads_says_so() {
         use orchard_flow::assets::{Asset, AssetState};
-        let installing = |percent, streamed| State::Installing { device: run(Sequence::HomePower, Phase::ready()).device, percent, link: Link::Up, streamed, step: None };
-        let all = [Asset::Palera1n, Asset::Chain, Asset::RootImage, Asset::PlatformLayer, Asset::Firmware, Asset::KernelPackage];
+        let device = run(Sequence::HomePower, Phase::ready()).device;
+        let installing = |percent, streamed| State::Installing { device: device.clone(), percent, link: Link::Up, streamed, step: None };
+        let layout = Layout { total_gb: 128, ipados_gb: 58, ipados_used_gb: 41, outside: vec![], outside_bytes: 0 };
+        let account = |env| State::CreateAccount { device: device.clone(), account: Default::default(), env, erase_approved: false, slow: false };
         let mut flow = Flow::new();
-        for asset in all {
+        for asset in [Asset::Palera1n, Asset::Chain, Asset::RootImage, Asset::PlatformLayer, Asset::Firmware, Asset::KernelPackage] {
             flow.assets.set(asset, AssetState::Ready);
         }
-        flow.state = installing(0, false);
-        // Everything is there: it writes.
+        let said = Some(("Still downloading Omarchy A".to_owned(), "root-image".to_owned()));
+        // Everything is there: nothing to say.
+        flow.state = account(Some(layout.clone()));
         assert_eq!(download_said(&flow, "Omarchy A"), None);
         flow.assets.set(Asset::RootImage, AssetState::Fetching);
-        assert_eq!(download_said(&flow, "Omarchy A"), Some(("Still downloading Omarchy A".into(), "root-image".into())));
-        // Another file than the system itself.
-        flow.assets.set(Asset::RootImage, AssetState::Ready);
-        flow.assets.set(Asset::KernelPackage, AssetState::Fetching);
-        assert_eq!(download_said(&flow, "Omarchy A"), Some(("Your iPad is getting ready".into(), "kernel-package".into())));
-        // Only before the first byte is written, and not in other steps.
+        assert_eq!(download_said(&flow, "Omarchy A"), said);
+        // The device not ready yet: that is said, not the download.
+        flow.state = account(None);
+        assert_eq!(download_said(&flow, "Omarchy A"), None);
+        // An install that began: only before the first byte is written.
+        flow.state = installing(0, false);
+        assert_eq!(download_said(&flow, "Omarchy A"), said);
         flow.state = installing(3, false);
         assert_eq!(download_said(&flow, "Omarchy A"), None);
         flow.state = installing(0, true);
