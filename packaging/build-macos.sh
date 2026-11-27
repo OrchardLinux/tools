@@ -11,7 +11,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 out=out/generic stage=out/generic/stage-macos
-for bin in orchard-installer orchard; do
+for bin in orchard-installer orchard-launcher; do
   for dir in target/release target/x86_64-apple-darwin/release; do
     [[ -x $dir/$bin ]] || { echo "build first: cargo build --release -p orchard-installer-app [--target x86_64-apple-darwin]" >&2; exit 1; }
   done
