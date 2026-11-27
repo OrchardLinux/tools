@@ -79,6 +79,11 @@ pub struct Args {
     /// ORCHARD_BOOT, else the first that fits the device
     #[arg(long, value_name = "ROUTE")]
     boot: Option<String>,
+    /// Linux: run the exploit on one CPU core and keep the others busy until
+    /// it is through, for computers where it only succeeds under load (also
+    /// ORCHARD_BUSY_CPU=1)
+    #[arg(long)]
+    busy_cpu: bool,
     #[command(flatten)]
     short: BootFlags,
     /// End once the start has gone out, without waiting for m1n1 or Linux
@@ -223,6 +228,9 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
         options.cache = cache.clone();
     }
     options.boot = args.boot.clone().or(args.short.route().map(str::to_owned));
+    if args.busy_cpu {
+        orchard_runtime::flags::set_busy_cpu();
+    }
     options.index = release.as_ref().map(|index| format!("file://{}", index.display()));
     let executor = options.executor(events)?;
     executor.check_boot()?;
