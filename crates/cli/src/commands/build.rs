@@ -6,8 +6,8 @@ use crate::output::{Output, Report};
 use orchard_boards::catalog::Catalog;
 use orchard_build::components::Given;
 use orchard_build::project::{self, Choice};
-use orchard_build::{distro, inputs, manage, ram, snapshot, Build};
-use orchard_cache::component::Components;
+use orchard_build::{distro, inputs, layer, manage, ram, snapshot, Build};
+use orchard_cache::component::{Components, Lock};
 use orchard_cache::store::Store;
 use orchard_cache::{Code, Context, Error, Result};
 use orchard_device::select;
@@ -36,8 +36,8 @@ pub struct BuildArgs {
     #[arg(long, conflicts_with = "kernel_tree")]
     kernel_dir: Option<PathBuf>,
     /// Build this kernel tree as it is, with its own defconfig (default:
-    /// kernel-tree in orchard.local.toml, else orchard's own kernel)
-    #[arg(long)]
+    /// kernel in orchard.local.toml, else orchard's own kernel)
+    #[arg(long = "kernel", alias = "kernel-tree", value_name = "DIR")]
     kernel_tree: Option<PathBuf>,
     /// Distribution checkouts: build the image's [orchard] packages from
     /// this checkout of OrchardLinux/packages where it differs from the
@@ -82,7 +82,7 @@ pub struct InputsArgs {
     #[arg(long, value_name = "BOARD=FILE", value_parser = pair)]
     loader: Vec<(String, PathBuf)>,
     /// Build the kernels from this kernel tree
-    #[arg(long, env = "ORCHARD_KERNEL_TREE")]
+    #[arg(long = "kernel", alias = "kernel-tree", value_name = "DIR", env = "ORCHARD_KERNEL_TREE")]
     kernel_tree: Option<PathBuf>,
 }
 
@@ -162,6 +162,12 @@ impl BuildArgs {
 
     pub fn directory(&self) -> &Path {
         &self.directory
+    }
+
+    /// `run`'s other reading of `--kernel`: a path that is no directory is
+    /// a finished kernel image to boot, and nothing is built.
+    pub fn kernel_image(&self) -> Option<&Path> {
+        self.kernel_tree.as_deref().filter(|path| !path.is_dir())
     }
 }
 
@@ -294,6 +300,49 @@ fn built(global: &Global, args: &BuildArgs) -> Result<Built> {
     })
 }
 
+/// The board a kernel is built for without a project: the one named, else
+/// the one attached in DFU or Pongo mode.
+fn kernel_board(named: Option<&str>, attached: Option<String>, usb: Option<String>) -> Result<String> {
+    if let Some(board) = named.map(str::to_owned).or(attached) {
+        return Ok(board);
+    }
+    Err(Error::new(
+        Code::InvalidInput,
+        match usb {
+            Some(why) => format!("{why}\nTo build the kernel without the device, name its board with --device BOARD."),
+            None => "which board is the kernel for? Put the device in DFU mode first, or name its board with --device BOARD".into(),
+        },
+    ))
+}
+
+/// The platform layer of a board's platform with the kernel built from
+/// `tree`, for `install --kernel`: built as `build` builds, with its cache,
+/// recipes and checks. The board is `device`, else the attached one. The
+/// layer stays in the cache; the lock that comes with it keeps it there.
+pub fn platform_layer(global: &Global, device: Option<&str>, tree: &Path) -> Result<(layer::Layer, Lock)> {
+    orchard_build::catch_interrupts();
+    let store = Store::open(global.cache.as_deref())?;
+    let cache = Components::open(store.dir())?;
+    manage::fit(&cache, manage::budget(), &say);
+    manage::check_free(&[cache.root()])?;
+    let held = cache.lock(false, &say)?;
+    let root = snapshot::resolve(global.data.as_deref(), &store, &say)?;
+    let build = Build::new(&root, &store, &say)?;
+    let attached = match device {
+        Some(_) => None,
+        None => attached_board(global, &build.root),
+    };
+    let board = kernel_board(device, attached, orchard_usb::unavailable())?;
+    let layer = layer::build(&build, &board, tree)?;
+    say(&format!(
+        "Built the platform layer of {} with kernel {}: {}",
+        layer.platform,
+        layer.kernel_release,
+        layer.file.display()
+    ));
+    Ok((layer, held))
+}
+
 /// Where an inputs document was written.
 #[derive(Serialize)]
 struct Resolved {
@@ -373,4 +422,39 @@ pub fn component_keys(global: &Global, output: &Path, platforms: &[String]) -> R
         keys,
     }
     .into())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::args::{Cli, Command};
+    use clap::Parser;
+    use std::path::Path;
+
+    #[test]
+    fn the_kernel_tree_is_named_by_kernel_and_by_its_older_name() {
+        for flag in ["--kernel", "--kernel-tree"] {
+            let Ok(Command::Build(args)) = Cli::try_parse_from(["orchard", "build", "payload", flag, "linux"]).map(|cli| cli.command) else {
+                panic!("build {flag} does not parse");
+            };
+            assert_eq!(args.kernel_tree.as_deref(), Some(Path::new("linux")), "{flag}");
+            let Ok(Command::Inputs(args)) = Cli::try_parse_from(["orchard", "inputs", "--output", "inputs.json", flag, "linux"]).map(|cli| cli.command) else {
+                panic!("inputs {flag} does not parse");
+            };
+            assert_eq!(args.kernel_tree.as_deref(), Some(Path::new("linux")), "{flag}");
+        }
+        assert!(Cli::try_parse_from(["orchard", "build", "--kernel", "linux", "--kernel-dir", "staged"]).is_err());
+        assert!(Cli::try_parse_from(["orchard", "build", "--kernel", "a", "--kernel-tree", "b"]).is_err());
+    }
+
+    #[test]
+    fn a_kernel_without_a_project_is_for_the_named_or_the_attached_board() {
+        use super::kernel_board;
+        assert_eq!(kernel_board(Some("n841"), Some("j71b".into()), None).unwrap(), "n841");
+        assert_eq!(kernel_board(None, Some("j71b".into()), None).unwrap(), "j71b");
+        let error = kernel_board(None, None, None).unwrap_err();
+        assert_eq!(error.code, orchard_cache::Code::InvalidInput);
+        assert!(error.message.contains("DFU mode first") && error.message.contains("--device BOARD"), "{error}");
+        let error = kernel_board(None, None, Some("no USB here".into())).unwrap_err();
+        assert!(error.message.starts_with("no USB here\n") && error.message.contains("--device BOARD"), "{error}");
+    }
 }

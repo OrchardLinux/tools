@@ -37,9 +37,12 @@ root, holds a developer's own choices and is never committed:
 ```toml
 device = "j71b"            # the board to build for
 platform = "apple-16k"     # or the platform
-kernel-tree = "../linux"   # a kernel tree to build instead of orchard's
+kernel = "../linux"        # a kernel tree to build instead of orchard's
 packages = "../packages"   # distributions: a checkout of OrchardLinux/packages; false: none
 ```
+
+`--kernel-tree` and the `kernel-tree` key, the older names of `--kernel` and
+`kernel`, are still accepted.
 
 ## A RAM payload
 
@@ -96,7 +99,7 @@ revision of orchard's data, and under `produced` how each part was got.
 With 32-bit platforms the document is that root's (`"architecture": "arm"`):
 ARMv7 tools and per platform each board's Cascadia loader. One document is
 one architecture. `--kernel-dir P=DIR`, `--m1n1`, `--pongo`, `--tools DIR`,
-`--loader BOARD=FILE` give a part finished; `--kernel-tree DIR` builds the
+`--loader BOARD=FILE` give a part finished; `--kernel DIR` builds the
 kernels from a tree.
 
 `--packages DIR` (or `packages` in `orchard.local.toml`) is a checkout of
@@ -155,9 +158,11 @@ against) and a board's layer (its external modules).
   files that differ are written, so only those compile again. With local
   edits in the tree the move is refused, never discarded. Two checkouts
   whose locks name different commits share the tree and move it back and
-  forth; `--kernel-tree` is for work that should keep its own.
-- **`--kernel-tree DIR`** builds a developer's tree as it is, inside itself
-  (`DIR/.orchard-out/`), cached apart.
+  forth; `--kernel DIR` is for work that should keep its own.
+- **`--kernel DIR`** builds a developer's tree as it is, inside itself
+  (`DIR/.orchard-out/`), cached apart. `orchard install NAME --kernel DIR`
+  installs a published release with such a kernel
+  ([install.md](install.md#a-kernel-of-your-own)).
 
 ## Space
 

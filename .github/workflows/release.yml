@@ -96,10 +96,20 @@ jobs:
 
       # The command line, as a person first meets it: installed by install.sh,
       # then used without a device.
+      # One file for Apple Silicon and Intel, signed ad hoc as the linker
+      # signs each half: what install.sh and `orchard update` download.
       - name: Install and try the command line
+        env:
+          ORCHARD_BUILD: ${{ github.sha }}
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
         run: |
           cargo build --release -p orchard-cli
-          packaging/smoke-cli.sh target/release/orchard
+          cargo build --release -p orchard-cli --target x86_64-apple-darwin
+          mkdir -p out/generic
+          lipo -create -output out/generic/orchard-macos target/release/orchard target/x86_64-apple-darwin/release/orchard
+          codesign --force --sign - out/generic/orchard-macos
+          codesign --verify --strict out/generic/orchard-macos
+          packaging/smoke-cli.sh out/generic/orchard-macos
 
       - name: Package
         run: |
@@ -113,6 +123,7 @@ jobs:
           name: macos
           path: |
             out/generic/*-macOS.zip
+            out/generic/orchard-macos
             out/generic/VERSION
           if-no-files-found: error
 
@@ -173,18 +184,24 @@ jobs:
       # The command line, as a person first meets it: installed by install.sh,
       # then used without a device.
       - name: Install and try the command line
+        env:
+          ORCHARD_BUILD: ${{ github.sha }}
         run: |
           cargo build --release -p orchard-cli
           packaging/smoke-cli.sh target/release/orchard
 
+      # After the smoke test: packaging starts out/generic afresh.
       - name: Package
-        run: packaging/package-linux.sh ${{ matrix.arch }}
+        run: |
+          packaging/package-linux.sh ${{ matrix.arch }}
+          cp target/release/orchard out/generic/orchard-linux-${{ matrix.arch }}
 
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: linux-${{ matrix.arch }}
           path: |
             out/generic/orchard-installer-linux-${{ matrix.arch }}
+            out/generic/orchard-linux-${{ matrix.arch }}
             out/generic/Orchard-linux-${{ matrix.arch }}.tar.gz
           if-no-files-found: error
 
@@ -224,8 +241,11 @@ jobs:
             echo "The tag $GITHUB_REF_NAME isn't the workspace version $version" >&2
             exit 1
           fi
+          # The commit: `orchard update` compares it with its own.
+          printf '%s\n' "$GITHUB_SHA" > BUILD
           assets=(Orchard-Installer-macOS.zip Orchard-macOS.zip
-                  orchard-installer-linux-{x86_64,aarch64} Orchard-linux-{x86_64,aarch64}.tar.gz VERSION)
+                  orchard-installer-linux-{x86_64,aarch64} Orchard-linux-{x86_64,aarch64}.tar.gz
+                  orchard-macos orchard-linux-{x86_64,aarch64} VERSION BUILD)
           for asset in "${assets[@]}"; do
             test -s "$asset"
           done
@@ -240,7 +260,8 @@ jobs:
           fi
           {
             printf '%s\n\n' "$changes"
-            printf 'Orchard tools %s: the command line, the generic installer and Orchard, the launcher. ' "$version"
+            printf 'Orchard tools %s: orchard, the command line, the generic installer and Orchard, the launcher. ' "$version"
+            printf '%s\n\n' 'Install or update the command line: `curl -fsSL https://raw.githubusercontent.com/OrchardLinux/tools/main/install.sh | sh`.'
             printf '%s\n\n' 'Distributions stamp the installer (packaging/stamp.py) and offer it in their own releases.'
             printf '%s\n' '| Asset | Bytes | SHA-256 |' '| --- | ---: | --- |'
             while read -r hash asset; do
@@ -279,7 +300,8 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           assets=(Orchard-Installer-macOS.zip Orchard-macOS.zip
-                  orchard-installer-linux-{x86_64,aarch64} Orchard-linux-{x86_64,aarch64}.tar.gz VERSION SHA256SUMS)
+                  orchard-installer-linux-{x86_64,aarch64} Orchard-linux-{x86_64,aarch64}.tar.gz
+                  orchard-macos orchard-linux-{x86_64,aarch64} VERSION BUILD SHA256SUMS)
           if [[ -f orchard-tools.sigstore.jsonl ]]; then
             assets+=(orchard-tools.sigstore.jsonl)
           fi

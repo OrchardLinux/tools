@@ -72,8 +72,24 @@ fn now_in(session: &mut Session<Host>, mode: Mode) -> Result<bool> {
 /// The install payload for this device: m1n1, the layer's kernel, initrd and
 /// device tree, and the install tools with the device's ECID.
 pub fn payload(executor: &Executor, device: &Device) -> Result<Vec<u8>> {
-    let m1n1 = std::fs::read(executor.download(&executor.orchard_tools()?.m1n1)?)?;
+    let m1n1 = match given_m1n1(executor, false)? {
+        Some(m1n1) => m1n1,
+        None => std::fs::read(executor.download(&executor.orchard_tools()?.m1n1)?)?,
+    };
     payload_behind(executor, device, &m1n1)
+}
+
+/// The m1n1 given for this run (`--m1n1 FILE`), if one was, checked to be the
+/// build the route takes: a patched iBoot starts the Mach-O build, Pongo the
+/// plain one.
+fn given_m1n1(executor: &Executor, ibss: bool) -> Result<Option<Vec<u8>>> {
+    let Some(m1n1) = executor.given_m1n1()? else { return Ok(None) };
+    let macho = orchard_formats::m1n1::is_macho(&m1n1) || orchard_formats::m1n1::is_macho_arm(&m1n1);
+    match (ibss, macho) {
+        (true, false) => Err(Error::new(Code::InvalidInput, "the ibss route takes m1n1's Mach-O build (m1n1-idevice.macho)")),
+        (false, true) => Err(Error::new(Code::InvalidInput, "this route takes m1n1's plain build (m1n1.bin)")),
+        _ => Ok(Some(m1n1)),
+    }
 }
 
 /// The install payload behind `m1n1`: its plain build for Pongo, its Mach-O
@@ -181,6 +197,13 @@ fn run_tool(executor: &Executor, session: &mut Session<Host>, from: Mode, name: 
         c.args(["-q", "-e", "-c", &line, "/dev/null"]);
         c
     };
+    // --busy-cpu: the exploit tool on a core of its own, the others busy
+    // until it is through.
+    let busy = (from == Mode::Dfu).then(crate::busy::plan).flatten().map(|(core, others)| {
+        eprintln!("chain: busy CPU: {name} on core {core}, {} cores kept busy until the exploit is through", others.len());
+        crate::busy::pin(&mut command, core);
+        crate::busy::Busy::start(log_path.clone(), &others)
+    });
     let child = command
         // palera1n 3 runs as a command only when told to (on macOS it is an app).
         .env("RA1N_CLI", "1")
@@ -189,6 +212,9 @@ fn run_tool(executor: &Executor, session: &mut Session<Host>, from: Mode, name: 
         .stderr(log)
         .spawn();
     let finish = |replug: Option<crate::replug::Watcher>| {
+        if let Some(busy) = busy {
+            busy.finish();
+        }
         if let Some(resets) = replug.map(crate::replug::Watcher::finish).filter(|n| *n > 0) {
             eprintln!("chain: USB port reset {resets}x to bring the device back after checkm8");
         }
@@ -479,8 +505,9 @@ pub fn boot_ipados_with(executor: &Executor, session: &mut Session<Host>, overla
 /// the host (orchard's `orchard launch`).
 pub fn start_m1n1(executor: &Executor, device: &Device) -> Result<orchard_usb::Device> {
     let mut session = session(device)?;
-    let given = executor.given_m1n1()?;
-    if executor.boot_route(&device.board)?.name == "ibss" {
+    let ibss = executor.boot_route(&device.board)?.name == "ibss";
+    let given = given_m1n1(executor, ibss)?;
+    if ibss {
         crate::ibss::start(executor, &mut session, &device.board, None, |m1n1| Ok(given.unwrap_or_else(|| m1n1.to_vec())))?;
     } else {
         let m1n1 = match given {
@@ -508,7 +535,8 @@ pub fn boot_install_env(executor: &Executor, device: &Device) -> Result<()> {
 pub fn boot_install_env_in(executor: &Executor, session: &mut Session<Host>, device: &Device) -> Result<()> {
     let route = executor.boot_route(&device.board)?;
     if route.name == "ibss" {
-        return crate::ibss::start(executor, session, &device.board, None, |m1n1| payload_behind(executor, device, m1n1));
+        let given = given_m1n1(executor, true)?;
+        return crate::ibss::start(executor, session, &device.board, None, |m1n1| payload_behind(executor, device, given.as_deref().unwrap_or(m1n1)));
     }
     if route.ends.as_deref() == Some("cascadia") {
         let bundle = install_bundle(executor, session, device)?;

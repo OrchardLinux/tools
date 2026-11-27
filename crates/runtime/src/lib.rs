@@ -6,6 +6,7 @@
 pub mod access_checkra1n;
 pub mod access_dopamine;
 pub mod autogo;
+pub mod busy;
 pub mod chain;
 pub mod companion;
 pub mod demo;

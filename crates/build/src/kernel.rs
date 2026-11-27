@@ -4,7 +4,7 @@
 //! lock's commit of OrchardLinux/linux, kept as an editable tree in
 //! the cache (`kernel-work/PLATFORM-COMMIT`) together with the compiler's
 //! output, so another commit compiles only what changed. A developer's own
-//! tree (`--kernel-tree`) is built as it is, inside itself.
+//! tree (`--kernel`) is built as it is, inside itself.
 //!
 //! The base layer is the compiled kernel, its in-tree modules and what
 //! external modules build against; the board layer adds the board's
@@ -140,7 +140,7 @@ fn edited(source: &Path) -> Error {
         "the kernel commit changed and the kernel tree has local edits or commits; refusing to discard them",
     )
     .hint(format!(
-        "save the edits in {} elsewhere (git diff) and undo them, or build a kernel tree of your own with --kernel-tree",
+        "save the edits in {} elsewhere (git diff) and undo them, or build a kernel tree of your own with --kernel DIR",
         source.display()
     ))
 }

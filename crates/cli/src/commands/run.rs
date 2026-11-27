@@ -35,6 +35,7 @@ const IBOOT_UPLOAD: usize = 40 << 20;
 const SHORTCUT: &str = "run.toml";
 
 #[derive(clap::Args)]
+#[command(mut_arg("kernel_tree", |arg| arg.value_name("PATH").help(KERNEL).long_help(KERNEL)))]
 pub struct Args {
     /// The project to build and boot (the build's own options apply), or
     /// a run.toml or a directory with one: the options below, written down
@@ -44,12 +45,8 @@ pub struct Args {
     #[arg(long, conflicts_with = "bare")]
     no_build: bool,
     /// Start m1n1 alone and leave it waiting on USB
-    #[arg(long, conflicts_with_all = ["kernel", "dtb", "initramfs", "bootargs", "firmware", "proxy"])]
+    #[arg(long, conflicts_with_all = ["kernel_tree", "dtb", "initramfs", "bootargs", "firmware", "proxy"])]
     bare: bool,
-    /// Linux kernel image, instead of a project's: with --dtb and
-    /// --initramfs, nothing is built or read from a file
-    #[arg(long)]
-    kernel: Option<PathBuf>,
     /// A Linux device tree; repeat for a kernel of several boards (m1n1
     /// takes the board's)
     #[arg(long)]
@@ -79,6 +76,11 @@ pub struct Args {
     /// ORCHARD_BOOT, else the first that fits the device
     #[arg(long, value_name = "ROUTE")]
     boot: Option<String>,
+    /// Linux: run the exploit on one CPU core and keep the others busy until
+    /// it is through, for computers where it only succeeds under load (also
+    /// ORCHARD_BUSY_CPU=1)
+    #[arg(long)]
+    busy_cpu: bool,
     #[command(flatten)]
     short: BootFlags,
     /// End once the start has gone out, without waiting for m1n1 or Linux
@@ -92,6 +94,10 @@ pub struct Args {
     #[arg(long, default_value = "300", value_parser = clap::value_parser!(u64).range(1..))]
     timeout: u64,
 }
+
+/// What `--kernel` is to `run`: the build's option, and a kernel to boot.
+const KERNEL: &str = "A directory: the kernel tree to build the project's kernel from, as it is. A file: a Linux kernel \
+                      image to boot instead of a project, with --dtb and --initramfs; nothing is built or read from a file";
 
 /// `run.toml`: `run`'s own options for a Linux, written down. Paths count
 /// from the file's directory.
@@ -124,7 +130,7 @@ struct Wanted {
 fn wanted(args: &Args, file: Option<(Shortcut, &Path)>) -> Result<Option<Wanted>> {
     let (file, base) = file.map(|(file, path)| (file, path.parent().unwrap_or(Path::new(".")).to_owned())).unwrap_or_default();
     let from_file = |path: PathBuf| base.join(path);
-    let kernel = args.kernel.clone().or(file.kernel.map(from_file));
+    let kernel = args.build.kernel_image().map(Path::to_owned).or(file.kernel.map(from_file));
     let dtbs = match args.dtb.is_empty() {
         true => file.dtb.into_iter().map(from_file).collect(),
         false => args.dtb.clone(),
@@ -166,6 +172,20 @@ fn shortcut(source: &Path, platform: Option<&str>) -> Result<PathBuf> {
     }
 }
 
+/// Refuses a directory that does not exist, and one that is no project when
+/// the options name nothing to boot, before a device or a build is asked
+/// for anything.
+fn nothing_to_run(directory: &Path, explicit: bool) -> Result<()> {
+    std::fs::metadata(directory).context(directory.display())?;
+    let project = directory.is_file()
+        || ["init", SHORTCUT, "orchard.toml", "out"].iter().any(|name| directory.join(name).exists());
+    if explicit || project {
+        return Ok(());
+    }
+    Err(Error::new(Code::NotFound, format!("nothing to run in {}: it has no init, {SHORTCUT} or orchard.toml", directory.display()))
+        .hint("orchard run --bare starts the loader alone, orchard install NAME installs a distribution, and a project to run is a directory with an init (docs/run.md)"))
+}
+
 pub fn run(global: &Global, args: &Args) -> Result<Output> {
     let started = Instant::now();
     let say = |message: &str| output::progress(global, &format!("[{:.3}s] {message}", started.elapsed().as_secs_f64()));
@@ -174,7 +194,8 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     // the project, built first. The board's platform names the file of a
     // build that is taken as it is.
     let directory = args.build.directory();
-    let explicit = args.bare || args.kernel.is_some();
+    let explicit = args.bare || args.build.kernel_image().is_some();
+    nothing_to_run(directory, explicit)?;
     if explicit {
         wanted(args, None)?;
     }
@@ -223,6 +244,9 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
         options.cache = cache.clone();
     }
     options.boot = args.boot.clone().or(args.short.route().map(str::to_owned));
+    if args.busy_cpu {
+        orchard_runtime::flags::set_busy_cpu();
+    }
     options.index = release.as_ref().map(|index| format!("file://{}", index.display()));
     let executor = options.executor(events)?;
     executor.check_boot()?;

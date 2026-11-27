@@ -59,6 +59,9 @@ pub struct Executor {
     /// An m1n1 for the launcher to start instead of the published one
     /// (testing a build): the form the boot route takes.
     m1n1: Option<PathBuf>,
+    /// A platform whose layer is a file on this computer, taken in place of
+    /// the release's own (`install --kernel`).
+    platform: Option<release::Platform>,
     /// One download per file at a time: whoever comes second waits and takes
     /// the finished file (two writers on one partial file broke each other).
     downloads: Arc<Mutex<std::collections::HashMap<String, Arc<Mutex<()>>>>>,
@@ -75,7 +78,7 @@ impl Executor {
     }
 
     pub fn new(data: Option<&Path>, cache: &Path, events: Sender<Event>) -> Executor {
-        Executor { explicit_data: data.map(Path::to_owned), data: Arc::default(), cache: cache.to_owned(), events, release: Arc::default(), release_arm: Arc::default(), kernel: Arc::default(), index: String::new(), companion: None, overlay: Arc::default(), verified: Arc::default(), pongo: None, boot: crate::flags::boot(), m1n1: None, downloads: Arc::default(), tools: Arc::default(), serials: Arc::default() }
+        Executor { explicit_data: data.map(Path::to_owned), data: Arc::default(), cache: cache.to_owned(), events, release: Arc::default(), release_arm: Arc::default(), kernel: Arc::default(), index: String::new(), companion: None, overlay: Arc::default(), verified: Arc::default(), pongo: None, boot: crate::flags::boot(), m1n1: None, platform: None, downloads: Arc::default(), tools: Arc::default(), serials: Arc::default() }
     }
 
     /// A device's serial number was seen (iBoot says it in recovery mode).
@@ -274,6 +277,14 @@ impl Executor {
     /// Has the launcher start this m1n1 instead of the published one.
     pub fn with_m1n1(mut self, path: &Path) -> Executor {
         self.m1n1 = Some(path.to_owned());
+        self
+    }
+
+    /// Installs this platform's layer from a file on this computer instead
+    /// of the release's: on every board `platform` names, also one the
+    /// release does not list. The file is checked like a download.
+    pub fn with_platform_layer(mut self, platform: release::Platform) -> Executor {
+        self.platform = Some(platform);
         self
     }
 
@@ -495,7 +506,7 @@ impl Executor {
         let text = String::from_utf8(index).map_err(|_| Error::new(Code::Format, "index is not UTF-8"))?;
         // A release's manifest given itself is read as it is; an index pins
         // the one to read.
-        let rel = if release::is_release(&text) {
+        let mut rel = if release::is_release(&text) {
             release::parse_release(&text, release::base_of(&self.index))?
         } else {
             let manifest = match arm {
@@ -506,6 +517,9 @@ impl Executor {
             let text = String::from_utf8(bytes).map_err(|_| Error::new(Code::Format, "release is not UTF-8"))?;
             release::parse_release(&text, release::base_of(&manifest.url))?
         };
+        if let Some(platform) = &self.platform {
+            rel.set_platform(platform.clone());
+        }
         *slot = Some(rel.clone());
         Ok(rel)
     }
@@ -639,6 +653,49 @@ mod tests {
         let mut z = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
         z.write_all(&write(entries).unwrap()).unwrap();
         z.finish().unwrap()
+    }
+
+    #[test]
+    fn a_local_platform_layer_is_installed_and_checked_like_a_download() {
+        let dir = std::env::temp_dir().join(format!("local-layer-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let entry = |name: &str| format!("url = \"https://example.invalid/{name}\"\nbytes = 10\nsha256 = \"{}\"\n", "0".repeat(64));
+        let manifest = format!(
+            "schema = 2\nkind = \"orchard.install\"\nname = \"Distro\"\nversion = \"1\"\n[root]\n{}[root.map]\n{}[install_tools]\n{}\
+             [platforms.wide]\nboards = [\"aa1\"]\n[platforms.wide.layer]\n{}",
+            entry("root"),
+            entry("map"),
+            entry("tools"),
+            entry("platform-wide.tar.gz")
+        );
+        std::fs::write(dir.join("release.toml"), manifest).unwrap();
+        let layer = dir.join("platform-wide.tar.gz");
+        std::fs::write(&layer, b"a layer built here").unwrap();
+        let receipt = |sha256: String| Receipt { url: format!("file://{}", layer.display()), bytes: 18, sha256, expanded_bytes: Some(40) };
+        let executor = |sha256: String| {
+            let (events, _) = std::sync::mpsc::channel();
+            let platform = release::Platform { name: "wide".into(), boards: vec!["aa1".into(), "bb2".into()], layer: receipt(sha256) };
+            Executor::new(Some(&dir), &dir.join("cache"), events).with_local_release(&dir.join("release.toml")).unwrap().with_platform_layer(platform)
+        };
+        // The release's root, with this computer's layer for its platform:
+        // also on a board the release does not list.
+        let good = hex(&Sha256::digest(b"a layer built here"));
+        let rel = executor(good.clone()).release().unwrap();
+        assert!(rel.root.url.starts_with("https://"));
+        let platform = rel.platform_for("bb2").unwrap();
+        assert_eq!(platform.layer, receipt(good.clone()));
+        let me = executor(good);
+        assert_eq!(me.download(&platform.layer).unwrap(), layer);
+        // Read again without hashing again, and refused once it has changed.
+        assert_eq!(me.download(&platform.layer).unwrap(), layer);
+        std::fs::write(&layer, b"a layer built later").unwrap();
+        assert_eq!(me.download(&platform.layer).unwrap_err().code, Code::Format);
+        let other = executor("1".repeat(64));
+        let wrong = other.release().unwrap().platform_for("aa1").unwrap().layer.clone();
+        std::fs::write(&layer, b"a layer built here").unwrap();
+        assert_eq!(other.download(&wrong).unwrap_err().code, Code::Format);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

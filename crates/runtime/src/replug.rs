@@ -7,7 +7,10 @@
 //! mode. On some Linux hosts it never does until the cable is replugged at
 //! the device within palera1n's 20-second window; disabling and re-enabling
 //! the hub port forces the re-detection (on a J71b the device came back 4 s
-//! after a reset where three bare attempts never did). The port's `disable`
+//! after a reset where three bare attempts never did). A device that comes
+//! back by itself can take its time (an iPhone 8 Plus: 6.7 s after
+//! "Checkmate!", every time), and a reset before that throws it off, so the
+//! first reset waits 10 s. The port's `disable`
 //! control is root-only; the udev rule of the USB access setup makes it
 //! writable for the USB group while a device is in DFU. Without it, and on
 //! macOS, nothing happens.
@@ -48,8 +51,8 @@ pub fn timing() -> Timing {
 }
 
 pub const TIMING: Timing = Timing {
-    settle: Duration::from_millis(2500),
-    settle_3: Duration::from_secs(5),
+    settle: Duration::from_secs(10),
+    settle_3: Duration::from_secs(10),
     off: Duration::from_millis(500),
     wait: Duration::from_secs(5),
     attempts: 3,

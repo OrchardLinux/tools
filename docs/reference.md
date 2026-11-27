@@ -101,7 +101,8 @@ to the run's log.
 | --- | --- |
 | `ORCHARD_BOOT=ROUTE` | the boot route, as `--boot ROUTE` ([install.md](install.md#how-the-device-is-entered)); `--boot` counts over it |
 | `ORCHARD_PALERA1N_BETA=0` | palera1n v2.4 instead of the 3.0 beta |
-| `ORCHARD_PORT_RESET_SECONDS=N` | seconds after the exploit before the USB port is reset (Linux); 0: no reset |
+| `ORCHARD_PORT_RESET_SECONDS=N` | seconds after the exploit before the USB port is reset (Linux, 10 by default); 0: no reset |
+| `ORCHARD_BUSY_CPU=1` | as `--busy-cpu` ([install.md](install.md#when-the-exploit-never-gets-in)) |
 | `ORCHARD_KEEP_AWAKE=1` | keeps the CPU out of deep sleep while the exploit runs (Linux) |
 
 ### build and inputs
@@ -111,7 +112,7 @@ to the run's log.
 | `ORCHARD_PYTHON` | the Python that runs the recipes (3.11 or newer) |
 | `ORCHARD_PUBLISHED=off` | builds every component here instead of taking the nightly's |
 | `ORCHARD_KERNEL=local` | builds the kernels here |
-| `ORCHARD_KERNEL_TREE` | `--kernel-tree` |
+| `ORCHARD_KERNEL_TREE` | `--kernel` |
 | `ORCHARD_CACHE_BUDGET_GB` | the build cache's limit (20; 0: none) |
 | `ORCHARD_MIN_FREE_GB` | free space a build needs to start (10; 0: no check) |
 | `ORCHARD_BUILD_NATIVE=1` | the recipes build on this host instead of in Podman (CI builders); part of the kernel's key with `ORCHARD_BUILD_ENV_ID` |
