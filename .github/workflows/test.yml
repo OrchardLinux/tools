@@ -74,9 +74,9 @@ jobs:
         run: cargo test --workspace
 
       # A payload from nothing, as a new user's first build: the tool that
-      # was just built, an empty cache and orchard as its newest nightly
-      # published it, so the kernel, m1n1 and tools are the nightly's and
-      # nothing is compiled. No device.
+      # was just built, an empty cache and no data named, so orchard's newest
+      # nightly is fetched and the kernel, m1n1 and tools are that nightly's.
+      # Nothing is compiled. No device.
       - name: Build a payload with the nightly's components
         if: matrix.name == 'Linux aarch64'
         env:
@@ -84,12 +84,9 @@ jobs:
           ORCHARD_PYTHON: python3.11
         run: |
           sudo apt-get install -y python3.11
-          commit=$(curl -fsSL --retry 3 https://github.com/OrchardLinux/orchard/releases/download/nightly/latest.json |
-            python3 -c 'import json, sys; print(json.load(sys.stdin)["commit"])')
-          git -C orchard-data fetch --quiet --depth 1 origin "$commit"
-          git -C orchard-data checkout --quiet "$commit"
           cargo build -p orchard-cli
-          target/debug/orchard --data orchard-data --cache "$RUNNER_TEMP/cache" \
-            build --platform apple-16k orchard-data/examples/minimal-boot 2>&1 | tee build.log
-          test -s orchard-data/examples/minimal-boot/out/apple-16k/linux.bin
+          cp -R orchard-data/examples/minimal-boot "$RUNNER_TEMP/payload"
+          target/debug/orchard --cache "$RUNNER_TEMP/cache" \
+            build --platform apple-16k "$RUNNER_TEMP/payload" 2>&1 | tee build.log
+          test -s "$RUNNER_TEMP/payload/out/apple-16k/linux.bin"
           grep -q 'apple-16k kernel: its source key matches' build.log
