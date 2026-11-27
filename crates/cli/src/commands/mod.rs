@@ -15,6 +15,7 @@ pub mod resize;
 pub mod run;
 pub mod session;
 pub mod term;
+pub mod update;
 
 use crate::args::{Global, PayloadArgs};
 use crate::output::Report;

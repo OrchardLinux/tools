@@ -1,8 +1,25 @@
-# This computer: doctor and setup
+# This computer: install, update, doctor and setup
 
 orchard2 fetches its own tools (palera1n, checkra1n, m1n1, Pongo) when a run
 needs them and talks to USB by itself, without libusb. What it takes from
 the computer is little, and `doctor` lists it with what each is for.
+
+## Installing and updating orchard2
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/OrchardLinux/tools/main/install.sh | sh
+orchard2 update
+```
+
+The script puts `orchard2` into `~/.local/bin` (`ORCHARD_BIN` names another
+directory) and needs no root. It takes the file for this computer from the
+newest build of the tools' main branch that passed its tests, checks it
+against the build's checksums, and replaces an older one in one step.
+macOS (Apple Silicon and Intel) and Linux (x86_64 and aarch64).
+
+`update` does the same from the program itself and says when it is the
+newest already. `orchard2 --version` names the commit a build is from. A
+program built in a source checkout is not replaced: build it again.
 
 ## doctor
 

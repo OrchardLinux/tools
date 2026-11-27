@@ -1,5 +1,27 @@
 # Orchard tools
 
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/OrchardLinux/tools/main/install.sh | sh
+```
+
+puts `orchard2`, the command line, into `~/.local/bin`: the newest build of
+this repository's main branch that passed its tests, checked against its
+checksums. `orchard2 update` replaces it with a newer one later. Then, with
+an iPad or iPhone in DFU mode:
+
+```sh
+orchard2 install omarchy-a     # install a distribution
+orchard2 launch                # start what is installed
+orchard2 doctor                # what this computer has and lacks
+```
+
+[`docs/`](docs/README.md) has every command. The graphical installer comes
+with each distribution's release.
+
+## What is here
+
 The programs that run on your computer to put Linux on an iPad or iPhone and
 start it, built in Rust on shared libraries:
 

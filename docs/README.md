@@ -17,7 +17,7 @@ installer and the launcher are built on the same libraries; `install` and
 | boot a kernel in RAM, or start m1n1 alone | [run.md](run.md) |
 | talk to DFU mode, iBoot, Pongo or m1n1 directly | [low-level.md](low-level.md) |
 | look at board data and firmware | [data-and-firmware.md](data-and-firmware.md) |
-| see what this computer lacks, and get it | [host.md](host.md) |
+| install or update `orchard2`, see what this computer lacks, and get it | [host.md](host.md) |
 | script it: options, environment, JSON, exit statuses | [reference.md](reference.md) |
 
 ## What every command shares

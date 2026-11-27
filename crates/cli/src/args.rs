@@ -2,10 +2,18 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use orchard_device::select::Selector;
 use orchard_usb::Mode;
 
+/// The version, and in a published build the commit it was built from.
+fn version() -> &'static str {
+    match option_env!("ORCHARD_BUILD") {
+        Some(commit) => format!("{} ({})", env!("CARGO_PKG_VERSION"), commit.get(..12).unwrap_or(commit)).leak(),
+        None => env!("CARGO_PKG_VERSION"),
+    }
+}
+
 #[derive(Parser)]
 #[command(
     name = "orchard2",
-    version,
+    version = version(),
     about = "Boot Linux on iPhones and iPads over USB"
 )]
 pub struct Cli {
@@ -194,6 +202,8 @@ pub enum Command {
         #[command(subcommand)]
         command: Option<DataCommand>,
     },
+    /// Replace this program with its newest build
+    Update,
     /// Show what this computer has of what orchard2 uses, and what each is
     /// needed for; changes nothing
     Doctor,
