@@ -10,6 +10,7 @@ use super::term::{bar, gradient, s, Span, Term, BLUE, FG, GREEN, MUTED, RED, SUB
 use orchard_flow::recovery::{self, Phase, Run};
 use orchard_flow::{Again, App, Event, Flow, Layout, Link, Seen, Sequence, State, UsbMode, MIN_OMARCHY_GB};
 use orchard_runtime::driver::{self, Observer, Options};
+use orchard_runtime::release::{Platform, Receipt};
 use serde_json::{json, Value};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
@@ -84,6 +85,14 @@ pub struct InstallArgs {
     /// palera1n and checkra1n, the Mach-O build for ibss
     #[arg(long, value_name = "FILE")]
     pub m1n1: Option<PathBuf>,
+    /// Install the release with the kernel built from this kernel tree, as
+    /// build --kernel builds it, instead of the release's own
+    #[arg(long, value_name = "DIR", conflicts_with = "demo")]
+    pub kernel: Option<PathBuf>,
+    /// With --kernel: the board the kernel is built for (default: the
+    /// device attached in DFU mode)
+    #[arg(long, value_name = "BOARD", requires = "kernel")]
+    pub device: Option<String>,
 }
 
 /// Short forms of `--boot ROUTE` where the command takes boot routes only.
@@ -573,7 +582,7 @@ impl Observer for Relay {
     fn quit(&mut self) {}
 }
 
-fn start(app: App, global: &Global, index: Option<String>, boot: Option<&str>, busy_cpu: bool, m1n1: Option<&Path>, demo: bool) -> Result<(driver::Handle, Receiver<Flow>), String> {
+fn start(app: App, global: &Global, index: Option<String>, boot: Option<&str>, busy_cpu: bool, m1n1: Option<&Path>, platform: Option<Platform>, demo: bool) -> Result<(driver::Handle, Receiver<Flow>), String> {
     let (tx, rx) = mpsc::channel();
     if busy_cpu {
         orchard_runtime::flags::set_busy_cpu();
@@ -582,6 +591,7 @@ fn start(app: App, global: &Global, index: Option<String>, boot: Option<&str>, b
     options.index = index;
     options.boot = boot.map(str::to_owned);
     options.m1n1 = m1n1.map(Path::to_owned);
+    options.platform = platform;
     // The board data and cache the person names, as every other command.
     options.data = global.data.clone();
     if let Some(cache) = &global.cache {
@@ -1093,38 +1103,87 @@ impl Shared {
     }
 }
 
-pub fn install(global: &Global, args: &InstallArgs) -> ExitCode {
-    let mut out = Out { term: Term::new(args.log.as_deref()), json: global.json };
+/// What the options answer before anything is started: the release index,
+/// and the password and PIN where files give them. Otherwise what is wrong
+/// with them: the words for the person, and the error's message.
+fn answers(args: &InstallArgs) -> Result<(String, Option<String>, Option<String>), (String, String)> {
+    let wrong = |said: &str, message: &str| Err((said.to_owned(), message.to_owned()));
     let given = args.index.as_deref().or(args.source.as_deref()).map(index_for);
     let Some(index) = given.or_else(last_build) else {
-        out.fail("Which system? orchard install NAME (a distribution's name, the URL of its release index, or a file)");
-        return finish(&mut out, Exit::Usage, "usage", "no distribution given");
+        return wrong("Which system? orchard install NAME (a distribution's name, the URL of its release index, or a file)", "no distribution given");
     };
     if let Some(Some(gb)) = args.split {
         if gb < MIN_OMARCHY_GB {
-            out.fail(format!("--split needs at least {MIN_OMARCHY_GB} GB"));
-            return finish(&mut out, Exit::Usage, "usage", "split too small");
+            return wrong(&format!("--split needs at least {MIN_OMARCHY_GB} GB"), "split too small");
         }
     }
     let secret = |p: &Option<PathBuf>| p.as_ref().map(read_secret).transpose();
     let (password, pin) = match (secret(&args.password_file), secret(&args.pin_file)) {
         (Ok(a), Ok(b)) => (a, b),
-        (Err(e), _) | (_, Err(e)) => {
-            out.fail(&e);
-            return finish(&mut out, Exit::Usage, "usage", &e);
-        }
+        (Err(e), _) | (_, Err(e)) => return wrong(&e, &e),
     };
     if password.as_ref().is_some_and(|p| p.chars().count() < 8) {
-        out.fail("The password needs 8 or more characters");
-        return finish(&mut out, Exit::Usage, "usage", "password too short");
+        return wrong("The password needs 8 or more characters", "password too short");
     }
     if pin.as_ref().is_some_and(|p| p.len() != 6 || !p.bytes().all(|b| b.is_ascii_digit())) {
-        out.fail("The lock screen PIN needs exactly 6 digits");
-        return finish(&mut out, Exit::Usage, "usage", "pin not 6 digits");
+        return wrong("The lock screen PIN needs exactly 6 digits", "pin not 6 digits");
     }
+    Ok((index, password, pin))
+}
+
+/// A layer built on this computer, as the platform the runtime installs.
+fn local_platform(layer: &orchard_build::layer::Layer) -> Platform {
+    Platform {
+        name: layer.platform.clone(),
+        boards: layer.boards.clone(),
+        layer: Receipt {
+            url: format!("file://{}", layer.file.display()),
+            bytes: layer.bytes,
+            sha256: layer.sha256.clone(),
+            expanded_bytes: Some(layer.expanded_bytes),
+        },
+    }
+}
+
+pub fn install(global: &Global, args: &InstallArgs) -> ExitCode {
+    let answers = answers(args);
+    // A kernel of the person's own is built before the terminal is taken
+    // over: the recipes print to stderr as they do for `build`, and stdout
+    // stays the events'.
+    let built = match (&answers, &args.kernel) {
+        (Ok(_), Some(tree)) => Some(super::build::platform_layer(global, args.device.as_deref(), tree)),
+        _ => None,
+    };
+    let mut out = Out { term: Term::new(args.log.as_deref()), json: global.json };
+    let (index, password, pin) = match answers {
+        Ok(answers) => answers,
+        Err((said, message)) => {
+            out.fail(said);
+            return finish(&mut out, Exit::Usage, "usage", &message);
+        }
+    };
+    // The cache's lock comes with the layer and is held to the end: the
+    // layer is read from the cache while the system is installed.
+    let (kernel, _layer_kept) = match built {
+        None => (None, None),
+        Some(Ok((layer, kept))) => (Some(layer), Some(kept)),
+        Some(Err(e)) => {
+            out.fail(format!("Couldn't build the kernel: {}", e.message));
+            if let Some(hint) = &e.hint {
+                out.sub(hint);
+            }
+            let exit = match e.code {
+                _ if orchard_build::was_interrupted() => Exit::Interrupted,
+                orchard_cache::Code::InvalidInput => Exit::Usage,
+                orchard_cache::Code::Network => Exit::Network,
+                _ => Exit::Failed,
+            };
+            return finish(&mut out, exit, "kernel", &e.to_string());
+        }
+    };
     catch_interrupts();
     out.term.live_restart(vec![s("Reading the release", SUB)]);
-    let (handle, rx) = match start(App::Installer, global, Some(index), args.boot.as_deref().or(args.short.route()), args.busy_cpu, args.m1n1.as_deref(), args.demo) {
+    let (handle, rx) = match start(App::Installer, global, Some(index), args.boot.as_deref().or(args.short.route()), args.busy_cpu, args.m1n1.as_deref(), kernel.as_ref().map(local_platform), args.demo) {
         Ok(h) => h,
         Err(e) => {
             out.fail(format!("Couldn't start: {e}"));
@@ -1144,6 +1203,9 @@ pub fn install(global: &Global, args: &InstallArgs) -> ExitCode {
     out.term.live(None);
     out.event(json!({"event": "release", "name": name, "version": release.version}));
     out.term.line(vec![s("Orchard Installer", TITLE), s(" · ", MUTED), s(format!("{name} {}", release.version), BLUE)]);
+    if let (Some(layer), Some(tree)) = (&kernel, &args.kernel) {
+        out.muted(format!("With kernel {} from {}, for {}", layer.kernel_release, tree.display(), layer.platform));
+    }
     let send = |e: Event| {
         let _ = handle.events.send(e);
     };
@@ -1207,6 +1269,15 @@ pub fn install(global: &Global, args: &InstallArgs) -> ExitCode {
                 }
             }
             State::Found { device, .. } => {
+                // The kernel built here is one platform's: on a board of
+                // another the release's own would go in without a word.
+                if let Some(layer) = kernel.as_ref().filter(|layer| !layer.boards.contains(&device.board)) {
+                    out.term.live(None);
+                    let said = format!("The kernel was built for {} ({}), and this {} is {}", layer.platform, layer.boards.join(", "), device.name, device.board);
+                    out.fail(&said);
+                    out.sub(format!("Leave --device out with the device in DFU mode, or name it: --device {}", device.board));
+                    return finish(&mut out, Exit::Usage, "kernel", &said);
+                }
                 if !found {
                     found = true;
                     shared.waiting.shown = false;
@@ -1510,7 +1581,7 @@ fn secret_pair(out: &mut Out, label: &str, again: &str, flag: &str, given: Optio
 pub fn launch(global: &Global, args: &LaunchArgs) -> ExitCode {
     let mut out = Out { term: Term::new(args.log.as_deref()), json: global.json };
     catch_interrupts();
-    let (handle, rx) = match start(App::Launcher, global, None, args.boot.as_deref().or(args.short.route()), args.busy_cpu, args.m1n1.as_deref(), args.demo) {
+    let (handle, rx) = match start(App::Launcher, global, None, args.boot.as_deref().or(args.short.route()), args.busy_cpu, args.m1n1.as_deref(), None, args.demo) {
         Ok(h) => h,
         Err(e) => {
             out.fail(format!("Couldn't start: {e}"));
@@ -1639,6 +1710,53 @@ pub fn launch(global: &Global, args: &LaunchArgs) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn install_args(given: &[&str]) -> Option<InstallArgs> {
+        use clap::Parser;
+        match crate::args::Cli::try_parse_from([&["orchard", "install"], given].concat()).map(|cli| cli.command) {
+            Ok(crate::args::Command::Install(args)) => Some(args),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn a_kernel_tree_is_given_with_the_release_and_optionally_its_board() {
+        let args = install_args(&["omarchy-a", "--kernel", "linux", "--device", "n841", "--m1n1", "m1n1.macho"]).unwrap();
+        assert_eq!(args.kernel.as_deref(), Some(Path::new("linux")));
+        assert_eq!(args.device.as_deref(), Some("n841"));
+        let args = install_args(&["omarchy-a", "--kernel", "linux"]).unwrap();
+        assert_eq!((args.kernel.is_some(), args.device), (true, None));
+        assert!(install_args(&["omarchy-a"]).unwrap().kernel.is_none());
+        // The board is the kernel's; a scripted device installs no kernel.
+        assert!(install_args(&["omarchy-a", "--device", "n841"]).is_none());
+        assert!(install_args(&["omarchy-a", "--kernel", "linux", "--demo"]).is_none());
+    }
+
+    #[test]
+    fn a_layer_built_here_is_installed_from_its_file() {
+        let layer = orchard_build::layer::Layer {
+            platform: "apple-a12".into(),
+            boards: vec!["n841".into(), "j210".into()],
+            kernel_release: "6.18.0".into(),
+            file: PathBuf::from("/cache/work/platform-layer/apple-a12-k/platform-apple-a12.tar.gz"),
+            bytes: 40,
+            sha256: "ab".repeat(32),
+            expanded_bytes: 90,
+        };
+        let platform = local_platform(&layer);
+        assert_eq!((platform.name.as_str(), platform.boards.as_slice()), ("apple-a12", layer.boards.as_slice()));
+        assert_eq!(platform.layer.url, "file:///cache/work/platform-layer/apple-a12-k/platform-apple-a12.tar.gz");
+        assert_eq!((platform.layer.bytes, platform.layer.expanded_bytes), (40, Some(90)));
+        assert_eq!(platform.layer.sha256, layer.sha256);
+    }
+
+    #[test]
+    fn what_the_options_get_wrong_is_said_before_anything_is_built() {
+        let wrong = |given: &[&str]| answers(&install_args(given).unwrap()).unwrap_err().1;
+        assert_eq!(wrong(&["omarchy-a", "--split", "1", "--kernel", "linux"]), "split too small");
+        let (index, password, pin) = answers(&install_args(&["omarchy-a", "--kernel", "linux"]).unwrap()).unwrap();
+        assert!(index.ends_with("/omarchy-a/releases/latest/download/index.toml") && password.is_none() && pin.is_none());
+    }
 
     #[test]
     fn sources_become_index_urls() {

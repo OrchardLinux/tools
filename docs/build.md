@@ -160,7 +160,9 @@ against) and a board's layer (its external modules).
   whose locks name different commits share the tree and move it back and
   forth; `--kernel DIR` is for work that should keep its own.
 - **`--kernel DIR`** builds a developer's tree as it is, inside itself
-  (`DIR/.orchard-out/`), cached apart.
+  (`DIR/.orchard-out/`), cached apart. `orchard install NAME --kernel DIR`
+  installs a published release with such a kernel
+  ([install.md](install.md#a-kernel-of-your-own)).
 
 ## Space
 
