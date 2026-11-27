@@ -13,8 +13,8 @@ orchard update
 
 The script puts `orchard` into `~/.local/bin` (`ORCHARD_BIN` names another
 directory) and needs no root. It takes the file for this computer from the
-newest release of the tools, checks it against the release's checksums,
-and replaces an older one in one step.
+newest build of the tools' main branch that passed its tests, checks it
+against the build's checksums, and replaces an older one in one step.
 macOS (Apple Silicon and Intel) and Linux (x86_64 and aarch64).
 
 In WSL the command sees no iPad or iPhone until Windows hands the device
@@ -25,9 +25,8 @@ doing so while the device changes modes
 command that looks for a device says so.
 
 `update` does the same from the program itself and says when it is the
-newest already. `orchard --version` names the version and the commit the
-release was built from. A program built in a source checkout
-(`cargo build --release -p orchard-cli`) is not replaced: build it again.
+newest already. `orchard --version` names the commit a build is from. A
+program built in a source checkout is not replaced: build it again.
 
 ## doctor
 

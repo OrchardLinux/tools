@@ -1,12 +1,12 @@
 #!/bin/sh
 # Install orchard, the Orchard command line, or replace it with its newest
-# release:
+# build:
 #   curl -fsSL https://raw.githubusercontent.com/OrchardLinux/tools/main/install.sh | sh
 # It goes into ~/.local/bin (ORCHARD_BIN names another directory). Nothing
 # needs root. `orchard update` does the same later.
 set -eu
 NAME=orchard
-BUILDS=${ORCHARD_BUILDS_URL:-https://github.com/OrchardLinux/tools/releases/latest/download}
+BUILDS=${ORCHARD_BUILDS_URL:-https://github.com/OrchardLinux/tools/releases/download/nightly}
 bin=${ORCHARD_BIN:-$HOME/.local/bin}
 
 say() { printf '%s\n' "$*"; }
@@ -33,11 +33,11 @@ fi
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-curl -fsSL -o "$work/SHA256SUMS" "$BUILDS/SHA256SUMS" || fail "Couldn't download the release's checksums."
+curl -fsSL -o "$work/SHA256SUMS" "$BUILDS/SHA256SUMS" || fail "Couldn't download the build's checksums."
 curl -fL --progress-bar -o "$work/$asset" "$BUILDS/$asset" || fail "Couldn't download $asset."
 expected=$(awk -v name="$asset" '$2 == name || $2 == "./" name {print $1}' "$work/SHA256SUMS")
-[ -n "$expected" ] || fail "The release lists no $asset."
-[ "$(sha256 "$work/$asset")" = "$expected" ] || fail "$asset does not match the release's checksum; nothing was installed."
+[ -n "$expected" ] || fail "The build lists no $asset."
+[ "$(sha256 "$work/$asset")" = "$expected" ] || fail "$asset does not match the build's checksum; nothing was installed."
 
 # Beside its place first, so that taking it is one rename, also while the
 # old one runs.

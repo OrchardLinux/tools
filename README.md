@@ -6,9 +6,9 @@
 curl -fsSL https://raw.githubusercontent.com/OrchardLinux/tools/main/install.sh | sh
 ```
 
-puts `orchard`, the command line, into `~/.local/bin`: the newest release,
-checked against its checksums. `orchard update` replaces it with a newer
-one later. Then, with
+puts `orchard`, the command line, into `~/.local/bin`: the newest build of
+this repository's main branch that passed its tests, checked against its
+checksums. `orchard update` replaces it with a newer one later. Then, with
 an iPad or iPhone in DFU mode:
 
 ```sh

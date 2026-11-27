@@ -1,0 +1,123 @@
+name: Nightly
+
+# The command line, orchard, as one file per computer, from every commit on
+# main that passed its tests: the rolling `nightly` pre-release, which
+# install.sh and `orchard update` download from.
+
+on:
+  workflow_run:
+    workflows: [Test]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+env:
+  CARGO_INCREMENTAL: '0'
+  CARGO_TERM_COLOR: never
+  COMMIT: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+jobs:
+  build:
+    name: Build for ${{ matrix.name }}
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # glibc 2.35 (Ubuntu 22.04): the files run on current distributions.
+          - name: linux-x86_64
+            runner: ubuntu-22.04
+          - name: linux-aarch64
+            runner: ubuntu-22.04-arm
+          - name: macos
+            runner: macos-15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.COMMIT }}
+          persist-credentials: false
+
+      - name: Install the Rust toolchain
+        run: rustup toolchain install 1.98.0 --profile minimal
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        env:
+          ORCHARD_BUILD: ${{ env.COMMIT }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang pkg-config
+          cargo build --release -p orchard-cli
+          cp target/release/orchard "orchard-${{ matrix.name }}"
+
+      # One file for Apple Silicon and Intel, signed ad hoc as the linker
+      # signs each half.
+      - name: Build (macOS, Apple Silicon and Intel)
+        if: runner.os == 'macOS'
+        env:
+          ORCHARD_BUILD: ${{ env.COMMIT }}
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+        run: |
+          rustup target add x86_64-apple-darwin --toolchain 1.98.0
+          cargo build --release -p orchard-cli
+          cargo build --release -p orchard-cli --target x86_64-apple-darwin
+          lipo -create -output orchard-macos target/release/orchard target/x86_64-apple-darwin/release/orchard
+          codesign --force --sign - orchard-macos
+          codesign --verify --strict orchard-macos
+
+      - name: Check that it runs
+        run: ./orchard-${{ matrix.name }} --version
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ matrix.name }}
+          path: orchard-${{ matrix.name }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish the nightly
+    needs: build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish
+        working-directory: dist
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          assets=(orchard-macos orchard-linux-x86_64 orchard-linux-aarch64)
+          for asset in "${assets[@]}"; do
+            test -s "$asset"
+          done
+          printf '%s\n' "$COMMIT" > BUILD
+          sha256sum "${assets[@]}" BUILD > SHA256SUMS
+          notes="orchard, the command line, built from $COMMIT. Install or update: \`curl -fsSL https://raw.githubusercontent.com/OrchardLinux/tools/main/install.sh | sh\`"
+          # The tag moves with each build; the assets are replaced, the
+          # checksums last, so that a download in between fails its check
+          # instead of installing a mix.
+          if gh release view nightly >/dev/null 2>&1; then
+            gh release edit nightly --target "$COMMIT" --notes "$notes" --prerelease
+          else
+            gh release create nightly --target "$COMMIT" --title 'orchard nightly' --notes "$notes" --prerelease
+          fi
+          gh api -X PATCH "repos/$GH_REPO/git/refs/tags/nightly" -f sha="$COMMIT" -F force=true >/dev/null
+          gh release upload nightly "${assets[@]}" BUILD --clobber
+          gh release upload nightly SHA256SUMS --clobber
