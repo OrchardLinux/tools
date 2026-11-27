@@ -474,13 +474,45 @@ pub fn from_mtfw(mtfw: &[u8], profile: &str, otp_preflight: bool) -> Result<Vec<
     Ok(container(&records))
 }
 
-/// `hidspi-from-mtfw@1`: an MTFW personality of a HIDSPI controller as the
-/// op list apple_hidspi_ts replays: "D221OPS2", then little-endian ops
-/// T (label), S (HBPP packet with expected ack), P (poll a register),
-/// R (read and log a register) and C (calibration, with Apple's default).
-pub fn hidspi_from_mtfw(mtfw: &[u8], profile: &str) -> Result<Vec<u8>> {
+/// What a HIDSPI controller's HBPP bootloader takes, where it differs from
+/// the iPhone X's: the ADT's `hbpp-version`, and the most payload bytes of
+/// one blob.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Bootloader {
+    pub hbpp_version: u64,
+    pub blob_size: u64,
+}
+
+/// `hidspi-from-mtfw@1` and `@2`: an MTFW personality of a HIDSPI controller
+/// as the op list apple_hidspi_ts replays: "D221OPS2", then little-endian ops
+/// T (label), S (HBPP packet with expected ack; 0xffff: any), P (poll a
+/// register), R (read and log a register) and C (calibration, with Apple's
+/// default). Without a `bootloader` (`@1`) each binary is one blob counting
+/// its words minus one; with one (`@2`) it is split into blobs of at most
+/// `blob_size` bytes at advancing addresses, counted as `hbpp_version` asks,
+/// and a register write that ends the list takes any acknowledge.
+pub fn hidspi_from_mtfw(
+    mtfw: &[u8],
+    profile: &str,
+    bootloader: Option<&Bootloader>,
+) -> Result<Vec<u8>> {
     const ACK_BLOB: u16 = 0x4bc1;
     const ACK_WRITE: u16 = 0x4ad1;
+    const ACK_ANY: u16 = 0xffff;
+    let (hbpp_version, blob_size) = match bootloader {
+        None => (MINUS_ONE_SINCE, usize::MAX),
+        Some(b) => {
+            let version = u32::try_from(b.hbpp_version)
+                .ok()
+                .filter(|v| (0x100..=0xffff).contains(v))
+                .ok_or(Error("HBPP version out of range"))?;
+            let size = usize::try_from(b.blob_size)
+                .ok()
+                .filter(|s| *s != 0 && s % 4 == 0 && *s <= 0x40000)
+                .ok_or(Error("blob size is not a whole number of words up to 256 KiB"))?;
+            (version, size)
+        }
+    };
     let items = personality(mtfw, profile)?;
     one_config(&items, "HIDSPI")?;
     let read_on_error = items.iter().find(|i| {
@@ -514,9 +546,23 @@ pub fn hidspi_from_mtfw(mtfw: &[u8], profile: &str) -> Result<Vec<u8>> {
     if let Some(item) = read_on_error {
         read(&mut out, item)?;
     }
+    // Where the acknowledge of the last register write stands, while that
+    // write is the list's last item.
+    let mut last_write: Option<usize> = None;
     for (index, item) in items.iter().enumerate() {
         let kind = item.get("Type").and_then(Value::as_str).unwrap_or("");
         if matches!(kind, "Metadata" | "Config") {
+            continue;
+        }
+        last_write = None;
+        if kind == "RequestCalibration" {
+            // The controller takes in the calibration loaded so far; what it
+            // answers is not an acknowledge the host can check.
+            if dict_len(item) != 1 {
+                return Err(Error("RequestCalibration item with parameters"));
+            }
+            label(&mut out, format!("{index} request calibration"));
+            send(&mut out, REQUEST_CALIBRATION.to_vec(), ACK_ANY);
             continue;
         }
         let address = uint(
@@ -552,6 +598,7 @@ pub fn hidspi_from_mtfw(mtfw: &[u8], profile: &str) -> Result<Vec<u8>> {
                     Some(Value::Bool(b)) => *b,
                     Some(_) => return Err(Error("SkipCheck must be a boolean")),
                 };
+                last_write = (!skip).then_some(out.len() + 1);
                 send(
                     &mut out,
                     rmw(item, address)?,
@@ -569,7 +616,16 @@ pub fn hidspi_from_mtfw(mtfw: &[u8], profile: &str) -> Result<Vec<u8>> {
                         .trim_end()
                         .to_owned(),
                 );
-                send(&mut out, encode_blob(address, payload)?, ACK_BLOB);
+                if payload.is_empty() {
+                    return Err(Error("HBPP payload is empty or too large"));
+                }
+                for (n, part) in payload.chunks(blob_size).enumerate() {
+                    let at = u32::try_from(n * blob_size)
+                        .ok()
+                        .and_then(|offset| address.checked_add(offset))
+                        .ok_or(Error("HBPP address range overflows"))?;
+                    send(&mut out, encode_blob_for(at, part, hbpp_version)?, ACK_BLOB);
+                }
             }
             "Property" => {
                 let prop = item
@@ -629,6 +685,12 @@ pub fn hidspi_from_mtfw(mtfw: &[u8], profile: &str) -> Result<Vec<u8>> {
             }
             _ => return Err(Error("unsupported HBPP item type")),
         }
+    }
+    // The list's last write starts the firmware. A bootloader whose
+    // acknowledge is read only some time after the packet may no longer be
+    // the one that answers: on the iPhone XR the firmware does.
+    if let (Some(_), Some(at)) = (bootloader, last_write) {
+        out[at..at + 2].copy_from_slice(&ACK_ANY.to_le_bytes());
     }
     if let Some(item) = read_on_error {
         read(&mut out, item)?;
@@ -836,9 +898,18 @@ fn calibration_record(
     ))
 }
 
+/// The HBPP version from which a blob counts its words minus one; before
+/// it, all of them.
+const MINUS_ONE_SINCE: u32 = 0x104;
+
 /// An HBPP blob packet carrying a payload, with the word-count-minus-one
 /// length that `decode_blob` reads back.
 fn encode_blob(address: u32, payload: &[u8]) -> Result<Vec<u8>> {
+    encode_blob_for(address, payload, MINUS_ONE_SINCE)
+}
+
+/// An HBPP blob packet for a bootloader of `hbpp_version`.
+fn encode_blob_for(address: u32, payload: &[u8], hbpp_version: u32) -> Result<Vec<u8>> {
     let mut padded = payload.to_vec();
     padded.resize(payload.len().div_ceil(4) * 4, 0);
     if payload.is_empty()
@@ -847,7 +918,11 @@ fn encode_blob(address: u32, payload: &[u8]) -> Result<Vec<u8>> {
     {
         return Err(Error("HBPP payload is empty or too large"));
     }
-    let mut header = ((padded.len() / 4 - 1) as u16).to_be_bytes().to_vec();
+    let words = padded.len() / 4 - usize::from(hbpp_version >= MINUS_ONE_SINCE);
+    let mut header = u16::try_from(words)
+        .map_err(|_| Error("HBPP payload is empty or too large"))?
+        .to_be_bytes()
+        .to_vec();
     header.extend(xe32(address));
     let mut out = PACKET_PREFIX.to_vec();
     out.extend(&header);
@@ -862,7 +937,8 @@ fn decode_blob(packet: &[u8], hbpp_version: u32) -> Result<(u64, Vec<u8>)> {
     if packet.len() < 20 || !packet.starts_with(PACKET_PREFIX) {
         return Err(Error("not an HBPP blob packet"));
     }
-    let size = (usize::from(be16(&packet[4..6])) + usize::from(hbpp_version >= 0x104)) * 4;
+    let size =
+        (usize::from(be16(&packet[4..6])) + usize::from(hbpp_version >= MINUS_ONE_SINCE)) * 4;
     if packet.len() != 16 + size || sum(&packet[4..10]) != u32::from(be16(&packet[10..12])) {
         return Err(Error("HBPP packet length or header checksum mismatch"));
     }
@@ -1058,6 +1134,109 @@ mod tests {
         let mut damaged = packet.clone();
         damaged[14] ^= 1;
         assert!(decode_blob(&damaged, 0x104).is_err());
+    }
+
+    /// A HIDSPI personality: a 10-byte binary, the request for the
+    /// calibration, and a register write.
+    const HIDSPI: &[u8] = br#"<dict><key>P,1</key><array>
+        <dict><key>Type</key><string>Binary</string>
+            <key>Address</key><integer size="32">0x1000</integer>
+            <key>Payload</key><data>AAECAwQFBgcICQ==</data></dict>
+        <dict><key>Type</key><string>RequestCalibration</string></dict>
+        <dict><key>Type</key><string>ReadModifyWrite</string>
+            <key>Address</key><integer size="32">0x2000</integer>
+            <key>Value</key><integer size="32">0x1</integer></dict>
+        <dict><key>Type</key><string>Config</string><key>Config</key>
+            <dict><key>Protocol</key><string>HIDSPI</string></dict></dict>
+    </array></dict>"#;
+
+    /// The S ops of an op list: expected acknowledge and packet.
+    fn sends(ops: &[u8]) -> Vec<(u16, &[u8])> {
+        assert_eq!(&ops[..8], b"D221OPS2");
+        let le32 = |at: usize| u32::from_le_bytes(ops[at..at + 4].try_into().unwrap()) as usize;
+        let (mut at, mut out) = (8, Vec::new());
+        while at < ops.len() {
+            match ops[at] {
+                b'T' => at += 5 + le32(at + 1),
+                b'S' => {
+                    let len = le32(at + 3);
+                    let ack = u16::from_le_bytes([ops[at + 1], ops[at + 2]]);
+                    out.push((ack, &ops[at + 7..at + 7 + len]));
+                    at += 7 + len;
+                }
+                other => panic!("unexpected op {other:#x}"),
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn hidspi_without_a_bootloader_sends_each_binary_as_one_blob() {
+        let ops = hidspi_from_mtfw(HIDSPI, "P,1", None).unwrap();
+        let payload: Vec<u8> = (0..10).collect();
+        let write = register_packet(0x2000, 0xffff_ffff, 1).unwrap();
+        assert_eq!(
+            sends(&ops),
+            [
+                (0x4bc1, &encode_blob(0x1000, &payload).unwrap()[..]),
+                (0xffff, REQUEST_CALIBRATION),
+                (0x4ad1, &write[..]),
+            ]
+        );
+        // Two words of payload and two bytes of padding, counted minus one.
+        assert_eq!(be16(&sends(&ops)[0].1[4..6]), 2);
+    }
+
+    #[test]
+    fn hidspi_splits_binaries_for_the_bootloader() {
+        let bootloader = |hbpp_version, blob_size| Bootloader {
+            hbpp_version,
+            blob_size,
+        };
+        let ops = hidspi_from_mtfw(HIDSPI, "P,1", Some(&bootloader(0x103, 4))).unwrap();
+        let sent = sends(&ops);
+        assert_eq!(sent.len(), 5);
+        let blobs: Vec<_> = sent[..3]
+            .iter()
+            .map(|(ack, packet)| {
+                assert_eq!(*ack, 0x4bc1);
+                // Before HBPP 0x104 a blob counts all its words.
+                assert_eq!(be16(&packet[4..6]), 1);
+                decode_blob(packet, 0x103).unwrap()
+            })
+            .collect();
+        assert_eq!(
+            blobs,
+            [
+                (0x1000, vec![0, 1, 2, 3]),
+                (0x1004, vec![4, 5, 6, 7]),
+                (0x1008, vec![8, 9, 0, 0]),
+            ]
+        );
+        assert_eq!(sent[3], (0xffff, REQUEST_CALIBRATION));
+
+        // The same split for a bootloader that counts words minus one.
+        let ops = hidspi_from_mtfw(HIDSPI, "P,1", Some(&bootloader(0x105, 8))).unwrap();
+        let sent = sends(&ops);
+        assert_eq!(be16(&sent[0].1[4..6]), 1);
+        assert_eq!(
+            decode_blob(sent[0].1, 0x105).unwrap(),
+            (0x1000, (0..8).collect())
+        );
+        assert_eq!(decode_blob(sent[1].1, 0x105).unwrap(), (0x1008, vec![8, 9, 0, 0]));
+
+        for bad in [
+            bootloader(0x103, 0),
+            bootloader(0x103, 6),
+            bootloader(0x103, 0x40004),
+            bootloader(0, 4),
+            bootloader(0x1_0000, 4),
+        ] {
+            assert!(hidspi_from_mtfw(HIDSPI, "P,1", Some(&bad)).is_err());
+        }
+        // A blob of 0x10000 words has no count before HBPP 0x104.
+        assert!(encode_blob_for(0, &[0; 0x40000], 0x103).is_err());
+        assert!(encode_blob_for(0, &[0; 0x40000], 0x104).is_ok());
     }
 
     #[test]

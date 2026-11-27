@@ -7,7 +7,7 @@ use crate::firmware_build::{write, Written};
 use orchard_cache::store::sha256;
 use orchard_cache::{Code, Context, Error, Result};
 use orchard_formats::kernelcache::{self, Kernelcache};
-use orchard_formats::z2fw::{self, Gen1, Profile, N1};
+use orchard_formats::z2fw::{self, Bootloader, Gen1, Profile, N1};
 use orchard_formats::{aop, bluetool, im4p, sgx, trx};
 use std::collections::HashMap;
 use std::path::{Component, Path};
@@ -82,7 +82,9 @@ enum Touch {
     Mtfw {
         otp_preflight: bool,
     },
-    Hidspi,
+    /// A HIDSPI controller's op list; with what its bootloader takes where
+    /// the recipe says so.
+    Hidspi(Option<Bootloader>),
 }
 
 /// What a recipe will do, worked out before anything is fetched.
@@ -282,7 +284,7 @@ fn touch(data: &[u8], profile: &str, kind: &Touch) -> Result<Vec<u8>> {
             z2fw::from_gen1(&mtprops()?, packet, &board)?
         }
         Touch::Mtfw { otp_preflight } => z2fw::from_mtfw(data, profile, *otp_preflight)?,
-        Touch::Hidspi => z2fw::hidspi_from_mtfw(data, profile)?,
+        Touch::Hidspi(bootloader) => z2fw::hidspi_from_mtfw(data, profile, bootloader.as_ref())?,
     })
 }
 
@@ -433,7 +435,14 @@ fn parse(raw: &catalog::Step, recipe: &Recipe) -> Result<Option<Step>> {
             })?,
             &["otp_preflight", "profile"],
         ),
-        "hidspi-from-mtfw@1" => (touch(Touch::Hidspi)?, &["profile"]),
+        "hidspi-from-mtfw@1" => (touch(Touch::Hidspi(None))?, &["profile"]),
+        "hidspi-from-mtfw@2" => (
+            touch(Touch::Hidspi(Some(Bootloader {
+                hbpp_version: int("hbpp_version")?,
+                blob_size: int("blob_size")?,
+            })))?,
+            &["blob_size", "hbpp_version", "profile"],
+        ),
         "copy@1" => (Step::Copy, &[]),
         "bluetool-hcd@1" => (Step::BluetoolHcd, &[]),
         "bluetool-regulatory@1" => (
@@ -676,6 +685,40 @@ mod tests {
         }
         assert!(read > 0, "{dir} has no board with a firmware recipe");
         assert!(failed.is_empty(), "\n{}", failed.join("\n"));
+    }
+
+    #[test]
+    fn hidspi_step_versions_take_their_parameters() {
+        let recipe = recipe(&[("mtfw", b"x")], vec![]);
+        let with = |name: &str, numbers: &[(&str, u64)]| {
+            let mut step = step(name, Some("mtfw"), &[("profile", "P,1")]);
+            for (key, value) in numbers {
+                step.params.insert(key.to_string(), (*value).into());
+            }
+            parse(&step, &recipe)
+        };
+        let touch = |kind| Step::Touch {
+            profile: "P,1".into(),
+            kind,
+        };
+        assert_eq!(
+            with("hidspi-from-mtfw@1", &[]).unwrap(),
+            Some(touch(Touch::Hidspi(None)))
+        );
+        assert_eq!(
+            with(
+                "hidspi-from-mtfw@2",
+                &[("hbpp_version", 0x103), ("blob_size", 0x3f0)]
+            )
+            .unwrap(),
+            Some(touch(Touch::Hidspi(Some(Bootloader {
+                hbpp_version: 0x103,
+                blob_size: 0x3f0,
+            }))))
+        );
+        assert!(with("hidspi-from-mtfw@1", &[("hbpp_version", 0x103)]).is_err());
+        assert!(with("hidspi-from-mtfw@2", &[("hbpp_version", 0x103)]).is_err());
+        assert!(with("hidspi-from-mtfw@2", &[("blob_size", 0x3f0)]).is_err());
     }
 
     #[test]
