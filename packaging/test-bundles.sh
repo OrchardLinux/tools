@@ -6,7 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 release=$1 pongo=$2 logs=$3
-[[ -x target/debug/orchard-installer && -x target/debug/orchard ]] || { echo "build first: cargo build -p orchard-installer-app" >&2; exit 1; }
+[[ -x target/debug/orchard-installer && -x target/debug/orchard-launcher ]] || { echo "build first: cargo build -p orchard-installer-app" >&2; exit 1; }
 wordmark=$PWD/packaging/omarchy-a-wordmark.svg
 make() {  # name, bundle id, binary, extra flags, log name
   local app="target/final/$1.app/Contents"
