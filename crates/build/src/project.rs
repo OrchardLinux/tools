@@ -222,7 +222,7 @@ pub fn find_release(directory: &Path) -> Result<Option<(PathBuf, Release)>> {
 }
 
 /// A checkout's own choices: sticky defaults for `--device`, `--platform`,
-/// `--kernel-tree` and `--packages`.
+/// `--kernel` and `--packages`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Local {
     /// The file they come from.
@@ -258,7 +258,7 @@ fn read_local(path: &Path) -> Result<Local> {
     unknown(
         path,
         &file,
-        &["device", "platform", "kernel-tree", "packages"],
+        &["device", "platform", "kernel", "kernel-tree", "packages"],
     )?;
     let base = path.parent().unwrap_or(Path::new("."));
     let name = |key: &str| match file.get(key) {
@@ -268,17 +268,26 @@ fn read_local(path: &Path) -> Result<Local> {
             None => Err(invalid(format!("{}: invalid {key} name", path.display()))),
         },
     };
-    let kernel_tree = match file.get("kernel-tree") {
-        None => None,
-        Some(value) => match value.as_str().filter(|v| !v.is_empty()) {
-            Some(value) => Some(absolute(base, value)),
-            None => {
-                return Err(invalid(format!(
-                    "{}: kernel-tree must be a path",
-                    path.display()
-                )))
+    // `kernel-tree` is the key's older name.
+    let kernel_tree = match (file.get("kernel"), file.get("kernel-tree")) {
+        (Some(_), Some(_)) => {
+            return Err(invalid(format!(
+                "{}: kernel and kernel-tree both name the kernel tree; keep kernel",
+                path.display()
+            )))
+        }
+        (None, None) => None,
+        (Some(value), None) | (None, Some(value)) => {
+            match value.as_str().filter(|v| !v.is_empty()) {
+                Some(value) => Some(absolute(base, value)),
+                None => {
+                    return Err(invalid(format!(
+                        "{}: kernel must be a path",
+                        path.display()
+                    )))
+                }
             }
-        },
+        }
     };
     let packages = match file.get("packages") {
         None => None,
@@ -312,7 +321,7 @@ fn absolute(base: &Path, value: &str) -> PathBuf {
     }
 }
 
-/// `--kernel-tree`, else the checkout's own setting.
+/// `--kernel`, else the checkout's own setting.
 pub fn kernel_tree(directory: &Path, given: Option<&Path>) -> Result<Option<PathBuf>> {
     match given {
         Some(tree) => Ok(Some(tree.canonicalize().context(tree.display())?)),
@@ -615,7 +624,7 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("sub")).unwrap();
         std::fs::write(
             dir.path().join(LOCAL),
-            "device = \"aa1\"\nkernel-tree = \"../linux\"\npackages = false\n",
+            "device = \"aa1\"\nkernel = \"../linux\"\npackages = false\n",
         )
         .unwrap();
         let settings = local(&dir.path().join("sub")).unwrap();
@@ -623,6 +632,19 @@ mod tests {
         assert_eq!(settings.kernel_tree, Some(dir.path().join("../linux")));
         assert_eq!(settings.packages, Some(None));
         assert_eq!(packages(dir.path(), None).unwrap(), None);
+        // The key's older name is still read, but not beside the new one.
+        std::fs::write(dir.path().join(LOCAL), "kernel-tree = \"../old\"\n").unwrap();
+        let settings = local(dir.path()).unwrap();
+        assert_eq!(settings.kernel_tree, Some(dir.path().join("../old")));
+        std::fs::write(
+            dir.path().join(LOCAL),
+            "kernel = \"../linux\"\nkernel-tree = \"../old\"\n",
+        )
+        .unwrap();
+        assert!(local(dir.path())
+            .unwrap_err()
+            .message
+            .contains("kernel and kernel-tree both"));
         std::fs::write(dir.path().join(LOCAL), "orchard = \"x\"\n").unwrap();
         assert!(local(dir.path())
             .unwrap_err()

@@ -30,6 +30,9 @@ pub struct Options {
     pub pongo: Option<PathBuf>,
     /// An m1n1 for the launcher to start instead of the published one.
     pub m1n1: Option<PathBuf>,
+    /// A platform whose layer is a file on this computer, installed in
+    /// place of the release's own (a kernel built here).
+    pub platform: Option<orchard_boards::release::Platform>,
     /// The boot route to take (`--boot`); None: ORCHARD_BOOT, else the
     /// first in the board data that fits the device.
     pub boot: Option<String>,
@@ -55,6 +58,7 @@ impl Options {
             pongo: None,
             boot: None,
             m1n1: None,
+            platform: None,
             only: None,
             fetch: true,
             live: false,
@@ -87,6 +91,9 @@ impl Options {
         }
         if let Some(m1n1) = &self.m1n1 {
             executor = executor.with_m1n1(m1n1);
+        }
+        if let Some(platform) = &self.platform {
+            executor = executor.with_platform_layer(platform.clone());
         }
         Ok(executor)
     }

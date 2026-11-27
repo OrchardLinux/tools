@@ -60,6 +60,18 @@ impl Release {
     pub fn platform_for(&self, board: &str) -> Option<&Platform> {
         self.platforms.iter().find(|p| p.boards.iter().any(|b| b == board))
     }
+
+    /// Takes `platform` as it is given in place of the release's own of
+    /// that name, or beside the others when the release has none: a layer
+    /// built on this computer, for the boards it was built for. A board it
+    /// names is no longer another platform's.
+    pub fn set_platform(&mut self, platform: Platform) {
+        self.platforms.retain(|p| p.name != platform.name);
+        for other in &mut self.platforms {
+            other.boards.retain(|board| !platform.boards.contains(board));
+        }
+        self.platforms.push(platform);
+    }
 }
 
 fn format_error(message: impl Into<String>) -> Error {
@@ -241,6 +253,40 @@ mod tests {
         assert_eq!(rel.account_user.as_deref(), Some("tablet"));
         assert_eq!(rel.platform_for("j71b").unwrap().layer.url, "https://example/platform-apple-16k.tar.gz");
         assert!(rel.platform_for("j71").is_none());
+    }
+
+    fn local(name: &str, boards: &[&str]) -> Platform {
+        Platform {
+            name: name.into(),
+            boards: boards.iter().map(|b| (*b).to_owned()).collect(),
+            layer: Receipt { url: format!("file:///cache/platform-{name}.tar.gz"), bytes: 7, sha256: H.into(), expanded_bytes: Some(70) },
+        }
+    }
+
+    #[test]
+    fn a_local_layer_takes_the_place_of_the_platforms_own() {
+        let mut rel = parse_release(&release(), "https://x/").unwrap();
+        // The board data knows a board the release does not list yet.
+        let mine = local("apple-16k", &["j71b", "j72b", "j171"]);
+        rel.set_platform(mine.clone());
+        assert_eq!(rel.platforms, [mine.clone()]);
+        for board in ["j71b", "j171"] {
+            assert_eq!(rel.platform_for(board), Some(&mine), "{board}");
+        }
+        assert_eq!(rel.platform_for("j171").unwrap().layer.url, "file:///cache/platform-apple-16k.tar.gz");
+        assert!(rel.platform_for("n841").is_none());
+    }
+
+    #[test]
+    fn a_local_layer_of_a_platform_the_release_lacks_is_added() {
+        let mut rel = parse_release(&release(), "https://x/").unwrap();
+        // One of its boards was the published platform's before.
+        let mine = local("apple-a12", &["n841", "j72b"]);
+        rel.set_platform(mine.clone());
+        assert_eq!(rel.platforms.len(), 2);
+        assert_eq!(rel.platform_for("n841"), Some(&mine));
+        assert_eq!(rel.platform_for("j72b"), Some(&mine));
+        assert_eq!(rel.platform_for("j71b").unwrap().layer.url, "https://example/platform-apple-16k.tar.gz");
     }
 
     #[test]

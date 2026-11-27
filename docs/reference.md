@@ -112,7 +112,7 @@ to the run's log.
 | `ORCHARD_PYTHON` | the Python that runs the recipes (3.11 or newer) |
 | `ORCHARD_PUBLISHED=off` | builds every component here instead of taking the nightly's |
 | `ORCHARD_KERNEL=local` | builds the kernels here |
-| `ORCHARD_KERNEL_TREE` | `--kernel-tree` |
+| `ORCHARD_KERNEL_TREE` | `--kernel` |
 | `ORCHARD_CACHE_BUDGET_GB` | the build cache's limit (20; 0: none) |
 | `ORCHARD_MIN_FREE_GB` | free space a build needs to start (10; 0: no check) |
 | `ORCHARD_BUILD_NATIVE=1` | the recipes build on this host instead of in Podman (CI builders); part of the kernel's key with `ORCHARD_BUILD_ENV_ID` |

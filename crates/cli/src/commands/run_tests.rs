@@ -39,9 +39,35 @@ fn bare_starts_m1n1_alone_and_takes_no_linux() {
 #[test]
 fn a_project_is_the_default_and_takes_the_builds_options() {
     assert_eq!(args(&[]).build.directory(), Path::new("."));
-    let given = args(&["payload", "--device", "j71b", "--kernel-tree", "linux", "--no-build", "--checkra1n"]);
+    let given = args(&["payload", "--device", "j71b", "--no-build", "--checkra1n"]);
     assert_eq!(given.build.directory(), Path::new("payload"));
     assert!(given.no_build);
+}
+
+#[test]
+fn a_kernel_is_a_tree_to_build_or_an_image_to_boot() {
+    let dir = tempfile::tempdir().unwrap();
+    let (tree, image) = (dir.path().join("linux"), dir.path().join("Image.gz"));
+    std::fs::create_dir(&tree).unwrap();
+    std::fs::write(&image, b"").unwrap();
+    let (tree, image) = (tree.to_str().unwrap(), image.to_str().unwrap());
+    // A directory is the build's option: the project is built from it,
+    // under the option's older name too.
+    for flag in ["--kernel", "--kernel-tree"] {
+        let given = args(&["payload", flag, tree]);
+        assert_eq!(given.build.kernel_image(), None, "{flag}");
+        assert_eq!(wanted(&given, None).unwrap(), None, "{flag}");
+    }
+    assert!(!parses(&["--kernel", tree, "--kernel-dir", "staged"]));
+    // The build's file still names the kernel that is booted.
+    let file: Shortcut = toml::from_str("kernel = \"/k/Image.gz\"\ndtb = [\"/k/a.dtb\"]\ninitramfs = \"i\"\n").unwrap();
+    let got = wanted(&args(&["payload", "--kernel", tree]), Some((file, Path::new("/p/run.toml")))).unwrap().unwrap();
+    assert_eq!(got.kernel, PathBuf::from("/k/Image.gz"));
+    // A file is the kernel to boot, and needs what goes with it.
+    let given = args(&["--kernel", image, "--dtb", "a.dtb", "--initramfs", "i"]);
+    assert_eq!(given.build.kernel_image(), Some(Path::new(image)));
+    assert_eq!(wanted(&given, None).unwrap().unwrap().kernel, PathBuf::from(image));
+    assert!(wanted(&args(&["--kernel", image]), None).is_err());
 }
 
 #[test]

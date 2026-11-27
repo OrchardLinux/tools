@@ -144,12 +144,48 @@ exploit tool runs on one CPU core of its own and every other core is kept
 busy until the exploit is through. The fans may spin up for those seconds.
 `install`, `launch` and `run` take it.
 
+`--m1n1 FILE` starts a local m1n1 instead of the published one: the plain
+build for palera1n and checkra1n, the Mach-O build for ibss. `launch` takes
+it too.
+
 Board data from before `routes.toml` has the one route there was then,
 palera1n; to name another, use newer data (`--data DIR`).
 
+## A kernel of your own
+
+```sh
+orchard install NAME --kernel DIR [--device BOARD]
+```
+
+installs the published release with the kernel built from the kernel tree
+DIR: the release's root image as it is, and in place of its platform layer
+(kernel, modules, device trees, initrd) one made here.
+
+- **Which board**: `--device BOARD`, else the device attached in DFU mode.
+  The kernel is built for that board's platform, so with neither the run
+  ends and asks for one. A device of another platform that then shows up is
+  refused.
+- **The build** comes first and is [`build`](build.md#the-kernel)'s: the
+  same cache, the same recipes (`--data DIR`, else orchard's nightly), the
+  tree built as it is, inside itself. What the recipes print goes to
+  stderr. The layer is then made by the recipe a release's layers come from
+  and kept in the cache (`work/platform-layer/`).
+- **The install** goes on as any other. The layer is checked by size and
+  SHA-256 like a download, the install system starts with its kernel, and
+  its files go into the system as they are: no published kernel package
+  wraps a layer built here, so the system's package manager does not own or
+  update this kernel.
+
+A board that no release covers yet can be installed on this way: `--data
+DIR` with board data that describes it, `--kernel DIR` with a kernel that
+has its device tree, and `--m1n1 FILE` where the published m1n1 does not
+start it. The layer covers every board the data lists for the platform.
+
 ## What it uses
 
-- The release's root image, platform layer, install tools and logo.
+- The release's root image, platform layer, install tools and logo. With
+  `--kernel DIR` the platform layer is built here
+  ([A kernel of your own](#a-kernel-of-your-own)).
 - Orchard's Pongo and m1n1, and the board data: orchard's newest release's,
   or `--data DIR`.
 - The kernel package of a pacman-based release, from OrchardLinux/packages.

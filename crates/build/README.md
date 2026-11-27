@@ -44,7 +44,7 @@ nothing itself, so a payload's format is its producer's.
   part of the key. A changed series is applied as the difference between
   the two trees, which keeps unchanged files' times and the compiler's
   objects; with local edits in the tree a series change is refused, never
-  discarded. `--kernel-tree DIR` builds a developer's tree as it is, inside
+  discarded. `--kernel DIR` builds a developer's tree as it is, inside
   itself (`.orchard-out/`), cached apart.
 - **A payload carries one board's external modules**: the chosen board's
   (`--device`, `orchard.local.toml`, or the attached one), else the

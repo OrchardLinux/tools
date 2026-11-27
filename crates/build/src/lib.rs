@@ -12,6 +12,7 @@ pub mod explain;
 pub mod inputs;
 pub mod json;
 pub mod kernel;
+pub mod layer;
 pub mod manage;
 pub mod platform;
 pub mod project;
