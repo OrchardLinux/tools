@@ -170,10 +170,7 @@ fn shortcut(source: &Path, platform: Option<&str>) -> Result<PathBuf> {
 /// the options name nothing to boot, before a device or a build is asked
 /// for anything.
 fn nothing_to_run(directory: &Path, explicit: bool) -> Result<()> {
-    if !directory.exists() {
-        return Err(Error::new(Code::NotFound, format!("there is no {}", directory.display()))
-            .hint("orchard run takes a project's directory or a run.toml, or none for the directory you are in; options start with --, as in orchard run --bare"));
-    }
+    std::fs::metadata(directory).context(directory.display())?;
     let project = directory.is_file()
         || ["init", SHORTCUT, "orchard.toml", "out"].iter().any(|name| directory.join(name).exists());
     if explicit || project {
