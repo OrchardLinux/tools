@@ -9,6 +9,7 @@
 //! is reused, a missing one is made at the start of the target.
 use orchard_cache::{Code, Error, Result};
 use serde::Deserialize;
+use orchard_formats::lwvm;
 use serde_json::{json, Value};
 
 pub const XBOOTLDR: &str = "bc13c2ff-59e6-4262-a352-b275fd6f7172";
@@ -19,6 +20,10 @@ const GIB: u64 = 1 << 30;
 pub const BOOT_BYTES: u64 = GIB;
 pub const MIN_ROOT_BYTES: u64 = 8 * GIB;
 pub const PLAN_VERSION: u64 = 2;
+/// The boot partition on an LwVM disk, whose space is the tablet's own
+/// flash: the kernel, initrd and device tree of a few systems fit, and
+/// FAT32 is possible. It takes whole chunks, so at least this.
+pub const LWVM_BOOT_BYTES: u64 = 512 * MIB;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Disk {
@@ -34,6 +39,13 @@ pub struct Disk {
     /// On an LwVM disk: how many of its eight entries are taken.
     #[serde(default)]
     pub entries: Option<u64>,
+    /// On an LwVM disk: the size of a chunk, the unit entries are made of.
+    #[serde(default)]
+    pub chunk_bytes: Option<u64>,
+    /// On an LwVM disk: the header as the device read it, which a new
+    /// entry is added to.
+    #[serde(default, skip)]
+    pub header: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -74,7 +86,79 @@ pub struct Layout {
 
 impl Layout {
     pub fn from_inspect(value: &Value) -> Result<Layout> {
+        if value["disk"]["table"].as_str() == Some("lwvm") && value["disk"]["header"].is_string() {
+            return Layout::from_lwvm(value);
+        }
         serde_json::from_value(value.clone()).map_err(|e| Error::new(Code::Format, format!("unreadable layout: {e}")))
+    }
+
+    /// The layout of an LwVM disk, from the header the install system
+    /// hands over and the partitions its kernel made of it
+    /// (`install_direct.inspect_lwvm`). The kernel's reader says where a
+    /// partition lies, the header what it is; a partition whose chunks are
+    /// scattered, which the kernel skips, is not offered, and one that lies
+    /// elsewhere than its entry says stops the install.
+    fn from_lwvm(value: &Value) -> Result<Layout> {
+        let bad = |what: &str| Error::new(Code::Format, format!("unreadable LwVM layout: {what}"));
+        let disk = &value["disk"];
+        let text = |key: &str| disk[key].as_str().map(str::to_owned).ok_or_else(|| bad(key));
+        let number = |key: &str| disk[key].as_u64().ok_or_else(|| bad(key));
+        let hex = text("header")?;
+        if hex.len() != lwvm::HEADER_BYTES * 2 || !hex.is_ascii() {
+            return Err(bad("header"));
+        }
+        let header: Vec<u8> = (0..lwvm::HEADER_BYTES)
+            .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).map_err(|_| bad("header")))
+            .collect::<Result<_>>()?;
+        let (sector, media) = (number("sector")?, number("bytes")?);
+        if sector == 0 {
+            return Err(bad("sector"));
+        }
+        let snapshot = lwvm::parse(&header, &header, Some(media)).map_err(|e| Error::new(Code::Format, format!("the LwVM header: {e}")))?;
+        let mut partitions = Vec::new();
+        for seen in value["kernel"].as_array().map(Vec::as_slice).unwrap_or_default() {
+            let (Some(index), Some(start), Some(sectors)) = (seen["number"].as_u64(), seen["start"].as_u64(), seen["sectors"].as_u64()) else {
+                return Err(bad("kernel"));
+            };
+            let Some(entry) = snapshot.partitions.iter().find(|p| p.number as u64 == index) else {
+                continue;
+            };
+            let in_place = entry.extents.len() == 1 && entry.extents[0].physical == start * 512 && entry.bytes == sectors * 512;
+            if !in_place {
+                return Err(Error::new(Code::Format, format!("partition {index} lies elsewhere than its LwVM entry says")));
+            }
+            let field = |key: &str| seen[key].as_str().map(str::to_owned);
+            partitions.push(Partition {
+                number: index,
+                start: start * 512 / sector,
+                blocks: sectors * 512 / sector,
+                name: entry.name.clone(),
+                kind: entry.kind.clone(),
+                partuuid: entry.partuuid.clone(),
+                fs: field("fs"),
+                fs_uuid: field("fs_uuid"),
+                label: field("label"),
+                attributes: entry.attributes,
+            });
+        }
+        partitions.sort_by_key(|p| p.start);
+        let chunk = snapshot.chunk_bytes;
+        let mut free: Vec<Free> = lwvm::free_space(&header, &snapshot).into_iter().map(|(first, count)| Free { start: first * chunk / sector, blocks: count * chunk / sector }).collect();
+        free.sort_by_key(|f| f.start);
+        Ok(Layout {
+            disk: Disk {
+                path: text("path")?,
+                sector,
+                bytes: media,
+                table_sha256: text("table_sha256")?,
+                table: Some("lwvm".into()),
+                entries: Some(snapshot.partitions.len() as u64),
+                chunk_bytes: Some(chunk),
+                header: Some(header),
+            },
+            partitions,
+            free,
+        })
     }
 
     /// Whether the disk is partitioned with LwVM (32-bit boards): it has no
@@ -202,24 +286,87 @@ fn lwvm_plan(
     uuid: &mut dyn FnMut() -> String,
 ) -> Result<Value> {
     let block = layout.disk.sector;
-    let (number, partuuid, create) = match &target.kind {
-        Kind::Free => (layout.disk.entries.unwrap_or(0) + 1, uuid(), true),
-        Kind::Replace(part) if part.kind.eq_ignore_ascii_case(LINUX_DATA) && part.attributes == 0 => (part.number, part.partuuid.clone(), false),
-        Kind::Replace(_) => return Err(Error::new(Code::Format, "on an LwVM disk only an existing, unencrypted Linux partition can be replaced")),
+    if matches!(&target.kind, Kind::Replace(part) if !part.kind.eq_ignore_ascii_case(LINUX_DATA) || part.attributes != 0) {
+        return Err(Error::new(Code::Format, "on an LwVM disk only an existing, unencrypted Linux partition can be replaced"));
+    }
+    let entries = layout.disk.entries.unwrap_or(0);
+    // The boot partition m1n1 starts the system from: the one that is
+    // there, else a new one over the first chunks of the target's free
+    // space, or of another free run when a partition is replaced. With a
+    // header to add entries to, that is; without one (an install system
+    // that hands none over) and without room, the boot entry goes to the
+    // root's own /boot, where nothing on the device starts it.
+    let existing = layout.partitions.iter().find(|p| p.kind.eq_ignore_ascii_case(XBOOTLDR) && p.attributes == 0);
+    let chunk_blocks = layout.disk.chunk_bytes.map(|chunk| chunk / block).filter(|blocks| *blocks > 0);
+    let boot_blocks = chunk_blocks.map(|chunk| (LWVM_BOOT_BYTES / block).div_ceil(chunk) * chunk);
+    let (mut start, mut blocks) = (target.start, target.blocks);
+    let mut next = entries + 1;
+    let mut header = layout.disk.header.clone();
+    let mut add = |header: &mut Option<Vec<u8>>, kind: &str, name: &str, partuuid: &str, start: u64, blocks: u64| -> Result<()> {
+        let (Some(old), Some(chunk)) = (header.as_ref(), chunk_blocks) else {
+            return Err(Error::new(Code::Format, "the install system handed over no LwVM header to add an entry to"));
+        };
+        let (made, _) = lwvm::allocate(old, old, kind, name, partuuid, start / chunk, blocks / chunk)
+            .map_err(|e| Error::new(Code::Format, format!("the new LwVM entry: {e}")))?;
+        *header = Some(made);
+        Ok(())
     };
-    if target.blocks * block < MIN_ROOT_BYTES {
+    let boot = match (existing, boot_blocks) {
+        (Some(part), _) => json!({"create": false, "number": part.number, "start": part.start, "blocks": part.blocks,
+                                  "partuuid": part.partuuid, "fs_uuid": part.fs_uuid}),
+        (None, Some(wanted)) if layout.disk.header.is_some() && entries + 2 <= 8 => {
+            let place = match &target.kind {
+                Kind::Free if blocks >= wanted + MIN_ROOT_BYTES / block => {
+                    let at = start;
+                    start += wanted;
+                    blocks -= wanted;
+                    Some(at)
+                }
+                Kind::Free => None,
+                Kind::Replace(_) => layout.free.iter().find(|f| f.blocks >= wanted).map(|f| f.start),
+            };
+            match place {
+                Some(at) => {
+                    let partuuid = uuid();
+                    let fs_uuid: String = uuid().replace('-', "")[..8].to_ascii_uppercase();
+                    add(&mut header, XBOOTLDR, "Boot", &partuuid, at, wanted)?;
+                    let number = next;
+                    next += 1;
+                    json!({"create": true, "number": number, "start": at, "blocks": wanted, "partuuid": partuuid, "fs_uuid": fs_uuid})
+                }
+                None => Value::Null,
+            }
+        }
+        _ => Value::Null,
+    };
+    let (number, partuuid, create) = match &target.kind {
+        Kind::Free => {
+            let partuuid = uuid();
+            if layout.disk.header.is_some() {
+                add(&mut header, LINUX_DATA, "Linux", &partuuid, start, blocks)?;
+            }
+            (next, partuuid, true)
+        }
+        Kind::Replace(part) => (part.number, part.partuuid.clone(), false),
+    };
+    if blocks * block < MIN_ROOT_BYTES {
         return Err(Error::new(Code::Format, "the target is too small for a root partition"));
     }
-    if ((target.blocks * block) as f64) < (sizes.image_expanded + sizes.layer_expanded) as f64 * 1.25 {
+    if ((blocks * block) as f64) < (sizes.image_expanded + sizes.layer_expanded) as f64 * 1.25 {
         return Err(Error::new(Code::Format, "the target is too small for this system"));
     }
     let label: String = entry.get("id").and_then(Value::as_str).unwrap_or("linux").chars().take(16).collect();
+    let mut disk = json!({"path": layout.disk.path, "sector": block, "table": "lwvm", "table_sha256": layout.disk.table_sha256});
+    let created = create || boot["create"].as_bool() == Some(true);
+    if let (true, Some(header)) = (created, header.filter(|_| layout.disk.header.is_some())) {
+        disk["header"] = Value::String(header.iter().map(|b| format!("{b:02x}")).collect());
+    }
     Ok(json!({
         "version": PLAN_VERSION,
-        "disk": {"path": layout.disk.path, "sector": block, "table": "lwvm", "table_sha256": layout.disk.table_sha256},
+        "disk": disk,
         "remove": Value::Null,
-        "boot": Value::Null,
-        "root": {"number": number, "start": target.start, "blocks": target.blocks, "partuuid": partuuid, "create": create,
+        "boot": boot,
+        "root": {"number": number, "start": start, "blocks": blocks, "partuuid": partuuid, "create": create,
                  "fs_uuid": uuid(), "fs": "ext4", "label": label},
         "image": image,
         "layer": layer,
@@ -340,7 +487,7 @@ mod tests {
     }
 
     fn layout(partitions: Vec<Partition>, free: Vec<Free>) -> Layout {
-        Layout { disk: Disk { path: "/dev/nvme0n1".into(), sector: SECTOR, bytes: 128 * GIB, table_sha256: "t".into(), table: None, entries: None }, partitions, free }
+        Layout { disk: Disk { path: "/dev/nvme0n1".into(), sector: SECTOR, bytes: 128 * GIB, table_sha256: "t".into(), table: None, entries: None, chunk_bytes: None, header: None }, partitions, free }
     }
 
     fn uuids() -> impl FnMut() -> String {
@@ -376,6 +523,57 @@ mod tests {
             let made = plan(&layout, &found[0], sizes, case["image"].clone(), case["layer"].clone(), case["entry"].clone(), None, None, &mut uuids()).unwrap();
             assert_eq!(made, case["plan"], "{name}");
         }
+    }
+
+    /// What the install system answers for an LwVM disk: the header and
+    /// the kernel's partitions (docs/install-protocol.md in orchard).
+    fn lwvm_inspect() -> Value {
+        let header = include_bytes!("testdata-lwvm-shrunk.bin");
+        let snapshot = lwvm::parse(header, header, None).unwrap();
+        let kernel: Vec<Value> = snapshot
+            .partitions
+            .iter()
+            .map(|p| json!({"number": p.number, "start": p.extents[0].physical / 512, "sectors": p.bytes / 512, "fs": null, "fs_uuid": null, "label": null}))
+            .collect();
+        json!({
+            "disk": {"path": "/dev/applesftl0", "sector": 4096, "bytes": snapshot.media_bytes, "table": "lwvm", "table_sha256": "t",
+                     "chunk_bytes": snapshot.chunk_bytes, "header": header.iter().map(|b| format!("{b:02x}")).collect::<String>()},
+            "kernel": kernel,
+        })
+    }
+
+    #[test]
+    fn an_lwvm_disk_gets_a_boot_partition_and_a_root_in_one_new_header() {
+        let layout = Layout::from_inspect(&lwvm_inspect()).unwrap();
+        assert!(layout.lwvm() && layout.disk.entries == Some(2) && layout.partitions.len() == 2);
+        let chunk = layout.disk.chunk_bytes.unwrap() / 4096;
+        let target = choose(&layout).unwrap();
+        assert_eq!((target.kind.clone(), target.start, target.blocks), (Kind::Free, 601 * chunk, 352 * chunk));
+        let sizes = Sizes { image_expanded: 1 << 30, layer_expanded: 1 << 20 };
+        let entry = entry("Minimal", None, "s5l8942x-p105");
+        let made = plan(&layout, &target, sizes, json!({"bytes": 1}), json!({"path": "/run/orchard/layer"}), entry, None, None, &mut uuids()).unwrap();
+        // The boot partition takes the first whole chunks that hold 512 MiB, the root the rest.
+        let boot_chunks = (LWVM_BOOT_BYTES / 4096).div_ceil(chunk);
+        assert_eq!(made["boot"], json!({"create": true, "number": 3, "start": 601 * chunk, "blocks": boot_chunks * chunk,
+                                        "partuuid": "00000001-0000-4000-8000-000000000000", "fs_uuid": "00000002"}));
+        assert_eq!((made["root"]["number"].as_u64(), made["root"]["start"].as_u64(), made["root"]["blocks"].as_u64(), made["root"]["create"].as_bool()),
+                   (Some(4), Some((601 + boot_chunks) * chunk), Some((352 - boot_chunks) * chunk), Some(true)));
+        // The header the device is to write: the old one with exactly these two entries.
+        let hex = made["disk"]["header"].as_str().unwrap();
+        let header: Vec<u8> = (0..4096).map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).unwrap()).collect();
+        let after = lwvm::parse(&header, &header, None).unwrap();
+        assert_eq!(after.partitions.len(), 4);
+        assert_eq!(after.partitions[..2], lwvm::parse(layout.disk.header.as_ref().unwrap(), layout.disk.header.as_ref().unwrap(), None).unwrap().partitions[..]);
+        assert_eq!((after.partitions[2].kind.as_str(), after.partitions[2].name.as_str()), (XBOOTLDR, "Boot"));
+        assert_eq!((after.partitions[3].kind.as_str(), after.partitions[3].partuuid.as_str()), (LINUX_DATA, made["root"]["partuuid"].as_str().unwrap()));
+        assert_eq!(after.partitions[3].extents.len(), 1);
+    }
+
+    #[test]
+    fn an_lwvm_partition_the_kernel_shows_elsewhere_stops_the_install() {
+        let mut inspect = lwvm_inspect();
+        inspect["kernel"][1]["start"] = json!(8);
+        assert!(Layout::from_inspect(&inspect).unwrap_err().message.contains("lies elsewhere"));
     }
 
     #[test]

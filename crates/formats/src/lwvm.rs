@@ -246,6 +246,12 @@ pub fn free_space(header: &[u8], snapshot: &Snapshot) -> Vec<(u64, u64)> {
 /// chunks are mapped to it in order. The result is parsed again before it
 /// is returned.
 pub fn allocate_free(primary: &[u8], backup: &[u8], linux_uuid: &str, first: u64, chunks: u64) -> Result<(Vec<u8>, Partition)> {
+    allocate(primary, backup, LINUX_TYPE, "Linux", linux_uuid, first, chunks)
+}
+
+/// [`allocate_free`] for an entry of any kind: `kind` is its type and
+/// `name` its name (at most 36 UTF-16 units).
+pub fn allocate(primary: &[u8], backup: &[u8], kind: &str, name: &str, linux_uuid: &str, first: u64, chunks: u64) -> Result<(Vec<u8>, Partition)> {
     let before = parse(primary, backup, None)?;
     let count = before.partitions.len();
     let slot = DESCRIPTORS + count * DESCRIPTOR;
@@ -265,11 +271,14 @@ pub fn allocate_free(primary: &[u8], backup: &[u8], linux_uuid: &str, first: u64
     let mut header = primary.to_vec();
     header[0x28..0x2c].copy_from_slice(&(count as u32 + 1).to_le_bytes());
     let mut descriptor = [0u8; DESCRIPTOR];
-    descriptor[..16].copy_from_slice(&uuid_bytes(LINUX_TYPE)?);
+    descriptor[..16].copy_from_slice(&uuid_bytes(kind)?);
     descriptor[16..32].copy_from_slice(&identity);
     descriptor[32..40].copy_from_slice(&begin.to_le_bytes());
     descriptor[40..48].copy_from_slice(&end.to_le_bytes());
-    for (i, unit) in "Linux".encode_utf16().enumerate() {
+    if name.encode_utf16().count() > 36 {
+        return Err(Error("an LwVM partition name is at most 36 characters"));
+    }
+    for (i, unit) in name.encode_utf16().enumerate() {
         descriptor[56 + i * 2..58 + i * 2].copy_from_slice(&unit.to_le_bytes());
     }
     header[slot..slot + DESCRIPTOR].copy_from_slice(&descriptor);

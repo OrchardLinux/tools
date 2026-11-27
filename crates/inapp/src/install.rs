@@ -115,7 +115,7 @@ pub fn run(disk: &Disk, inputs: &Inputs, report: &dyn Fn(Step)) -> Result<Record
     let emptied = gpt::change(&primary, &backup, &remove, &[])?;
     let after = gpt::parse(&emptied.primary_header, &emptied.entries)?;
     let layout = Layout {
-        disk: install_plan::Disk { path: disk.path.display().to_string(), sector: disk.sector, bytes: disk.bytes, table_sha256: hex(&Sha256::digest(primary.identity())), table: None, entries: None },
+        disk: install_plan::Disk { path: disk.path.display().to_string(), sector: disk.sector, bytes: disk.bytes, table_sha256: hex(&Sha256::digest(primary.identity())), table: None, entries: None, chunk_bytes: None, header: None },
         partitions: after
             .partitions
             .iter()
