@@ -134,6 +134,16 @@ kept in the cache, as is gaster.
 
 Resizing iPadOS starts it through palera1n, whatever the boot route.
 
+### When the exploit never gets in
+
+On some Linux computers palera1n and checkra1n keep trying the boot ROM
+exploit without ever getting in while the computer is idle, and get in
+within seconds while it is under load. `--busy-cpu` (or `ORCHARD_BUSY_CPU=1`,
+which the installer and launcher windows read too) makes that load: the
+exploit tool runs on one CPU core of its own and every other core is kept
+busy until the exploit is through. The fans may spin up for those seconds.
+`install`, `launch` and `run` take it.
+
 Board data from before `routes.toml` has the one route there was then,
 palera1n; to name another, use newer data (`--data DIR`).
 

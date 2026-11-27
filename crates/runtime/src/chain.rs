@@ -181,6 +181,13 @@ fn run_tool(executor: &Executor, session: &mut Session<Host>, from: Mode, name: 
         c.args(["-q", "-e", "-c", &line, "/dev/null"]);
         c
     };
+    // --busy-cpu: the exploit tool on a core of its own, the others busy
+    // until it is through.
+    let busy = (from == Mode::Dfu).then(crate::busy::plan).flatten().map(|(core, others)| {
+        eprintln!("chain: busy CPU: {name} on core {core}, {} cores kept busy until the exploit is through", others.len());
+        crate::busy::pin(&mut command, core);
+        crate::busy::Busy::start(log_path.clone(), &others)
+    });
     let child = command
         // palera1n 3 runs as a command only when told to (on macOS it is an app).
         .env("RA1N_CLI", "1")
@@ -189,6 +196,9 @@ fn run_tool(executor: &Executor, session: &mut Session<Host>, from: Mode, name: 
         .stderr(log)
         .spawn();
     let finish = |replug: Option<crate::replug::Watcher>| {
+        if let Some(busy) = busy {
+            busy.finish();
+        }
         if let Some(resets) = replug.map(crate::replug::Watcher::finish).filter(|n| *n > 0) {
             eprintln!("chain: USB port reset {resets}x to bring the device back after checkm8");
         }

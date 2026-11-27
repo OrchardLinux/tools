@@ -64,6 +64,11 @@ pub struct InstallArgs {
     /// ORCHARD_BOOT, else the first that fits the device
     #[arg(long, value_name = "ROUTE")]
     pub boot: Option<String>,
+    /// Linux: run the exploit on one CPU core and keep the others busy until
+    /// it is through, for computers where it only succeeds under load (also
+    /// ORCHARD_BUSY_CPU=1)
+    #[arg(long)]
+    pub busy_cpu: bool,
     #[command(flatten)]
     pub short: BootOnlyFlags,
     /// Seconds to wait for each step the person does (DFU mode, a cable); 0 waits for ever
@@ -134,6 +139,11 @@ pub struct LaunchArgs {
     /// ORCHARD_BOOT, else the first that fits the device
     #[arg(long, value_name = "ROUTE")]
     pub boot: Option<String>,
+    /// Linux: run the exploit on one CPU core and keep the others busy until
+    /// it is through, for computers where it only succeeds under load (also
+    /// ORCHARD_BUSY_CPU=1)
+    #[arg(long)]
+    pub busy_cpu: bool,
     #[command(flatten)]
     pub short: BootFlags,
     /// Seconds to wait for DFU mode; 0 waits for ever
@@ -559,8 +569,11 @@ impl Observer for Relay {
     fn quit(&mut self) {}
 }
 
-fn start(app: App, global: &Global, index: Option<String>, boot: Option<&str>, m1n1: Option<&Path>, demo: bool) -> Result<(driver::Handle, Receiver<Flow>), String> {
+fn start(app: App, global: &Global, index: Option<String>, boot: Option<&str>, busy_cpu: bool, m1n1: Option<&Path>, demo: bool) -> Result<(driver::Handle, Receiver<Flow>), String> {
     let (tx, rx) = mpsc::channel();
+    if busy_cpu {
+        orchard_runtime::flags::set_busy_cpu();
+    }
     let mut options = Options::new(app);
     options.index = index;
     options.boot = boot.map(str::to_owned);
@@ -1107,7 +1120,7 @@ pub fn install(global: &Global, args: &InstallArgs) -> ExitCode {
     }
     catch_interrupts();
     out.term.live_restart(vec![s("Reading the release", SUB)]);
-    let (handle, rx) = match start(App::Installer, global, Some(index), args.boot.as_deref().or(args.short.route()), None, args.demo) {
+    let (handle, rx) = match start(App::Installer, global, Some(index), args.boot.as_deref().or(args.short.route()), args.busy_cpu, None, args.demo) {
         Ok(h) => h,
         Err(e) => {
             out.fail(format!("Couldn't start: {e}"));
@@ -1493,7 +1506,7 @@ fn secret_pair(out: &mut Out, label: &str, again: &str, flag: &str, given: Optio
 pub fn launch(global: &Global, args: &LaunchArgs) -> ExitCode {
     let mut out = Out { term: Term::new(args.log.as_deref()), json: global.json };
     catch_interrupts();
-    let (handle, rx) = match start(App::Launcher, global, None, args.boot.as_deref().or(args.short.route()), args.m1n1.as_deref(), args.demo) {
+    let (handle, rx) = match start(App::Launcher, global, None, args.boot.as_deref().or(args.short.route()), args.busy_cpu, args.m1n1.as_deref(), args.demo) {
         Ok(h) => h,
         Err(e) => {
             out.fail(format!("Couldn't start: {e}"));

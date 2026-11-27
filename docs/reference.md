@@ -101,7 +101,8 @@ to the run's log.
 | --- | --- |
 | `ORCHARD_BOOT=ROUTE` | the boot route, as `--boot ROUTE` ([install.md](install.md#how-the-device-is-entered)); `--boot` counts over it |
 | `ORCHARD_PALERA1N_BETA=0` | palera1n v2.4 instead of the 3.0 beta |
-| `ORCHARD_PORT_RESET_SECONDS=N` | seconds after the exploit before the USB port is reset (Linux); 0: no reset |
+| `ORCHARD_PORT_RESET_SECONDS=N` | seconds after the exploit before the USB port is reset (Linux, 10 by default); 0: no reset |
+| `ORCHARD_BUSY_CPU=1` | as `--busy-cpu` ([install.md](install.md#when-the-exploit-never-gets-in)) |
 | `ORCHARD_KEEP_AWAKE=1` | keeps the CPU out of deep sleep while the exploit runs (Linux) |
 
 ### build and inputs
