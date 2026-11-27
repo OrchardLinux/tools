@@ -77,7 +77,7 @@ and with `--json` these events, one object per line with an `event` field:
 | `split` | the storage: total, iPadOS and what it uses, the suggested, smallest and largest size, the partitions after iPadOS |
 | `recovery` | the guided run from recovery mode into DFU mode, once per phase: `phase` (`ready`, `get-ready`, `hold`, `restarted`, `let-go`, `waiting`), `device`, `seconds` (how long the phase runs, or null), `again` and `problem` (in `ready`: the last attempt came back in recovery mode; why the device couldn't be reached) |
 | `stage`, `retry` | where a start is, and that it is tried again |
-| `progress` | `percent`, or `step` |
+| `progress` | `percent`, or `step`, or `waiting_for` (the install can't write yet: the file still downloading, such as `root-image`) |
 | `systems` | `entries`: `id`, `title`, `kernel`, `default` (launch) |
 | `done` | `installed_in` and `ssh`, or `started` |
 | `error` | `code`, `message`, `exit`, `log` |

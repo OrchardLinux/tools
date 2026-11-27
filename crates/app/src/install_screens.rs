@@ -675,6 +675,8 @@ fn create_account(installer: &Installer, account: &Account, ready: bool, cx: &mu
         .child(row("Lock screen PIN", secret(inputs, 2, cx), false))
         .child(row("Repeat PIN", secret(inputs, 3, cx), false));
     let valid = account.valid();
+    // The device is ready and a file of the system isn't: Install stays off.
+    let downloading = installer.flow.downloading().is_some();
     // What still keeps "Install" off, once the user has typed something.
     // Well past the usual time without the install system: the safety net
     // for anything that didn't report itself (draft copy).
@@ -685,6 +687,8 @@ fn create_account(installer: &Installer, account: &Account, ready: bool, cx: &mu
         Some(orchard_flow::for_device(&format!("Starting your iPad: attempt {}. The installer keeps trying while it stays in DFU mode.", installer.flow.start_attempt)))
     } else if valid && !ready {
         Some(orchard_flow::for_device("Your iPad is still getting ready."))
+    } else if valid && downloading {
+        Some(orchard_flow::for_device(&format!("Still downloading {}.", sys())))
     } else {
         None
     });
@@ -729,7 +733,7 @@ fn create_account(installer: &Installer, account: &Account, ready: bool, cx: &mu
                 .flex_row()
                 .items_center()
                 .gap(px(28.))
-                .child(gated("install", "Install", valid && ready, Event::Continue, cx))
+                .child(gated("install", "Install", valid && ready && !downloading, Event::Continue, cx))
                 .children(slow.then(|| secondary("start-over", "Start over", 16., 9., Event::Retry, cx)))
                 .children(hint),
         )

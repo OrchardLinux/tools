@@ -556,8 +556,21 @@ struct Guided {
     drawn: Option<Option<(u32, usize)>>,
 }
 
+/// The download the install waits for with the device ready, in words and
+/// as --json names it. Otherwise the step would stand still (the write's
+/// bar at 0%) for as long as the download takes, with nothing saying why.
+fn download_said(flow: &Flow, name: &str) -> Option<(String, String)> {
+    let asset = flow.downloading()?;
+    Some((format!("Still downloading {name}"), kebab(&format!("{asset:?}"))))
+}
+
 fn state_name(state: &State) -> String {
-    let name: String = format!("{state:?}").chars().take_while(|c| c.is_alphanumeric()).collect();
+    kebab(&format!("{state:?}"))
+}
+
+/// A type's name in --json: `WaitingForDfu` is `waiting-for-dfu`.
+fn kebab(debug: &str) -> String {
+    let name: String = debug.chars().take_while(|c| c.is_alphanumeric()).collect();
     let mut out = String::new();
     for (i, ch) in name.chars().enumerate() {
         if ch.is_uppercase() && i > 0 {
@@ -1217,6 +1230,10 @@ pub fn install(global: &Global, args: &InstallArgs) -> ExitCode {
     let mut account_continued = false;
     let mut split_layout: Option<(Layout, u32)> = None;
     let mut installed_at: Option<Instant> = None;
+    // Since when the system is written, for its speed, and the download
+    // the write waits for, as said last.
+    let mut writing_at: Option<Instant> = None;
+    let mut download_shown: Option<String> = None;
     let mut reported = 0u8;
     let mut step_said: Option<String> = None;
     let mut ssh_chosen = false;
@@ -1427,9 +1444,24 @@ pub fn install(global: &Global, args: &InstallArgs) -> ExitCode {
                         out.term.live_restart(vec![s(orchard_flow::for_device("Your iPad is getting ready"), SUB)]);
                     }
                 }
-                if env.is_some() && account.valid() && !account_continued {
-                    account_continued = true;
-                    send(Event::Continue);
+                // The device is ready; the install goes on once the
+                // system's files are there too.
+                match download_said(&flow, &name) {
+                    Some((said, asset)) => {
+                        if download_shown.as_ref() != Some(&said) {
+                            out.event(json!({"event": "progress", "waiting_for": asset}));
+                            if !out.term.tty {
+                                out.sub(said.clone());
+                            }
+                            out.term.live_restart(vec![s(said.clone(), SUB)]);
+                            download_shown = Some(said);
+                        }
+                    }
+                    None if env.is_some() && account.valid() && !account_continued => {
+                        account_continued = true;
+                        send(Event::Continue);
+                    }
+                    None => {}
                 }
             }
             State::ConfirmErase { layout, .. } => {
@@ -1459,8 +1491,20 @@ pub fn install(global: &Global, args: &InstallArgs) -> ExitCode {
                 } else if matches!(link, Link::Up) {
                     lost_said = false;
                 }
-                if !*streamed {
-                    let secs = installed_at.map(|t| t.elapsed().as_secs_f64()).unwrap_or(1.0).max(0.1);
+                if let Some((said, asset)) = download_said(&flow, &name) {
+                    // Not writing yet (an install that continues comes
+                    // here without the account step's wait).
+                    if download_shown.as_ref() != Some(&said) {
+                        out.event(json!({"event": "progress", "waiting_for": asset}));
+                        if !out.term.tty {
+                            out.sub(said.clone());
+                        }
+                        out.term.live_restart(vec![s(said.clone(), SUB)]);
+                        download_shown = Some(said);
+                    }
+                } else if !*streamed {
+                    download_shown = None;
+                    let secs = writing_at.get_or_insert_with(Instant::now).elapsed().as_secs_f64().max(0.1);
                     let mb = release.root.bytes as f64 * *percent as f64 / 100.0 / 1e6;
                     let mut l = bar(*percent as usize * 32 / 100, 32);
                     l.push(s(format!("  {percent:>3}%"), FG));
@@ -1786,6 +1830,37 @@ mod tests {
     #[test]
     fn state_names_are_kebab_case() {
         assert_eq!(state_name(&State::start()), "waiting-for-dfu");
+    }
+
+    #[test]
+    fn an_install_that_still_downloads_says_so() {
+        use orchard_flow::assets::{Asset, AssetState};
+        let device = run(Sequence::HomePower, Phase::ready()).device;
+        let installing = |percent, streamed| State::Installing { device: device.clone(), percent, link: Link::Up, streamed, step: None };
+        let layout = Layout { total_gb: 128, ipados_gb: 58, ipados_used_gb: 41, outside: vec![], outside_bytes: 0 };
+        let account = |env| State::CreateAccount { device: device.clone(), account: Default::default(), env, erase_approved: false, slow: false };
+        let mut flow = Flow::new();
+        for asset in [Asset::Palera1n, Asset::Chain, Asset::RootImage, Asset::PlatformLayer, Asset::Firmware, Asset::KernelPackage] {
+            flow.assets.set(asset, AssetState::Ready);
+        }
+        let said = Some(("Still downloading Omarchy A".to_owned(), "root-image".to_owned()));
+        // Everything is there: nothing to say.
+        flow.state = account(Some(layout.clone()));
+        assert_eq!(download_said(&flow, "Omarchy A"), None);
+        flow.assets.set(Asset::RootImage, AssetState::Fetching);
+        assert_eq!(download_said(&flow, "Omarchy A"), said);
+        // The device not ready yet: that is said, not the download.
+        flow.state = account(None);
+        assert_eq!(download_said(&flow, "Omarchy A"), None);
+        // An install that began: only before the first byte is written.
+        flow.state = installing(0, false);
+        assert_eq!(download_said(&flow, "Omarchy A"), said);
+        flow.state = installing(3, false);
+        assert_eq!(download_said(&flow, "Omarchy A"), None);
+        flow.state = installing(0, true);
+        assert_eq!(download_said(&flow, "Omarchy A"), None);
+        flow.state = State::start();
+        assert_eq!(download_said(&flow, "Omarchy A"), None);
     }
 
     #[test]
