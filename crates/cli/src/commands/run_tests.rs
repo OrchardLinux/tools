@@ -68,3 +68,15 @@ fn the_boot_route_is_named_once() {
     assert!(!parses(&["--ibss", "--palera1n"]));
     assert!(!parses(&["--ibss", "--boot", "ibss"]));
 }
+
+#[test]
+fn a_missing_directory_and_a_directory_without_a_project_are_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = nothing_to_run(&dir.path().join("options"), true).unwrap_err();
+    assert!(missing.message.starts_with("there is no "), "{}", missing.message);
+    let empty = nothing_to_run(dir.path(), false).unwrap_err();
+    assert!(empty.message.starts_with("nothing to run in "), "{}", empty.message);
+    assert!(nothing_to_run(dir.path(), true).is_ok());
+    std::fs::write(dir.path().join("init"), "").unwrap();
+    assert!(nothing_to_run(dir.path(), false).is_ok());
+}
