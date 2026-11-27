@@ -27,6 +27,13 @@ pub struct Disk {
     #[serde(default)]
     pub bytes: u64,
     pub table_sha256: String,
+    /// `lwvm` on the 32-bit boards, whose disk is iOS's; a GPT disk says
+    /// nothing or `gpt`.
+    #[serde(default)]
+    pub table: Option<String>,
+    /// On an LwVM disk: how many of its eight entries are taken.
+    #[serde(default)]
+    pub entries: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -46,6 +53,9 @@ pub struct Partition {
     pub fs_uuid: Option<String>,
     #[serde(default)]
     pub label: Option<String>,
+    /// An LwVM entry's attributes; any (encryption) rule it out as a target.
+    #[serde(default)]
+    pub attributes: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -65,6 +75,12 @@ pub struct Layout {
 impl Layout {
     pub fn from_inspect(value: &Value) -> Result<Layout> {
         serde_json::from_value(value.clone()).map_err(|e| Error::new(Code::Format, format!("unreadable layout: {e}")))
+    }
+
+    /// Whether the disk is partitioned with LwVM (32-bit boards): it has no
+    /// boot partition, and a root goes into one Linux entry.
+    pub fn lwvm(&self) -> bool {
+        self.disk.table.as_deref() == Some("lwvm")
     }
 
     fn replaceable(kind: &str) -> bool {
@@ -119,6 +135,9 @@ pub fn targets(layout: &Layout) -> Result<Vec<Target>> {
     if block == 0 || !MIB.is_multiple_of(block) {
         return Err(Error::new(Code::Format, "unusual sector size"));
     }
+    if layout.lwvm() {
+        return Ok(lwvm_targets(layout));
+    }
     let boot = layout.boot_partition()?;
     let needed = MIN_ROOT_BYTES + if boot.is_some() { 0 } else { BOOT_BYTES };
     let align = MIB / block;
@@ -142,6 +161,72 @@ pub fn targets(layout: &Layout) -> Result<Vec<Target>> {
     }
     out.sort_by_key(|t| t.start);
     Ok(out)
+}
+
+/// The targets of an LwVM disk (`install_layout.lwvm_options`): free space
+/// a new Linux entry can take, where an entry is left, and the Linux
+/// partitions a root fits in. Nothing is aligned: chunks are the unit.
+fn lwvm_targets(layout: &Layout) -> Vec<Target> {
+    let block = layout.disk.sector;
+    let mut out = Vec::new();
+    if layout.disk.entries.unwrap_or(8) < 8 {
+        for free in &layout.free {
+            if free.blocks * block >= MIN_ROOT_BYTES {
+                out.push(Target { kind: Kind::Free, start: free.start, blocks: free.blocks, creates_boot: false });
+            }
+        }
+    }
+    for part in &layout.partitions {
+        if part.kind.eq_ignore_ascii_case(LINUX_DATA) && part.attributes == 0 && part.blocks * block >= MIN_ROOT_BYTES {
+            out.push(Target { kind: Kind::Replace(part.clone()), start: part.start, blocks: part.blocks, creates_boot: false });
+        }
+    }
+    out.sort_by_key(|t| t.start);
+    out
+}
+
+/// The plan for an LwVM disk (`install_layout.lwvm_plan`): the root fills
+/// the chosen Linux partition, which keeps its place and identity, or a new
+/// Linux entry over a free run. No partition is removed and there is no
+/// boot partition: the boot entry goes to the root's own /boot.
+#[allow(clippy::too_many_arguments)]
+fn lwvm_plan(
+    layout: &Layout,
+    target: &Target,
+    sizes: Sizes,
+    image: Value,
+    layer: Value,
+    entry: Value,
+    firmware: Option<Value>,
+    account: Option<Value>,
+    uuid: &mut dyn FnMut() -> String,
+) -> Result<Value> {
+    let block = layout.disk.sector;
+    let (number, partuuid, create) = match &target.kind {
+        Kind::Free => (layout.disk.entries.unwrap_or(0) + 1, uuid(), true),
+        Kind::Replace(part) if part.kind.eq_ignore_ascii_case(LINUX_DATA) && part.attributes == 0 => (part.number, part.partuuid.clone(), false),
+        Kind::Replace(_) => return Err(Error::new(Code::Format, "on an LwVM disk only an existing, unencrypted Linux partition can be replaced")),
+    };
+    if target.blocks * block < MIN_ROOT_BYTES {
+        return Err(Error::new(Code::Format, "the target is too small for a root partition"));
+    }
+    if ((target.blocks * block) as f64) < (sizes.image_expanded + sizes.layer_expanded) as f64 * 1.25 {
+        return Err(Error::new(Code::Format, "the target is too small for this system"));
+    }
+    let label: String = entry.get("id").and_then(Value::as_str).unwrap_or("linux").chars().take(16).collect();
+    Ok(json!({
+        "version": PLAN_VERSION,
+        "disk": {"path": layout.disk.path, "sector": block, "table": "lwvm", "table_sha256": layout.disk.table_sha256},
+        "remove": Value::Null,
+        "boot": Value::Null,
+        "root": {"number": number, "start": target.start, "blocks": target.blocks, "partuuid": partuuid, "create": create,
+                 "fs_uuid": uuid(), "fs": "ext4", "label": label},
+        "image": image,
+        "layer": layer,
+        "entry": entry,
+        "firmware": firmware,
+        "account": account,
+    }))
 }
 
 /// The installer's choice: everything outside iPadOS is Omarchy's, so the
@@ -175,6 +260,9 @@ pub fn plan(
     account: Option<Value>,
     uuid: &mut dyn FnMut() -> String,
 ) -> Result<Value> {
+    if layout.lwvm() {
+        return lwvm_plan(layout, target, sizes, image, layer, entry, firmware, account, uuid);
+    }
     let block = layout.disk.sector;
     let align = MIB / block;
     let boot = layout.boot_partition()?;
@@ -248,11 +336,11 @@ mod tests {
     const G: u64 = GIB / SECTOR;
 
     fn part(number: u64, start: u64, blocks: u64, kind: &str) -> Partition {
-        Partition { number, start, blocks, name: String::new(), kind: kind.into(), partuuid: format!("p{number}"), fs: None, fs_uuid: None, label: None }
+        Partition { number, start, blocks, name: String::new(), kind: kind.into(), partuuid: format!("p{number}"), fs: None, fs_uuid: None, label: None, attributes: 0 }
     }
 
     fn layout(partitions: Vec<Partition>, free: Vec<Free>) -> Layout {
-        Layout { disk: Disk { path: "/dev/nvme0n1".into(), sector: SECTOR, bytes: 128 * GIB, table_sha256: "t".into() }, partitions, free }
+        Layout { disk: Disk { path: "/dev/nvme0n1".into(), sector: SECTOR, bytes: 128 * GIB, table_sha256: "t".into(), table: None, entries: None }, partitions, free }
     }
 
     fn uuids() -> impl FnMut() -> String {
@@ -265,6 +353,43 @@ mod tests {
 
     fn sizes() -> Sizes {
         Sizes { image_expanded: 3_318_181_888, layer_expanded: 26_440_929 }
+    }
+
+    /// LwVM disks against orchard's Python (`install_layout`): its targets
+    /// and plans for a disk with free space and for one with a Linux
+    /// partition to replace, on its tests' synthetic headers.
+    #[test]
+    fn lwvm_targets_and_plans_are_pythons() {
+        let cases: Value = serde_json::from_str(include_str!("testdata-lwvm-plans.json")).unwrap();
+        for name in ["free", "replace"] {
+            let case = &cases[name];
+            let layout = Layout::from_inspect(&case["layout"]).unwrap();
+            assert!(layout.lwvm());
+            let found = targets(&layout).unwrap();
+            let listed: Vec<Value> = found
+                .iter()
+                .map(|t| json!({"kind": if t.kind == Kind::Free { "free" } else { "replace" }, "start": t.start, "blocks": t.blocks}))
+                .collect();
+            assert_eq!(json!(listed), case["options"], "{name}");
+            assert!(!found[0].creates_boot);
+            let sizes = Sizes { image_expanded: case["image"]["expanded_bytes"].as_u64().unwrap(), layer_expanded: case["layer"]["expanded_bytes"].as_u64().unwrap() };
+            let made = plan(&layout, &found[0], sizes, case["image"].clone(), case["layer"].clone(), case["entry"].clone(), None, None, &mut uuids()).unwrap();
+            assert_eq!(made, case["plan"], "{name}");
+        }
+    }
+
+    #[test]
+    fn an_encrypted_or_foreign_lwvm_partition_is_no_target() {
+        let cases: Value = serde_json::from_str(include_str!("testdata-lwvm-plans.json")).unwrap();
+        let mut layout = Layout::from_inspect(&cases["replace"]["layout"]).unwrap();
+        for part in &mut layout.partitions {
+            part.attributes = 0x1000_0000_0000;
+        }
+        assert!(targets(&layout).unwrap().is_empty());
+        // All eight entries taken: free space cannot get one.
+        let mut full = Layout::from_inspect(&cases["free"]["layout"]).unwrap();
+        full.disk.entries = Some(8);
+        assert!(targets(&full).unwrap().is_empty());
     }
 
     fn make(l: &Layout, t: &Target) -> Result<Value> {

@@ -1,0 +1,227 @@
+{
+ "free": {
+  "layout": {
+   "disk": {
+    "path": "/dev/mtdblock0",
+    "sector": 4096,
+    "table": "lwvm",
+    "table_sha256": "e84b868ccb49b7b2a5bc69badee2b7d2ed5c1ccad2615a8602af88ef5c7fb222",
+    "media_bytes": 64000000000,
+    "chunk_bytes": 67108864,
+    "entries": 2
+   },
+   "partitions": [
+    {
+     "number": 1,
+     "start": 16384,
+     "blocks": 327680,
+     "type": "48465300-0000-11aa-aa11-00306543ecac",
+     "partuuid": "11111111-2222-4333-8444-555555555555",
+     "name": "System",
+     "attributes": 0,
+     "fs": null,
+     "fs_uuid": null,
+     "label": null
+    },
+    {
+     "number": 2,
+     "start": 344064,
+     "blocks": 9502720,
+     "type": "48465300-0000-11aa-aa11-00306543ecac",
+     "partuuid": "22222222-3333-4444-8555-666666666666",
+     "name": "Data",
+     "attributes": 844424930131968,
+     "fs": null,
+     "fs_uuid": null,
+     "label": null
+    }
+   ],
+   "free": [
+    {
+     "start": 9846784,
+     "blocks": 5767168
+    }
+   ]
+  },
+  "options": [
+   {
+    "kind": "free",
+    "start": 9846784,
+    "blocks": 5767168
+   }
+  ],
+  "plan": {
+   "version": 2,
+   "disk": {
+    "path": "/dev/mtdblock0",
+    "sector": 4096,
+    "table": "lwvm",
+    "table_sha256": "e84b868ccb49b7b2a5bc69badee2b7d2ed5c1ccad2615a8602af88ef5c7fb222"
+   },
+   "remove": null,
+   "boot": null,
+   "root": {
+    "number": 3,
+    "start": 9846784,
+    "blocks": 5767168,
+    "partuuid": "00000001-0000-4000-8000-000000000000",
+    "create": true,
+    "fs_uuid": "00000002-0000-4000-8000-000000000000",
+    "fs": "ext4",
+    "label": "omarchy"
+   },
+   "image": {
+    "bytes": 1,
+    "sha256": "x",
+    "expanded_bytes": 1073741824
+   },
+   "layer": {
+    "path": "p",
+    "bytes": 1,
+    "sha256": "y",
+    "expanded_bytes": 1048576
+   },
+   "entry": {
+    "id": "omarchy",
+    "title": "Omarchy",
+    "options": "rootwait",
+    "devicetree": "s5l8942x-p105.dtb"
+   },
+   "firmware": null,
+   "account": null
+  },
+  "image": {
+   "bytes": 1,
+   "sha256": "x",
+   "expanded_bytes": 1073741824
+  },
+  "entry": {
+   "id": "omarchy",
+   "title": "Omarchy",
+   "options": "rootwait",
+   "devicetree": "s5l8942x-p105.dtb"
+  },
+  "layer": {
+   "path": "p",
+   "bytes": 1,
+   "sha256": "y",
+   "expanded_bytes": 1048576
+  }
+ },
+ "replace": {
+  "layout": {
+   "disk": {
+    "path": "/dev/mtdblock0",
+    "sector": 4096,
+    "table": "lwvm",
+    "table_sha256": "22f65b4412a61dcd35c4dd0055dbbb4f1cae78e92b69a781bb5ee59c2c9e1a84",
+    "media_bytes": 64000000000,
+    "chunk_bytes": 67108864,
+    "entries": 3
+   },
+   "partitions": [
+    {
+     "number": 1,
+     "start": 16384,
+     "blocks": 327680,
+     "type": "48465300-0000-11aa-aa11-00306543ecac",
+     "partuuid": "11111111-2222-4333-8444-555555555555",
+     "name": "System",
+     "attributes": 0,
+     "fs": "ext4",
+     "fs_uuid": null,
+     "label": "old"
+    },
+    {
+     "number": 2,
+     "start": 344064,
+     "blocks": 9502720,
+     "type": "48465300-0000-11aa-aa11-00306543ecac",
+     "partuuid": "22222222-3333-4444-8555-666666666666",
+     "name": "Data",
+     "attributes": 844424930131968,
+     "fs": "ext4",
+     "fs_uuid": null,
+     "label": "old"
+    },
+    {
+     "number": 3,
+     "start": 9846784,
+     "blocks": 5767168,
+     "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+     "partuuid": "44444444-5555-4666-8777-888888888888",
+     "name": "Linux",
+     "attributes": 0,
+     "fs": "ext4",
+     "fs_uuid": null,
+     "label": "old"
+    }
+   ],
+   "free": []
+  },
+  "options": [
+   {
+    "kind": "replace",
+    "start": 9846784,
+    "blocks": 5767168
+   }
+  ],
+  "plan": {
+   "version": 2,
+   "disk": {
+    "path": "/dev/mtdblock0",
+    "sector": 4096,
+    "table": "lwvm",
+    "table_sha256": "22f65b4412a61dcd35c4dd0055dbbb4f1cae78e92b69a781bb5ee59c2c9e1a84"
+   },
+   "remove": null,
+   "boot": null,
+   "root": {
+    "number": 3,
+    "start": 9846784,
+    "blocks": 5767168,
+    "partuuid": "44444444-5555-4666-8777-888888888888",
+    "create": false,
+    "fs_uuid": "00000001-0000-4000-8000-000000000000",
+    "fs": "ext4",
+    "label": "omarchy"
+   },
+   "image": {
+    "bytes": 1,
+    "sha256": "x",
+    "expanded_bytes": 1073741824
+   },
+   "layer": {
+    "path": "p",
+    "bytes": 1,
+    "sha256": "y",
+    "expanded_bytes": 1048576
+   },
+   "entry": {
+    "id": "omarchy",
+    "title": "Omarchy",
+    "options": "rootwait",
+    "devicetree": "s5l8942x-p105.dtb"
+   },
+   "firmware": null,
+   "account": null
+  },
+  "image": {
+   "bytes": 1,
+   "sha256": "x",
+   "expanded_bytes": 1073741824
+  },
+  "entry": {
+   "id": "omarchy",
+   "title": "Omarchy",
+   "options": "rootwait",
+   "devicetree": "s5l8942x-p105.dtb"
+  },
+  "layer": {
+   "path": "p",
+   "bytes": 1,
+   "sha256": "y",
+   "expanded_bytes": 1048576
+  }
+ }
+}
