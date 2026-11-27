@@ -59,16 +59,17 @@ only refused by palera1n itself.
 Without DFU mode. The app is installed on the device and stays there; it
 gets storage access by itself when it is opened.
 
-1. Turn on Developer Mode: Settings > Privacy & Security > Developer Mode.
-   The device restarts; confirm.
-2. Connect the device, unlock it and trust the computer.
-3. `orchard2 resize --dopamine` puts Resize APFS into the pinned official
+1. Connect the device, unlock it and trust the computer.
+2. `orchard2 resize --dopamine` puts Resize APFS into the pinned official
    Dopamine app, signs it with your Apple ID and installs it. On Linux, and
    on a Mac whose Xcode has no account, xtool signs: it asks for the Apple
    ID, its password and the two-factor code in the terminal the first time
    (they go to Apple only) and keeps the session. On a Mac whose Xcode is
    signed in, that account signs, with nothing to sign in to; `--team ID`
    names one of several teams, and `--xtool` takes xtool all the same.
+3. Turn on Developer Mode: Settings > Privacy & Security > Developer Mode.
+   It appears only now that the app is installed. The device restarts;
+   confirm Turn On.
 4. On the device, trust your Apple ID: Settings > General > VPN & Device
    Management.
 5. Open Resize APFS and tap Continue. The screen restarts once; unlock the

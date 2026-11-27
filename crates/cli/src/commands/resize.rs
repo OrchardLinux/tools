@@ -196,7 +196,8 @@ fn dopamine(executor: &orchard_runtime::exec::Executor, app: &orchard_runtime::r
             return Err(Error::new(Code::Ambiguous, "Xcode is signed in to several teams").hint(format!("choose one with --team, or sign with --xtool: {}", names.join(", "))));
         }
     };
-    say("The device needs Developer Mode on: Settings > Privacy & Security > Developer Mode");
+    // Developer Mode comes after the install: iOS lists that setting only
+    // once an app signed this way is on the device.
     access_dopamine::install(executor, access, &signer, &udid, say)?;
     Ok(Installed { version: app.version.clone(), seconds: started.elapsed().as_secs_f64() }.into())
 }
@@ -211,7 +212,10 @@ impl Report for Installed {
     fn human(&self) -> Vec<u8> {
         format!(
             "Resize APFS {} is installed ({:.0} s).\n\
-             Before opening it the first time, trust your Apple ID on the device: Settings > General > VPN & Device Management.\n\
+             Turn on Developer Mode on the device: Settings > Privacy & Security > Developer Mode \
+             (it appears now that Resize APFS is installed), then restart it and confirm \"Turn On\". \
+             If it is already on, skip this.\n\
+             Then trust your Apple ID: Settings > General > VPN & Device Management.\n\
              Then open Resize APFS and tap Continue. The screen restarts once; unlock the device when it comes back.\n\
              A free Apple ID signs the app for 7 days: run this again when it stops opening.\n",
             self.version, self.seconds
