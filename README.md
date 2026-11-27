@@ -27,6 +27,13 @@ git clone https://github.com/OrchardLinux/tools && cd tools
 cargo build --release -p orchard-cli    # target/release/orchard
 ```
 
+## Tested installs
+
+| Device | Distribution | Computer | With |
+| --- | --- | --- | --- |
+| iPad (7th generation) | Omarchy A | Linux (Omarchy on an Apple M1) | `orchard install` |
+| iPad (6th generation) Wi-Fi | Omarchy A | Linux | the installer window |
+
 ## What is here
 
 The programs that run on your computer to put Linux on an iPad or iPhone and
