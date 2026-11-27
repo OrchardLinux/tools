@@ -172,6 +172,20 @@ fn shortcut(source: &Path, platform: Option<&str>) -> Result<PathBuf> {
     }
 }
 
+/// Refuses a directory that does not exist, and one that is no project when
+/// the options name nothing to boot, before a device or a build is asked
+/// for anything.
+fn nothing_to_run(directory: &Path, explicit: bool) -> Result<()> {
+    std::fs::metadata(directory).context(directory.display())?;
+    let project = directory.is_file()
+        || ["init", SHORTCUT, "orchard.toml", "out"].iter().any(|name| directory.join(name).exists());
+    if explicit || project {
+        return Ok(());
+    }
+    Err(Error::new(Code::NotFound, format!("nothing to run in {}: it has no init, {SHORTCUT} or orchard.toml", directory.display()))
+        .hint("orchard run --bare starts the loader alone, orchard install NAME installs a distribution, and a project to run is a directory with an init (docs/run.md)"))
+}
+
 pub fn run(global: &Global, args: &Args) -> Result<Output> {
     let started = Instant::now();
     let say = |message: &str| output::progress(global, &format!("[{:.3}s] {message}", started.elapsed().as_secs_f64()));
@@ -181,6 +195,7 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     // build that is taken as it is.
     let directory = args.build.directory();
     let explicit = args.bare || args.build.kernel_image().is_some();
+    nothing_to_run(directory, explicit)?;
     if explicit {
         wanted(args, None)?;
     }

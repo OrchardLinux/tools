@@ -20,6 +20,13 @@ orchard doctor                # what this computer has and lacks
 [`docs/`](docs/README.md) has every command. The graphical installer comes
 with each distribution's release.
 
+To work on it, build it instead (Rust 1.98):
+
+```sh
+git clone https://github.com/OrchardLinux/tools && cd tools
+cargo build --release -p orchard-cli    # target/release/orchard
+```
+
 ## What is here
 
 The programs that run on your computer to put Linux on an iPad or iPhone and
