@@ -1,0 +1,153 @@
+{
+ "full": {
+  "media_bytes": 64000000000,
+  "snapshot": {
+   "media_bytes": 64000000000,
+   "chunk_bytes": 67108864,
+   "backup_offset": 67104768,
+   "header_sha256": "20cc42822ba37c6fa89016329aa1e66bb30c12052cb8686de21ad25cee0f36d4",
+   "partitions": [
+    {
+     "number": 1,
+     "type": "48465300-0000-11aa-aa11-00306543ecac",
+     "partuuid": "11111111-2222-4333-8444-555555555555",
+     "begin": 4096,
+     "end": 1342181376,
+     "bytes": 1342177280,
+     "attributes": 0,
+     "name": "System",
+     "extents": [
+      {
+       "logical": 0,
+       "physical": 67108864,
+       "bytes": 1342177280
+      }
+     ]
+    },
+    {
+     "number": 2,
+     "type": "48465300-0000-11aa-aa11-00306543ecac",
+     "partuuid": "22222222-3333-4444-8555-666666666666",
+     "begin": 1342181376,
+     "end": 53687095296,
+     "bytes": 52344913920,
+     "attributes": 844424930131968,
+     "name": "Data",
+     "extents": [
+      {
+       "logical": 0,
+       "physical": 1409286144,
+       "bytes": 52344913920
+      }
+     ]
+    },
+    {
+     "number": 3,
+     "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+     "partuuid": "33333333-4444-4555-8666-777777777777",
+     "begin": 53687095296,
+     "end": 63887642624,
+     "bytes": 10200547328,
+     "attributes": 0,
+     "name": "Linux",
+     "extents": [
+      {
+       "logical": 0,
+       "physical": 53754200064,
+       "bytes": 10200547328
+      }
+     ]
+    }
+   ]
+  },
+  "free_runs": [],
+  "virtual_room": [
+   63887642624,
+   112357376
+  ],
+  "free_space": []
+ },
+ "shrunk": {
+  "media_bytes": 64000000000,
+  "snapshot": {
+   "media_bytes": 64000000000,
+   "chunk_bytes": 67108864,
+   "backup_offset": 67104768,
+   "header_sha256": "e84b868ccb49b7b2a5bc69badee2b7d2ed5c1ccad2615a8602af88ef5c7fb222",
+   "partitions": [
+    {
+     "number": 1,
+     "type": "48465300-0000-11aa-aa11-00306543ecac",
+     "partuuid": "11111111-2222-4333-8444-555555555555",
+     "begin": 4096,
+     "end": 1342181376,
+     "bytes": 1342177280,
+     "attributes": 0,
+     "name": "System",
+     "extents": [
+      {
+       "logical": 0,
+       "physical": 67108864,
+       "bytes": 1342177280
+      }
+     ]
+    },
+    {
+     "number": 2,
+     "type": "48465300-0000-11aa-aa11-00306543ecac",
+     "partuuid": "22222222-3333-4444-8555-666666666666",
+     "begin": 1342181376,
+     "end": 40265322496,
+     "bytes": 38923141120,
+     "attributes": 844424930131968,
+     "name": "Data",
+     "extents": [
+      {
+       "logical": 0,
+       "physical": 1409286144,
+       "bytes": 38923141120
+      }
+     ]
+    }
+   ]
+  },
+  "free_runs": [
+   [
+    601,
+    352
+   ]
+  ],
+  "virtual_room": [
+   40265322496,
+   23734677504
+  ],
+  "free_space": [
+   [
+    601,
+    352
+   ]
+  ]
+ },
+ "allocate": {
+  "uuid": "44444444-5555-4666-8777-888888888888",
+  "first": 601,
+  "chunks": 352,
+  "partition": {
+   "number": 3,
+   "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+   "partuuid": "44444444-5555-4666-8777-888888888888",
+   "begin": 40265322496,
+   "end": 63887642624,
+   "bytes": 23622320128,
+   "attributes": 0,
+   "name": "Linux",
+   "extents": [
+    {
+     "logical": 0,
+     "physical": 40332427264,
+     "bytes": 23622320128
+    }
+   ]
+  }
+ }
+}

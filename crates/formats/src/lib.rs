@@ -23,6 +23,7 @@ pub mod im4p;
 pub mod img3;
 pub mod img4;
 pub mod kernelcache;
+pub mod lwvm;
 pub mod lzfse;
 pub mod lzss;
 pub mod m1n1;
