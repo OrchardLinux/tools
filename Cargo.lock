@@ -3896,6 +3896,7 @@ dependencies = [
  "crc32fast",
  "flate2",
  "plist",
+ "serde_json",
  "sha2 0.10.9",
 ]
 
