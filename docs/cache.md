@@ -18,11 +18,12 @@ The last line is the build cache's size and its limit.
 | --- | --- |
 | `cache` or `cache ls` | lists |
 | `cache rm COMPONENT[/KEY]…` | deletes a component's entries, or the one whose key starts with KEY |
+| `cache rm kernel-tree/NAME` | deletes a kernel tree, as the listing names it; one with local edits, commits or a running build is kept |
 | `cache prune [--keep N]` | keeps the N most recently used entries of each component and work directory (5), deletes what unfinished builds left, and on macOS gives the Podman VM's freed space back |
 | `cache clear` | deletes the downloaded files and firmware keys; they are fetched again when needed |
 
 `rm` and `prune` wait for running builds to finish. Kernel trees are never
-deleted by `prune`; a build deletes the least recently used ones without
+deleted by `prune`, only by name with `rm`; a build deletes the least recently used ones without
 local edits when the cache is over its limit, never the newest
 ([build.md](build.md#space)).
 

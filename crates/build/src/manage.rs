@@ -112,12 +112,13 @@ pub fn kernel_trees(cache: &Components) -> Vec<KernelTree> {
 /// Whether a kernel tree holds nothing that can't be made again: its content
 /// is what orchard prepared, and its git has no work of its own (staged
 /// content, stashes, branches, tags, or commits made in it).
-fn is_clean(tree: &Path) -> bool {
+pub(crate) fn is_clean(tree: &Path) -> bool {
     let source = tree.join("source");
-    let Ok(baseline) = std::fs::read_to_string(tree.join("prepared-tree")) else {
+    let git = |args: &[&str]| sources::git(&source, args, &[]).ok();
+    // What the checkout gave; where no mark says, the commit's own tree.
+    let Some(baseline) = std::fs::read_to_string(tree.join("prepared-tree")).ok().or_else(|| git(&["rev-parse", "HEAD^{tree}"])) else {
         return false;
     };
-    let git = |args: &[&str]| sources::git(&source, args, &[]).ok();
     source.join(".git").exists()
         && sources::working_tree(&source, true).is_ok_and(|tree| tree == baseline.trim())
         && git(&["for-each-ref", "--format=%(refname)"]).is_some_and(|refs| refs.is_empty())
@@ -262,7 +263,23 @@ pub fn summary(entry: &Entry) -> String {
 pub fn remove(cache: &Components, selectors: &[String], say: &dyn Fn(&str)) -> Result<Vec<String>> {
     let rows = cache.entries();
     let mut chosen: Vec<&Entry> = Vec::new();
+    // `kernel-tree/NAME`: a kernel tree, as the listing names it. One with
+    // local edits or in use by a build stays.
+    let mut trees: Vec<PathBuf> = Vec::new();
     for selector in selectors {
+        if let Some(name) = selector.strip_prefix("kernel-tree/") {
+            let path = cache.kernel_work().join(name);
+            let plain = !name.is_empty() && !name.starts_with('.') && !name.contains('/');
+            if !plain || !path.is_dir() {
+                return Err(Error::new(Code::NotFound, format!("no kernel tree {name} in the cache")));
+            }
+            if !is_clean(&path) {
+                return Err(Error::new(Code::Refused, format!("the kernel tree {name} has local edits or work of its own; it is kept"))
+                    .hint(format!("look at {}", path.join("source").display())));
+            }
+            trees.push(path);
+            continue;
+        }
         let (component, prefix) = selector.split_once('/').unwrap_or((selector, ""));
         let matches: Vec<&Entry> = rows
             .iter()
@@ -293,6 +310,12 @@ pub fn remove(cache: &Components, selectors: &[String], say: &dyn Fn(&str)) -> R
     for entry in chosen {
         std::fs::remove_dir_all(&entry.path).context(entry.path.display())?;
         removed.push(format!("{}/{}", entry.name, entry.key));
+    }
+    for tree in trees {
+        if !remove_tree(&tree) {
+            return Err(Error::new(Code::Refused, format!("the kernel tree {} is in use by a build; it is kept", name_of(&tree))));
+        }
+        removed.push(format!("kernel-tree/{}", name_of(&tree)));
     }
     cache.remove_unshared();
     remove_unused_patches(cache);
@@ -628,6 +651,21 @@ mod tests {
             .set_modified(at)
             .unwrap();
         path
+    }
+
+    #[test]
+    fn a_named_kernel_tree_is_removed_unless_it_holds_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Components::open(dir.path()).unwrap();
+        let idle = tree(&cache, "wide", 1);
+        let edited = tree(&cache, "small", 1);
+        std::fs::write(edited.join("source/file.c"), "int mine;\n").unwrap();
+        let error = remove(&cache, &["kernel-tree/small".into()], &|_| {}).unwrap_err();
+        assert_eq!(error.code, Code::Refused);
+        assert!(edited.exists());
+        assert_eq!(remove(&cache, &["kernel-tree/wide".into()], &|_| {}).unwrap(), ["kernel-tree/wide"]);
+        assert!(!idle.exists());
+        assert_eq!(remove(&cache, &["kernel-tree/none".into()], &|_| {}).unwrap_err().code, Code::NotFound);
     }
 
     #[test]

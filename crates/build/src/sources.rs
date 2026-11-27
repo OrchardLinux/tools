@@ -168,41 +168,58 @@ pub fn checkout(
     std::fs::rename(&stage, source).context(source.display())
 }
 
-/// The tree `commit` becomes with `patches` applied, without a checkout.
+/// The tree of `commit`, without a checkout.
 pub fn declared_tree(
     git_cache: &Path,
     url: &str,
     commit: &str,
-    patches: &[PathBuf],
     donor: Option<&Path>,
     say: &dyn Fn(&str),
 ) -> Result<String> {
     let (bare, _held) = repository(git_cache, url, commit, donor, say)?;
-    let temporary = tempfile::Builder::new()
-        .prefix("orchard-index-")
-        .tempdir()?;
-    let index = temporary.path().join("index");
-    let env = [("GIT_INDEX_FILE", index.as_os_str())];
-    git(&bare, &["read-tree", commit], &env)?;
-    // One apply for the whole series writes Linux's large index once, not
-    // once per patch.
-    if !patches.is_empty() {
-        let mut args: Vec<&OsStr> = vec![
-            "apply".as_ref(),
-            "--cached".as_ref(),
-            "--whitespace=nowarn".as_ref(),
-        ];
-        args.extend(patches.iter().map(|p| p.as_os_str()));
-        git(&bare, &args, &env)?;
+    git(&bare, &["rev-parse", &format!("{commit}^{{tree}}")], &[])
+}
+
+/// Moves the clean checkout `source` to `commit` of `url` in place. Only
+/// the files that differ are written, so a compiler that builds from the
+/// tree makes only those again. The commit comes from the shared store
+/// where the checkout borrows its objects, else it is fetched.
+pub fn move_to(
+    git_cache: &Path,
+    url: &str,
+    commit: &str,
+    source: &Path,
+    say: &dyn Fn(&str),
+) -> Result<()> {
+    let (bare, _held) = repository(git_cache, url, commit, Some(source), say)?;
+    let exists = format!("{commit}^{{commit}}");
+    if !git_ok(source, &["cat-file", "-e", &exists]) {
+        // A tree kernel/build made alone has its own objects only.
+        let objects = git_path(source, "objects")?;
+        let alternates = objects.join("info/alternates");
+        let shared = format!("{}\n", bare.join("objects").display());
+        let known = std::fs::read_to_string(&alternates).unwrap_or_default();
+        if !known.lines().any(|line| line == shared.trim_end()) {
+            std::fs::create_dir_all(objects.join("info")).context(objects.display())?;
+            crate::write_text(&alternates, &format!("{known}{shared}"))?;
+        }
     }
-    let tree = git(&bare, &["write-tree"], &env)?;
-    // Keep the objects the patches made reachable, like upstream's commits.
-    git(
-        &bare,
-        &["update-ref", &format!("refs/orchard/trees/{tree}"), &tree],
-        &[],
-    )?;
-    Ok(tree)
+    // The store is shallow: the checkout has to know the new commit ends
+    // its history too.
+    if let Ok(shallow) = std::fs::read_to_string(bare.join("shallow")) {
+        let own = git_path(source, "shallow")?;
+        let mut lines: Vec<String> = std::fs::read_to_string(&own).unwrap_or_default().lines().map(str::to_owned).collect();
+        lines.extend(shallow.lines().map(str::to_owned));
+        lines.sort();
+        lines.dedup();
+        crate::write_text(&own, &(lines.join("\n") + "\n"))?;
+    }
+    git(source, &["checkout", "-q", "--detach", commit], &[])?;
+    // The tree held no commit of anyone's (the caller made sure): the log
+    // of where HEAD was goes, so the tree again reads as one that can be
+    // made anew.
+    git(source, &["reflog", "expire", "--expire=all", "--all"], &[])?;
+    Ok(())
 }
 
 /// The tree of a checkout as it is, tracked and untracked files alike,
@@ -278,7 +295,19 @@ pub(crate) mod tests {
         )
     }
 
-    pub const PATCH: &str = "--- a/file.c\n+++ b/file.c\n@@ -1 +1,2 @@\n int a;\n+int b;\n";
+    /// One more commit in the repository at `url`, which changes the
+    /// Makefile only; returns it.
+    pub fn advance(url: &str) -> String {
+        let source = Path::new(url.trim_start_matches("file://"));
+        std::fs::write(source.join("Makefile"), "all:\n\t@true\n").unwrap();
+        git(
+            source,
+            &["-c", "user.name=t", "-c", "user.email=t@example.org", "commit", "-q", "-a", "-m", "next"],
+            &[],
+        )
+        .unwrap();
+        git(source, &["rev-parse", "HEAD"], &[]).unwrap()
+    }
 
     #[test]
     fn a_checkout_borrows_the_store_and_is_never_reset() {
@@ -299,34 +328,33 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_declared_tree_is_what_applying_the_patches_gives() {
+    fn a_clean_checkout_moves_to_another_commit_in_place() {
         let dir = tempfile::tempdir().unwrap();
         let (url, commit) = upstream(dir.path());
         let cache = dir.path().join("git");
-        let patch = dir.path().join("0001.patch");
-        std::fs::write(&patch, PATCH).unwrap();
-        let plain = declared_tree(&cache, &url, &commit, &[], None, &quiet).unwrap();
-        let patched = declared_tree(
-            &cache,
-            &url,
-            &commit,
-            std::slice::from_ref(&patch),
-            None,
-            &quiet,
-        )
-        .unwrap();
-        assert_ne!(plain, patched);
-
         let source = dir.path().join("source");
         checkout(&cache, &url, &commit, &source, &quiet).unwrap();
-        assert_eq!(working_tree(&source, true).unwrap(), plain);
-        git(&source, &["apply", &patch.to_string_lossy()], &[]).unwrap();
-        assert_eq!(working_tree(&source, true).unwrap(), patched);
-        // The user's index is untouched: the change is still unstaged.
-        assert_eq!(
-            git(&source, &["diff", "--cached", "--name-only"], &[]).unwrap(),
-            ""
-        );
+        let first = declared_tree(&cache, &url, &commit, None, &quiet).unwrap();
+        assert_eq!(working_tree(&source, true).unwrap(), first);
+        let untouched = std::fs::metadata(source.join("file.c")).unwrap().modified().unwrap();
+
+        let next = advance(&url);
+        let second = declared_tree(&cache, &url, &next, None, &quiet).unwrap();
+        assert_ne!(first, second);
+        move_to(&cache, &url, &next, &source, &quiet).unwrap();
+        assert_eq!(git(&source, &["rev-parse", "HEAD"], &[]).unwrap(), next);
+        assert_eq!(working_tree(&source, true).unwrap(), second);
+        // Only what differs is written: the compiler makes only that again.
+        assert_eq!(std::fs::metadata(source.join("file.c")).unwrap().modified().unwrap(), untouched);
+
+        // A tree fetched without the shared store (kernel/build alone) moves too.
+        let alone = dir.path().join("alone");
+        output(Command::new("git").args(["init", "-q"]).arg(&alone)).unwrap();
+        git(&alone, &["remote", "add", "origin", &url], &[]).unwrap();
+        git(&alone, &["fetch", "-q", "--depth", "1", "origin", &commit], &[]).unwrap();
+        git(&alone, &["checkout", "-q", "--detach", "FETCH_HEAD"], &[]).unwrap();
+        move_to(&cache, &url, &next, &alone, &quiet).unwrap();
+        assert_eq!(working_tree(&alone, true).unwrap(), second);
     }
 
     #[test]

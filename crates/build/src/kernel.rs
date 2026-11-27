@@ -1,15 +1,15 @@
 //! Kernel source preparation and the two cached kernel layers.
 //!
 //! orchard builds one kernel per platform. Its source is the platform's
-//! upstream base with its patch series applied, kept as an editable tree in
+//! lock's commit of OrchardLinux/linux, kept as an editable tree in
 //! the cache (`kernel-work/PLATFORM-COMMIT`) together with the compiler's
-//! output, so a changed series compiles only what changed. A developer's own
+//! output, so another commit compiles only what changed. A developer's own
 //! tree (`--kernel-tree`) is built as it is, inside itself.
 //!
 //! The base layer is the compiled kernel, its in-tree modules and what
 //! external modules build against; the board layer adds the board's
 //! external modules and picks its device tree.
-use crate::platform::{descriptor, layout, patches, pin};
+use crate::platform::{descriptor, layout, pin};
 use crate::recipes::{self, keyed};
 use crate::sources::{self, git, git_ok, git_path, working_tree};
 use crate::{copy_file, copy_tree, invalid, read_text, write_text, Build};
@@ -25,19 +25,15 @@ pub const OUT: &str = ".orchard-out";
 const TOOLCHAIN_IMAGE: &str = "localhost/orchard-hardware-kernel-toolchain:bookworm";
 
 /// The tree a platform's kernel is compiled in: orchard's own in the cache,
-/// one per platform and upstream base, or `tree/.orchard-out/PLATFORM` for a
-/// developer's tree. Never moved or reset: it holds editable source and
-/// compiler output.
+/// one per platform, or `tree/.orchard-out/PLATFORM` for a developer's
+/// tree. It holds editable source and compiler output: a new kernel commit
+/// moves a clean tree in place, and never one with edits.
 pub fn work_directory(build: &Build, device: &str, tree: Option<&Path>) -> Result<PathBuf> {
     let platform = layout(&build.root, device)?.0;
     if let Some(tree) = tree {
         return Ok(tree.join(OUT).join(platform));
     }
-    let commit = pin(&build.root, device)?.1;
-    Ok(build
-        .cache
-        .kernel_work()
-        .join(format!("{platform}-{}", &commit[..commit.len().min(12)])))
+    Ok(build.cache.kernel_work().join(platform))
 }
 
 /// A developer's kernel tree: a git checkout with the platform's defconfig.
@@ -110,203 +106,113 @@ impl TreeLock {
     }
 }
 
-/// The series' patches in order, and the marker `kernel/build` writes for
-/// them: each patch's blob id and its path under `kernel/`.
-fn patch_identity(build: &Build, device: &str) -> Result<(Vec<PathBuf>, Vec<u8>)> {
-    let patches = patches(&build.root, device)?;
-    let mut marker = Vec::new();
-    if !patches.is_empty() {
-        // One git process for the series; it prints the ids in argument order.
-        let ids = crate::output(
-            std::process::Command::new("git")
-                .arg("hash-object")
-                .args(&patches),
-        )?;
-        let ids = String::from_utf8_lossy(&ids);
-        let kernel = build.root.join("kernel");
-        for (id, patch) in ids.split_whitespace().zip(&patches) {
-            let relative = patch.strip_prefix(&kernel).unwrap_or(patch);
-            marker.extend(format!("{id} {}\n", relative.display()).into_bytes());
-        }
-    }
-    Ok((patches, marker))
-}
-
-fn check_origin(source: &Path, url: &str, commit: &str) -> Result<()> {
-    if git(source, &["rev-parse", "HEAD"], &[])? != commit
-        || git(source, &["remote", "get-url", "origin"], &[])? != url
-    {
+/// The origin the tree was fetched from has to be the lock's.
+fn check_url(source: &Path, url: &str) -> Result<()> {
+    if git(source, &["remote", "get-url", "origin"], &[])? != url {
         return Err(invalid(
-            "local kernel revision or remote differs from the upstream lock; sources were not reset",
+            "the kernel tree's remote differs from the upstream lock; sources were not reset",
         ));
     }
     Ok(())
+}
+
+fn check_origin(source: &Path, url: &str, commit: &str) -> Result<()> {
+    check_url(source, url)?;
+    if git(source, &["rev-parse", "HEAD"], &[])? != commit {
+        return Err(invalid(
+            "local kernel revision differs from the upstream lock; sources were not reset",
+        ));
+    }
+    Ok(())
+}
+
+/// Whether the tree in `work` holds nothing of anyone's: no edit, and no
+/// commit, branch, stash or staged change made in it.
+fn clean(work: &Path) -> Result<bool> {
+    // On the commit orchard put it on: a commit made in it is someone's.
+    let was = std::fs::read_to_string(work.join("applied-patches")).unwrap_or_default();
+    let head = git(&work.join("source"), &["rev-parse", "HEAD"], &[])?;
+    Ok((was.trim().is_empty() || was.trim() == head) && crate::manage::is_clean(work))
+}
+
+fn edited(source: &Path) -> Error {
+    invalid(
+        "the kernel commit changed and the kernel tree has local edits or commits; refusing to discard them",
+    )
+    .hint(format!(
+        "save the edits in {} elsewhere (git diff) and undo them, or build a kernel tree of your own with --kernel-tree",
+        source.display()
+    ))
 }
 
 /// The tree orchard's kernel for `device` is to be built from, found before
 /// the cache is looked at and without changing the source.
 ///
-/// A clean tree still on an older series gives the new series' tree, so it
-/// does not poison the key. Local edits take part in the key, or block a
-/// series change when they cannot be told apart from it.
+/// A clean tree still on another commit gives the lock's commit's tree, so
+/// it does not poison the key. On the lock's commit, local edits take part
+/// in the key; on another one they block the move.
 pub fn source_tree(build: &Build, device: &str) -> Result<String> {
     let (url, commit) = pin(&build.root, device)?;
     let work = work_directory(build, device, None)?;
     let source = work.join("source");
-    let (patches, expected) = patch_identity(build, device)?;
-    let declared = sources::declared_tree(
-        &build.cache.git(),
-        &url,
-        &commit,
-        &patches,
-        Some(&source),
-        build.say,
-    )?;
+    let declared =
+        sources::declared_tree(&build.cache.git(), &url, &commit, Some(&source), build.say)?;
     if !source.join(".git").exists() {
         return Ok(declared);
     }
-    check_origin(&source, &url, &commit)?;
-    let current = working_tree(&source, true)?;
-    let marker = std::fs::read(work.join("applied-patches")).ok();
-    let baseline = std::fs::read_to_string(work.join("prepared-tree")).ok();
-    if marker.as_ref().is_some_and(|m| *m != expected) {
-        if current == declared || baseline.is_some_and(|b| b.trim() == current) {
-            return Ok(declared);
-        }
-        return Err(invalid(
-            "kernel patches changed with local edits in the kernel tree; refusing to discard edits \
-             or select an unrelated cached kernel",
-        )
-        .hint(format!(
-            "save the edits in {} elsewhere (git diff) and undo them, or build a kernel tree of your own with --kernel-tree",
-            source.display()
-        )));
+    check_url(&source, &url)?;
+    if git(&source, &["rev-parse", "HEAD"], &[])? != commit {
+        return match clean(&work)? {
+            true => Ok(declared),
+            false => Err(edited(&source)),
+        };
     }
-    if marker.is_some() && current == declared && baseline.is_none_or(|b| b.trim() != declared) {
-        // An earlier build stopped between writing the two marks.
-        write_text(&work.join("prepared-tree"), &format!("{declared}\n"))?;
-    }
-    Ok(current)
+    working_tree(&source, true)
 }
 
-/// Orchard's kernel source for `device`, checked out and on the current
-/// series: `(source, compiler output)`. A series change is applied as the
-/// difference between the two trees, so unchanged files keep their times
-/// and the compiler's objects stay valid.
+/// Orchard's kernel source for `device`, on the lock's commit:
+/// `(source, compiler output)`. A clean tree on another commit is moved in
+/// place, so unchanged files keep their times and the compiler's objects
+/// stay valid.
 fn prepare_source(build: &Build, device: &str) -> Result<(PathBuf, PathBuf)> {
     let (url, commit) = pin(&build.root, device)?;
     let work = work_directory(build, device, None)?;
     let source = work.join("source");
     std::fs::create_dir_all(work.join("output")).context(work.display())?;
-    if !source.exists() {
-        sources::checkout(&build.cache.git(), &url, &commit, &source, build.say)?;
-    }
-    check_origin(&source, &url, &commit)?;
-    let (patches, expected) = patch_identity(build, device)?;
     let marker = work.join("applied-patches");
     let baseline = work.join("prepared-tree");
-    let declared = sources::declared_tree(
-        &build.cache.git(),
-        &url,
-        &commit,
-        &patches,
-        Some(&source),
-        build.say,
-    )?;
-    if marker.exists() {
-        if std::fs::read(&marker).context(marker.display())? != expected {
-            // source_tree refuses ambiguous transitions before any write.
-            let desired = source_tree(build, device)?;
-            let current = working_tree(&source, true)?;
-            if current != desired {
-                let delta = {
-                    let (bare, _held) =
-                        sources::repository(&build.cache.git(), &url, &commit, None, build.say)?;
-                    // The current tree's objects live in the source: a series
-                    // built by kernel/build alone was never declared in the
-                    // shared store.
-                    let objects = git_path(&source, "objects")?;
-                    crate::output(
-                        std::process::Command::new("git")
-                            .arg("-C")
-                            .arg(&bare)
-                            .args(["diff", "--binary", &current, &desired])
-                            .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &objects),
-                    )?
-                };
-                for check in [true, false] {
-                    apply(&source, &delta, check)?;
-                }
-                if working_tree(&source, true)? != desired {
-                    return Err(Error::new(
-                        Code::Build,
-                        "kernel patch transition did not give the declared tree; the compiler was not started",
-                    ));
-                }
-            }
-            std::fs::write(&marker, &expected).context(marker.display())?;
-            write_text(&baseline, &format!("{declared}\n"))?;
-        }
-    } else {
-        for patch in &patches {
-            let patch = patch.as_os_str();
-            if !git_ok(
-                &source,
-                &[
-                    OsStr::new("apply"),
-                    "--reverse".as_ref(),
-                    "--check".as_ref(),
-                    patch,
-                ],
-            ) {
-                git(
-                    &source,
-                    &[OsStr::new("apply"), "--check".as_ref(), patch],
-                    &[],
-                )?;
-                git(&source, &[OsStr::new("apply"), patch], &[])?;
-            }
-        }
-        std::fs::write(&marker, &expected).context(marker.display())?;
-        write_text(&baseline, &format!("{declared}\n"))?;
+    // What the checkout gave, taken while nobody can have edited it: the
+    // mark edits are told apart by.
+    let mut fresh = false;
+    if !source.exists() {
+        sources::checkout(&build.cache.git(), &url, &commit, &source, build.say)?;
+        fresh = true;
     }
-    if baseline.exists()
-        && read_text(&baseline)?.trim() != declared
-        && working_tree(&source, true)? == declared
-    {
-        // An earlier build stopped between writing the two marks.
-        write_text(&baseline, &format!("{declared}\n"))?;
+    check_url(&source, &url)?;
+    if git(&source, &["rev-parse", "HEAD"], &[])? != commit {
+        if !clean(&work)? {
+            return Err(edited(&source));
+        }
+        (build.say)(&format!("Moving the kernel tree to {}", &commit[..commit.len().min(12)]));
+        sources::move_to(&build.cache.git(), &url, &commit, &source, build.say)?;
+        fresh = true;
+    }
+    check_origin(&source, &url, &commit)?;
+    if fresh {
+        write_text(&baseline, &format!("{}\n", working_tree(&source, true)?))?;
+    } else if !baseline.exists() {
+        // Unknown what the checkout gave: the commit's tree, so that an
+        // edit made meanwhile still counts as one.
+        write_text(&baseline, &format!("{}\n", git(&source, &["rev-parse", "HEAD^{tree}"], &[])?))?;
+    }
+    // The other mark a tree is recognised by: the commit it is on.
+    if std::fs::read_to_string(&marker).ok().as_deref() != Some(&format!("{commit}\n")) {
+        write_text(&marker, &format!("{commit}\n"))?;
     }
     Ok((source, work.join("output")))
 }
 
-/// Applies a binary diff to `source`, or only checks that it applies.
-fn apply(source: &Path, delta: &[u8], check: bool) -> Result<()> {
-    use std::io::Write;
-    let mut command = std::process::Command::new("git");
-    command.arg("-C").arg(source).arg("apply");
-    if check {
-        command.arg("--check");
-    }
-    let _running = crate::Running::new();
-    // Not started once the build is ending: a patch cut short leaves the tree half changed.
-    crate::interrupted()?;
-    let mut child = command
-        .arg("-")
-        .stdin(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| Error::new(Code::NotFound, e.to_string()).context("git"))?;
-    child.stdin.take().expect("piped stdin").write_all(delta)?;
-    if !child.wait()?.success() {
-        return Err(Error::new(
-            Code::Build,
-            "the kernel patch transition does not apply to the kernel tree",
-        ));
-    }
-    Ok(())
-}
-
-/// `(source, compiler output)`: orchard's patched tree, or the developer's
+/// `(source, compiler output)`: orchard's own tree, or the developer's
 /// tree as it is.
 fn source(build: &Build, device: &str, tree: Option<&Path>) -> Result<(PathBuf, PathBuf)> {
     match tree {
@@ -663,9 +569,9 @@ pub fn prepare(build: &Build, device: &str, tree: Option<&Path>) -> Result<PathB
     };
     match tree {
         None => build.explain.note(format!(
-            "kernel source: orchard's {platform} tree, its upstream lock plus kernel/series/{platform}, \
-             prepared in its cache.\nStandalone: OrchardLinux/linux branch {} regenerated from this orchard \
-             commit has the same content (git rev-parse HEAD^{{tree}}: see kernel-base key-inputs.json \"tree\").",
+            "kernel source: orchard's {platform} tree, OrchardLinux/linux (branch {}) at the commit of \
+             its upstream lock, kept in the cache (git rev-parse HEAD^{{tree}}: see kernel-base \
+             key-inputs.json \"tree\").",
             described.branch
         )),
         Some(tree) => build.explain.note(format!(
@@ -711,11 +617,10 @@ pub fn check_recipe(build: &Build, device: &str) -> Result<()> {
 pub(crate) mod tests {
     use super::*;
     use crate::platform::tests::data;
-    use crate::sources::tests::{upstream, PATCH};
+    use crate::sources::tests::{advance, upstream};
     use orchard_cache::store::Store;
     use std::os::unix::fs::PermissionsExt;
 
-    const SECOND_PATCH: &str = "--- a/Makefile\n+++ b/Makefile\n@@ -1 +1,2 @@\n all:\n+\t@true\n";
 
     /// The kernel producers, reduced to what the layering sees: a build
     /// that turns the source into an image, device trees, a module and the
@@ -798,8 +703,8 @@ for source in sources:
         pub store: Store,
     }
 
-    /// Data with the stub producers, an upstream repository and one real
-    /// patch in the series; `None` where no Python runs the producers.
+    /// Data with the stub producers and an upstream repository the lock
+    /// names; `None` where no Python runs the producers.
     pub fn fixture() -> Option<Fixture> {
         crate::python().ok()?;
         let (data, other) = (data(), tempfile::tempdir().unwrap());
@@ -810,14 +715,6 @@ for source in sources:
             format!("url={url}\ncommit={commit}\n"),
         )
         .unwrap();
-        for stale in [
-            "common/0002-b.patch",
-            "common/sub/0000-z.patch",
-            "boards/x/0001-x.patch",
-        ] {
-            std::fs::remove_file(root.join("kernel").join(stale)).unwrap();
-        }
-        std::fs::write(root.join("kernel/common/0001-a.patch"), PATCH).unwrap();
         producers(&root);
         let store = Store::open(Some(&other.path().join("cache"))).unwrap();
         Some(Fixture {
@@ -841,10 +738,10 @@ for source in sources:
         let build = Build::new(&fixture.root, &fixture.store, &quiet).unwrap();
         let first = prepare(&build, "aa1", None).unwrap();
         assert_eq!(ran(&fixture.root), ["build", "stage", "stage"]);
-        // The source has the series applied; the image is made from it.
+        // The source is the lock's commit; the image is made from it.
         assert_eq!(
             std::fs::read_to_string(first.join("Image.gz")).unwrap(),
-            "int a;\nint b;\nall:\n"
+            "int a;\nall:\n"
         );
         assert!(first.join("aa1.dtb").is_file() && first.join("dtbs/t32789-bb2.dtb").is_file());
         assert!(first
@@ -874,65 +771,56 @@ for source in sources:
     }
 
     #[test]
-    fn a_changed_series_moves_the_tree_and_edits_block_it() {
+    fn a_new_kernel_commit_moves_the_tree_and_edits_block_it() {
         let Some(fixture) = fixture() else { return };
         let build = Build::new(&fixture.root, &fixture.store, &quiet).unwrap();
+        let lock = fixture.root.join("kernel/upstream.lock");
+        let (url, commit) = pin(&fixture.root, "aa1").unwrap();
+        let name = |commit: &str| std::fs::write(&lock, format!("url={url}\ncommit={commit}\n")).unwrap();
         let first = prepare(&build, "aa1", None).unwrap();
-        let source = work_directory(&build, "aa1", None).unwrap().join("source");
-        let untouched = std::fs::metadata(source.join("file.c"))
-            .unwrap()
-            .modified()
-            .unwrap();
+        let work = work_directory(&build, "aa1", None).unwrap();
+        let source = work.join("source");
+        assert_eq!(work.file_name().unwrap(), "wide");
+        let untouched = std::fs::metadata(source.join("file.c")).unwrap().modified().unwrap();
         ran(&fixture.root);
 
-        // A patch more: the tree gets the difference, and files the new
-        // patch does not touch keep their times for the compiler.
-        std::fs::write(
-            fixture.root.join("kernel/common/0002-b.patch"),
-            SECOND_PATCH,
-        )
-        .unwrap();
+        // Another commit: the one tree moves to it, and files the commit
+        // does not touch keep their times for the compiler.
+        let next = advance(&url);
+        name(&next);
         let second = prepare(&build, "aa1", None).unwrap();
         assert_ne!(first, second);
         assert_eq!(ran(&fixture.root), ["build", "stage", "stage"]);
-        assert_eq!(
-            std::fs::read_to_string(second.join("Image.gz")).unwrap(),
-            "int a;\nint b;\nall:\n\t@true\n"
-        );
-        assert_eq!(
-            std::fs::metadata(source.join("file.c"))
-                .unwrap()
-                .modified()
-                .unwrap(),
-            untouched
-        );
+        assert_eq!(std::fs::read_to_string(second.join("Image.gz")).unwrap(), "int a;\nall:\n\t@true\n");
+        assert_eq!(git(&source, &["rev-parse", "HEAD"], &[]).unwrap(), next);
+        assert_eq!(std::fs::metadata(source.join("file.c")).unwrap().modified().unwrap(), untouched);
+        assert_eq!(std::fs::read_to_string(work.join("applied-patches")).unwrap(), format!("{next}\n"));
+        // A moved tree is again one that can be made anew.
+        assert!(crate::manage::is_clean(&work));
 
-        // Back to the first series: its kernel is still in the cache.
-        std::fs::remove_file(fixture.root.join("kernel/common/0002-b.patch")).unwrap();
+        // Back to the first commit: its kernel is still in the cache.
+        name(&commit);
         assert_eq!(prepare(&build, "aa1", None).unwrap(), first);
         assert!(ran(&fixture.root).is_empty());
 
         // A local edit is part of the key, and is never discarded: with it
-        // in the tree, a series change is refused.
+        // in the tree, another commit is refused.
+        name(&next);
         prepare(&build, "aa1", None).unwrap();
-        std::fs::write(
-            fixture.root.join("kernel/common/0002-b.patch"),
-            SECOND_PATCH,
-        )
-        .unwrap();
-        prepare(&build, "aa1", None).unwrap();
-        ran(&fixture.root);
-        std::fs::write(source.join("file.c"), "int a;\nint b;\nint edit;\n").unwrap();
+        std::fs::write(source.join("file.c"), "int a;\nint edit;\n").unwrap();
         let edited = prepare(&build, "aa1", None).unwrap();
-        assert!(std::fs::read_to_string(edited.join("Image.gz"))
-            .unwrap()
-            .contains("int edit;"));
-        std::fs::remove_file(fixture.root.join("kernel/common/0002-b.patch")).unwrap();
+        assert!(std::fs::read_to_string(edited.join("Image.gz")).unwrap().contains("int edit;"));
+        name(&commit);
         let error = prepare(&build, "aa1", None).unwrap_err();
         assert!(error.message.contains("local edits"), "{error}");
-        assert!(std::fs::read_to_string(source.join("file.c"))
-            .unwrap()
-            .contains("int edit;"));
+        assert!(std::fs::read_to_string(source.join("file.c")).unwrap().contains("int edit;"));
+
+        // So is a commit made in the tree, which only its own log names.
+        git(&source, &["-c", "user.name=t", "-c", "user.email=t@example.org", "commit", "-q", "-a", "-m", "mine"], &[]).unwrap();
+        let mine = git(&source, &["rev-parse", "HEAD"], &[]).unwrap();
+        let error = prepare(&build, "aa1", None).unwrap_err();
+        assert!(error.message.contains("commits"), "{error}");
+        assert_eq!(git(&source, &["rev-parse", "HEAD"], &[]).unwrap(), mine);
     }
 
     #[test]

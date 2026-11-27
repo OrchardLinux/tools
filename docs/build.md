@@ -145,14 +145,16 @@ One per platform, in two layers: the base (the compiled kernel, every
 board's device tree, the in-tree modules, and what external modules build
 against) and a board's layer (its external modules).
 
-- **Orchard's own source** is the platform's upstream base with its patch
-  series applied, kept as an editable tree in the cache
-  (`kernel-work/PLATFORM-COMMIT/source`) beside the compiler's output. Its
+- **Orchard's own source** is OrchardLinux/linux at the commit the
+  platform's lock names, kept as an editable tree in the cache
+  (`kernel-work/PLATFORM/source`) beside the compiler's output. Its
   identity is the Git tree its content would be committed as, so local
   edits are part of the key and build incrementally.
-- **A changed patch series** is applied as the difference between the two
-  trees, which keeps unchanged files' times and the compiler's objects.
-  With local edits in the tree a series change is refused, never discarded.
+- **Another commit in the lock** moves that one tree in place: only the
+  files that differ are written, so only those compile again. With local
+  edits in the tree the move is refused, never discarded. Two checkouts
+  whose locks name different commits share the tree and move it back and
+  forth; `--kernel-tree` is for work that should keep its own.
 - **`--kernel-tree DIR`** builds a developer's tree as it is, inside itself
   (`DIR/.orchard-out/`), cached apart.
 

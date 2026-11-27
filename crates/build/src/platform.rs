@@ -1,10 +1,10 @@
 //! Kernel platforms: one kernel build shared by every board that names the
 //! platform in its `device.toml`. A platform is described by
 //! `platforms/<name>.toml`: its architecture, image, upstream base, patch
-//! series, config and the loader its payloads are for.
+//! config and the loader its payloads are for.
 use crate::{invalid, plain_name, read_text};
 use orchard_boards::catalog::Catalog;
-use orchard_cache::{Code, Context, Error, Result};
+use orchard_cache::{Code, Error, Result};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -20,7 +20,6 @@ pub struct Descriptor {
     pub image: String,
     pub dtbs: String,
     pub upstream: String,
-    pub series: String,
     pub config: String,
     pub defconfig: String,
     pub branch: String,
@@ -120,7 +119,6 @@ pub fn descriptor(root: &Path, name: &str) -> Result<Descriptor> {
         image: text(kernel, "image"),
         dtbs: text(kernel, "dtbs"),
         upstream: text(kernel, "upstream"),
-        series: text(kernel, "series"),
         config: text(kernel, "config"),
         defconfig: text(kernel, "defconfig"),
         branch: text(kernel, "branch"),
@@ -141,7 +139,6 @@ pub fn descriptor(root: &Path, name: &str) -> Result<Descriptor> {
     for (key, value) in [
         ("dtbs", &descriptor.dtbs),
         ("upstream", &descriptor.upstream),
-        ("series", &descriptor.series),
         ("config", &descriptor.config),
     ] {
         inside(root, value).map_err(|_| bad(&format!("invalid kernel.{key}")))?;
@@ -172,46 +169,6 @@ fn inside(root: &Path, relative: &str) -> Result<PathBuf> {
         return Err(invalid("path leaves the data directory"));
     }
     Ok(root.join(relative))
-}
-
-/// The platform's patches in the order they apply: the series file names
-/// layers under `kernel/`, each layer's patches sorted by path.
-pub fn patches(root: &Path, name: &str) -> Result<Vec<PathBuf>> {
-    let series = root.join(descriptor(root, name)?.series);
-    let kernel = root.join("kernel");
-    let mut found = Vec::new();
-    for line in read_text(&series)?.lines() {
-        let line = line.split('#').next().unwrap_or("").trim();
-        if line.is_empty() {
-            continue;
-        }
-        let layer = inside(&kernel, line)
-            .ok()
-            .filter(|layer| layer.is_dir())
-            .ok_or_else(|| {
-                Error::new(
-                    Code::Format,
-                    format!("invalid patch layer in {}: {line}", series.display()),
-                )
-            })?;
-        let mut layer_patches = Vec::new();
-        collect(&layer, &mut layer_patches)?;
-        layer_patches.sort();
-        found.extend(layer_patches);
-    }
-    Ok(found)
-}
-
-fn collect(directory: &Path, found: &mut Vec<PathBuf>) -> Result<()> {
-    for item in std::fs::read_dir(directory).context(directory.display())? {
-        let path = item?.path();
-        if path.is_dir() {
-            collect(&path, found)?;
-        } else if path.extension().is_some_and(|e| e == "patch") {
-            found.push(path);
-        }
-    }
-    Ok(())
 }
 
 /// `platform → board → device tree` for every board the data describes
@@ -255,7 +212,7 @@ pub fn platforms(root: &Path, architecture: &str) -> Result<Vec<String>> {
     Ok(found)
 }
 
-/// The upstream base a platform's series applies to: `url` and `commit`.
+/// The kernel source a platform is built from: `url` and `commit`.
 pub fn pin(root: &Path, name: &str) -> Result<(String, String)> {
     let lock = root.join(descriptor(root, name)?.upstream);
     let text = read_text(&lock)?;
@@ -319,13 +276,9 @@ pub(crate) mod tests {
                 &format!(
                     "schema = 1\nkind = \"hardware.platform\"\nname = \"{platform}\"\n[kernel]\narch = \"{arch}\"\n\
                      image = \"{image}\"\ndtbs = \"arch/{arch}/boot/dts/apple\"\nupstream = \"kernel/upstream.lock\"\n\
-                     series = \"kernel/series/{platform}\"\nconfig = \"kernel/configs/{platform}/config\"\n\
+                     config = \"kernel/configs/{platform}/config\"\n\
                      defconfig = \"orchard_{platform}_defconfig\"\nbranch = \"main\"\nloader = \"{loader}\"\n"
                 ),
-            );
-            write(
-                &format!("kernel/series/{platform}"),
-                "# layers\ncommon\n\nboards/x  # one board\n",
             );
             write(&format!("kernel/configs/{platform}/config"), "CONFIG_X=y\n");
         }
@@ -333,11 +286,6 @@ pub(crate) mod tests {
             "kernel/upstream.lock",
             "url=https://example.org/linux.git\ncommit=0123456789abcdef0123456789abcdef01234567\n",
         );
-        write("kernel/common/0002-b.patch", "b");
-        write("kernel/common/0001-a.patch", "a");
-        write("kernel/common/sub/0000-z.patch", "z");
-        write("kernel/common/README", "not a patch");
-        write("kernel/boards/x/0001-x.patch", "x");
         write("kernel/build", "#!/bin/sh\n");
         dir
     }
@@ -378,7 +326,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_descriptor_is_checked_and_patches_come_in_series_order() {
+    fn a_descriptor_is_checked() {
         let dir = data();
         let described = descriptor(dir.path(), "bb2").unwrap();
         assert_eq!(
@@ -386,25 +334,6 @@ pub(crate) mod tests {
             ("wide", "m1n1")
         );
         assert_eq!(pin(dir.path(), "wide").unwrap().1.len(), 40);
-        let names: Vec<String> = patches(dir.path(), "wide")
-            .unwrap()
-            .iter()
-            .map(|p| {
-                p.strip_prefix(dir.path().join("kernel"))
-                    .unwrap()
-                    .to_string_lossy()
-                    .into_owned()
-            })
-            .collect();
-        assert_eq!(
-            names,
-            [
-                "common/0001-a.patch",
-                "common/0002-b.patch",
-                "common/sub/0000-z.patch",
-                "boards/x/0001-x.patch"
-            ]
-        );
         std::fs::remove_file(dir.path().join("kernel/configs/small/config")).unwrap();
         assert!(descriptor(dir.path(), "cc3")
             .unwrap_err()

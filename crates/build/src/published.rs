@@ -3,8 +3,8 @@
 //! same state.
 //!
 //! A component's source key is a hash of the files that decide it: for a
-//! platform's kernel the upstream lock, the series and every patch it
-//! applies, the config, the toolchain recipes, the descriptor's build
+//! platform's kernel the upstream lock (the commit of OrchardLinux/linux),
+//! the config, the toolchain recipes, the descriptor's build
 //! fields and the producer version; for m1n1 and the tools their recipes.
 //! CI publishes the keys of what it built (`component-keys.json`, listed in
 //! `SHA256SUMS`); a build whose data gives the same key downloads that
@@ -12,7 +12,7 @@
 //! `ORCHARD_PUBLISHED=off` (`ORCHARD_KERNEL=local` for kernels only): it is
 //! built here.
 use crate::components::TOOLS;
-use crate::platform::{descriptor, patches};
+use crate::platform::descriptor;
 use crate::{json, recipes, Build, RELEASES};
 use orchard_cache::component::Key;
 use orchard_cache::http::Http;
@@ -32,23 +32,13 @@ const LIMIT: u64 = 2 << 30;
 pub fn source_inputs(build: &Build, platform: &str) -> Result<Value> {
     let root = &build.root;
     let described = descriptor(root, platform)?;
-    let mut paths = vec![
-        described.upstream.clone(),
-        described.series.clone(),
-        described.config.clone(),
-        "kernel/Containerfile".to_owned(),
-        "kernel/install-toolchain".to_owned(),
+    // The source is the lock's commit of OrchardLinux/linux, as it is.
+    let paths = [
+        described.upstream.as_str(),
+        described.config.as_str(),
+        "kernel/Containerfile",
+        "kernel/install-toolchain",
     ];
-    for patch in patches(root, platform)? {
-        paths.push(
-            patch
-                .strip_prefix(root)
-                .unwrap_or(&patch)
-                .to_string_lossy()
-                .into_owned(),
-        );
-    }
-    let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
     Ok(json!({
         "platform": platform,
         "build": described.build_fields(false),
