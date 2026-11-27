@@ -326,7 +326,17 @@ pub fn prepare(build: &Build, device: &str, given: &Given) -> Result<Components>
     };
     let kernel = match &given.kernel {
         Some(kernel) => absolute(kernel)?,
-        None => kernel::prepare(build, device, tree.as_deref())?,
+        None if tree.is_some() => kernel::prepare(build, device, tree.as_deref())?,
+        // A board with modules of its own gets them built from the data:
+        // the published kernel's key does not cover their recipe.
+        None if build.root.join("kernel/modules").join(device).is_dir() => {
+            kernel::prepare(build, device, None)?
+        }
+        // The nightly's when it was built from this state of the data.
+        None => match published::kernel(build, &described.platform)? {
+            Some(kernel) => kernel,
+            None => kernel::prepare(build, device, None)?,
+        },
     };
     let busybox = match &given.busybox {
         Some(busybox) => absolute(busybox)?,

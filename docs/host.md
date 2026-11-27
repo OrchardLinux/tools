@@ -17,6 +17,13 @@ newest build of the tools' main branch that passed its tests, checks it
 against the build's checksums, and replaces an older one in one step.
 macOS (Apple Silicon and Intel) and Linux (x86_64 and aarch64).
 
+In WSL the command sees no iPad or iPhone until Windows hands the device
+over: `usbipd list` in a Windows terminal shows its BUSID, and
+`usbipd attach --wsl --auto-attach --busid BUSID` hands it over and keeps
+doing so while the device changes modes
+([usbipd-win](https://github.com/dorssel/usbipd-win)). Until then every
+command that looks for a device says so.
+
 `update` does the same from the program itself and says when it is the
 newest already. `orchard --version` names the commit a build is from. A
 program built in a source checkout is not replaced: build it again.

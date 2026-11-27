@@ -35,6 +35,9 @@ impl Discovery for Host {
 
 /// Every connected device in a known mode, sorted by location.
 pub fn list() -> Result<Vec<Device>, Error> {
+    if let Some(why) = unavailable() {
+        return Err(Fault::new(crate::Kind::Unsupported, why).during("listing USB devices"));
+    }
     let mut found: Vec<Device> = nusb::list_devices()
         .wait()
         .map_err(Fault::from)
@@ -55,6 +58,47 @@ pub fn list() -> Result<Vec<Device>, Error> {
         .collect();
     found.sort_by(|a, b| a.location.cmp(&b.location));
     Ok(found)
+}
+
+/// Why this computer shows no USB devices to any program, if it doesn't.
+pub fn unavailable() -> Option<String> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    let version = std::fs::read_to_string("/proc/version").unwrap_or_default();
+    without_usb(std::path::Path::new("/sys/bus/usb/devices").exists(), &version)
+}
+
+/// On Linux: the kernel lists USB devices in /sys/bus/usb/devices. WSL has
+/// none until Windows hands it one.
+fn without_usb(listed: bool, kernel_version: &str) -> Option<String> {
+    if listed {
+        return None;
+    }
+    let version = kernel_version.to_ascii_lowercase();
+    Some(if version.contains("microsoft") || version.contains("wsl") {
+        "this is WSL, which sees no USB device until Windows hands it one. In a Windows terminal, \
+         `usbipd list` shows the iPad or iPhone's BUSID and `usbipd attach --wsl --auto-attach \
+         --busid BUSID` hands it over and keeps doing so while it changes modes (usbipd-win, from \
+         https://github.com/dorssel/usbipd-win)"
+            .into()
+    } else {
+        "this Linux system has no USB support running: /sys/bus/usb/devices is missing".into()
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::without_usb;
+
+    #[test]
+    fn a_system_without_usb_says_why() {
+        assert_eq!(without_usb(true, "Linux version 6.6 microsoft-standard-WSL2"), None);
+        assert!(without_usb(false, "Linux version 6.6.87.2-microsoft-standard-WSL2")
+            .unwrap()
+            .contains("usbipd attach --wsl"));
+        assert!(without_usb(false, "Linux version 6.12 (gcc)").unwrap().contains("no USB support"));
+    }
 }
 
 #[cfg(target_os = "macos")]

@@ -204,10 +204,12 @@ fn built(global: &Global, args: &BuildArgs) -> Result<Built> {
     let root = snapshot::resolve(global.data.as_deref(), &store, &say)?;
     let build = Build::new(&root, &store, &say)?;
     let attached = attached_board(global, &build.root);
+    let usb = orchard_usb::unavailable();
     let choice = Choice {
         platforms: &args.platform,
         device: args.device.as_deref(),
         attached: attached.as_deref(),
+        usb: usb.as_deref(),
     };
     let read = |path: &Path| std::fs::read_to_string(path).context(path.display());
     if let Some((checkout, release)) = project::find_release(&directory)? {

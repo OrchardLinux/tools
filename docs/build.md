@@ -129,8 +129,9 @@ stored once.
   newest entry, and builds.
 - **Nightly components**: orchard's CI publishes kernels, m1n1 and the
   static tools under the same keys. A build takes the nightly's m1n1 and
-  tools when its own key matches, and `inputs` also the kernel bundle;
-  a payload's kernel is always built here. `ORCHARD_PUBLISHED=off` builds
+  tools when its own key matches, and the kernel too: a payload's unless
+  its board has modules of its own (`kernel/modules/BOARD`) or a kernel
+  tree is given, and every kernel bundle of `inputs`. `ORCHARD_PUBLISHED=off` builds
   everything here; `ORCHARD_KERNEL=local` only the kernels.
 - `orchard component-keys --output FILE [PLATFORM…]` writes those keys
   as CI publishes them (`component-keys.json`), from the data's files

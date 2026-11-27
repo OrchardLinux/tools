@@ -21,7 +21,7 @@ pub mod m1n1;
 pub mod pongo;
 pub mod recovery;
 
-pub use discovery::{list, Device, Discovery, Host};
+pub use discovery::{list, unavailable, Device, Discovery, Host};
 pub use error::{Error, Kind};
 pub use identity::{classify, Identity, Mode, System};
 pub use serial_port::serial_ports;

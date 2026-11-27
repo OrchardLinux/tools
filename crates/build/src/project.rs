@@ -368,6 +368,8 @@ pub struct Choice<'a> {
     pub device: Option<&'a str>,
     /// The board of the one device attached in DFU or Pongo, if any.
     pub attached: Option<&'a str>,
+    /// Why this computer cannot see USB devices at all, if it can't.
+    pub usb: Option<&'a str>,
 }
 
 fn listing(root: &Path) -> Result<String> {
@@ -469,6 +471,12 @@ pub fn platform(directory: &Path, root: &Path, choice: &Choice) -> Result<String
         .or(settings.device)
         .or(choice.attached.map(str::to_owned));
     let Some(board) = board else {
+        if let Some(why) = choice.usb {
+            return Err(invalid(format!(
+                "{why}\nTo build without a device, pass --device BOARD or --platform PLATFORM, or set \
+                 device in {LOCAL}."
+            )));
+        }
         return Err(invalid(format!(
             "which platform? Pass --device BOARD or --platform PLATFORM, set device in {LOCAL}, \
              or connect the device. Platforms and their boards: {}",
@@ -634,6 +642,7 @@ mod tests {
                     platforms: &platforms,
                     device,
                     attached,
+                    usb: None,
                 };
                 (
                     platform(here, root, &choice),
@@ -687,6 +696,7 @@ mod tests {
                     platforms: &[],
                     device,
                     attached,
+                    usb: None,
                 };
                 board(dir.path(), data.path(), platform, &choice)
             };
