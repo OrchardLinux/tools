@@ -113,11 +113,13 @@ jobs:
           # The tag moves with each build; the assets are replaced, the
           # checksums last, so that a download in between fails its check
           # instead of installing a mix.
+          # The tag is moved directly; editing the release's target needs
+          # more than this token may do since main takes no direct pushes.
           if gh release view nightly >/dev/null 2>&1; then
-            gh release edit nightly --target "$COMMIT" --notes "$notes" --prerelease
+            gh api -X PATCH "repos/$GH_REPO/git/refs/tags/nightly" -f sha="$COMMIT" -F force=true >/dev/null
+            gh release edit nightly --notes "$notes" --prerelease
           else
             gh release create nightly --target "$COMMIT" --title 'orchard nightly' --notes "$notes" --prerelease
           fi
-          gh api -X PATCH "repos/$GH_REPO/git/refs/tags/nightly" -f sha="$COMMIT" -F force=true >/dev/null
           gh release upload nightly "${assets[@]}" BUILD --clobber
           gh release upload nightly SHA256SUMS --clobber
