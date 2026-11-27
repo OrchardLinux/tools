@@ -80,6 +80,10 @@ pub struct InstallArgs {
     /// A scripted device instead of USB (development, tests)
     #[arg(long, hide = true)]
     pub demo: bool,
+    /// A local m1n1 instead of the published one: the plain build for
+    /// palera1n and checkra1n, the Mach-O build for ibss
+    #[arg(long, value_name = "FILE")]
+    pub m1n1: Option<PathBuf>,
 }
 
 /// Short forms of `--boot ROUTE` where the command takes boot routes only.
@@ -155,9 +159,9 @@ pub struct LaunchArgs {
     /// A scripted device instead of USB (development, tests)
     #[arg(long, hide = true)]
     pub demo: bool,
-    /// An m1n1 to start instead of the published one, in the form the boot
-    /// route takes (testing a build)
-    #[arg(long, hide = true)]
+    /// A local m1n1 instead of the published one: the plain build for
+    /// palera1n and checkra1n, the Mach-O build for ibss
+    #[arg(long, value_name = "FILE")]
     pub m1n1: Option<PathBuf>,
 }
 
@@ -1120,7 +1124,7 @@ pub fn install(global: &Global, args: &InstallArgs) -> ExitCode {
     }
     catch_interrupts();
     out.term.live_restart(vec![s("Reading the release", SUB)]);
-    let (handle, rx) = match start(App::Installer, global, Some(index), args.boot.as_deref().or(args.short.route()), args.busy_cpu, None, args.demo) {
+    let (handle, rx) = match start(App::Installer, global, Some(index), args.boot.as_deref().or(args.short.route()), args.busy_cpu, args.m1n1.as_deref(), args.demo) {
         Ok(h) => h,
         Err(e) => {
             out.fail(format!("Couldn't start: {e}"));

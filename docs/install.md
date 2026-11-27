@@ -144,6 +144,10 @@ exploit tool runs on one CPU core of its own and every other core is kept
 busy until the exploit is through. The fans may spin up for those seconds.
 `install`, `launch` and `run` take it.
 
+`--m1n1 FILE` starts a local m1n1 instead of the published one: the plain
+build for palera1n and checkra1n, the Mach-O build for ibss. `launch` takes
+it too.
+
 Board data from before `routes.toml` has the one route there was then,
 palera1n; to name another, use newer data (`--data DIR`).
 
