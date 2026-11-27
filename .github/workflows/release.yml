@@ -94,6 +94,13 @@ jobs:
           cargo build --release -p orchard-installer-app
           cargo build --release -p orchard-installer-app --target x86_64-apple-darwin
 
+      # The command line, as a person first meets it: installed by install.sh,
+      # then used without a device.
+      - name: Install and try the command line
+        run: |
+          cargo build --release -p orchard-cli
+          packaging/smoke-cli.sh target/release/orchard
+
       - name: Package
         run: |
           packaging/build-macos.sh
@@ -162,6 +169,13 @@ jobs:
             cp "target/release/$bin" "out/linux/$bin-${{ matrix.arch }}"
           done
           out/linux/orchard-launcher-${{ matrix.arch }} --version
+
+      # The command line, as a person first meets it: installed by install.sh,
+      # then used without a device.
+      - name: Install and try the command line
+        run: |
+          cargo build --release -p orchard-cli
+          packaging/smoke-cli.sh target/release/orchard
 
       - name: Package
         run: packaging/package-linux.sh ${{ matrix.arch }}
