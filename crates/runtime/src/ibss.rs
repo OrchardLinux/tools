@@ -69,12 +69,31 @@ pub fn start(executor: &Executor, session: &mut Session<Host>, board: &str, keys
     if session.check()?.mode != Mode::Dfu {
         return Err(fail("the device is no longer in DFU mode"));
     }
-    let pwned = match session.device().identity.pwned.as_deref() {
-        None => false,
-        Some("gaster") => true,
-        Some(other) => return Err(fail(format!("the boot ROM was entered by {other}; put the device in DFU mode again"))),
+    // Where gaster cannot enter the boot ROM, a board the device is plugged
+    // into has: the route starts from its mark.
+    let board_entered = !chip.entry.is_empty();
+    let pwned = match (session.device().identity.pwned.as_deref(), board_entered) {
+        (Some(mark), true) if mark == chip.entry => true,
+        (None, true) => return Err(fail(format!("the boot ROM of this chip is entered by a {} board, not by a tool of ours", chip.entry)).hint(format!("plug the device into the board and let it run; `orchard2 devices` then shows {} under Pwned", chip.entry))),
+        (None, false) => false,
+        (Some("gaster"), false) => true,
+        (Some(other), _) => return Err(fail(format!("the boot ROM was entered by {other}; put the device in DFU mode again"))),
     };
     let needs_keys = firmware.needs_device();
+    if board_entered {
+        if needs_keys {
+            return Err(fail("the firmware's keys are not in the board data, and no tool of ours reads them from this chip").hint("give them with --keys FILE"));
+        }
+        let images = firmware.finish(&store)?;
+        let restore = pack::restore(&chip, &images, &m1n1, &stub)?;
+        // usbliter8 takes the iBSS as it is, without a wrapper, and starts it
+        // (Project Cascadia `devices/a12/boot/boot-device.py`).
+        say("Starting the patched iBSS on the entered boot ROM");
+        let mut dfu = session.dfu()?;
+        dfu.start_pwned(Pwned::Usbliter8, pack::file(&images, "ibss.raw")?, session.timeout(Duration::from_secs(60))?).map_err(usb::error)?;
+        drop(dfu);
+        return restore_kernel(session, &restore, &mut say);
+    }
     let worker = (!pwned || needs_keys).then(|| Host.gaster_worker(&store)).transpose()?;
     let worker = || worker.as_ref().expect("the worker is fetched when it is needed");
 
@@ -118,6 +137,12 @@ pub fn start(executor: &Executor, session: &mut Session<Host>, board: &str, keys
         drop(dfu);
     }
 
+    restore_kernel(session, &restore, &mut say)
+}
+
+/// The patched iBoot shows up in recovery mode and takes the device tree,
+/// the trust cache and m1n1 as its restore kernel.
+fn restore_kernel(session: &mut Session<Host>, restore: &pack::Restore, say: &mut dyn FnMut(&str)) -> Result<()> {
     say("Waiting for the patched iBoot");
     session.wait_for(Mode::Recovery, Duration::from_secs(60))?;
     // Recovery mode can show up before the system lets go of the device.

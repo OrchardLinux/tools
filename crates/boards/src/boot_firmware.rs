@@ -28,6 +28,9 @@ const MAX_MANIFEST: u64 = 1 << 20;
 /// The boot arguments iBoot32Patcher writes, as Project Cascadia's build
 /// scripts pass them.
 const BOOTARGS: &str = "cs_enforcement_disable=1 debug=0x14";
+/// The boot arguments the anchor patcher writes into an A12 iBSS, as Project
+/// Cascadia's `devices/a12/boot/prepare-device-bootset.py` passes them.
+const ANCHOR_BOOTARGS: &str = "-v wdt=-1";
 /// The chip IM4M manifests, keyed by chip id (`0x8010`) with their SHA-256.
 /// They are Apple-signed, so not part of this repository or the binary: an
 /// IMG4 chain downloads its chip's from remote_boot (BSD-3-Clause) at a pinned
@@ -46,13 +49,16 @@ const MANIFESTS: &[(&str, &str)] = &[
     ("0x8015", "f60f1a7e963a6b42ee534fc8ebafd4eb6e16762e647fe38aa3a7b87da0fc3479"),
     ("0x8960", "ccc6974b5e61e5c54159feed8f1fee2119958232bad457c5e74694de46e58e0a"),
 ];
+/// Chips with no manifest of their own in that set: their patched iBSS takes
+/// any (`any_manifest`), so they are wrapped with another chip's.
+const BORROWED_MANIFESTS: &[(&str, &str)] = &[("0x8020", "0x8015")];
 const MANIFEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The number of the build code, part of what a built set is cached under.
 /// Raise it with every change to how an image is made here or in `formats`
 /// (decoding, patch steps, the trampoline, wrapping, the list of files), so
 /// that nothing built by older code is taken from the cache.
-const BUILD: u32 = 3;
+const BUILD: u32 = 4;
 
 /// The empty trust cache iBoot is given before the kernelcache: version 1, a
 /// UUID, no entries (remote_boot's `empty_trustcache.bin`, byte for byte).
@@ -77,6 +83,7 @@ struct Index {
 /// remote_boot and checked against its SHA-256.
 fn pinned_manifest(chip: u32, store: &Store) -> Result<Vec<u8>> {
     let chip = format!("{chip:#x}");
+    let chip = BORROWED_MANIFESTS.iter().find(|(c, _)| *c == chip).map_or(chip.as_str(), |(_, from)| from).to_owned();
     let (_, sha) = MANIFESTS
         .iter()
         .find(|(c, _)| *c == chip)
@@ -255,14 +262,23 @@ impl Plan {
         // The `iboot` chain needs no recipe: the open patcher of the chip's
         // image format on every stage the chip loads, from the board's
         // firmware.
-        let patcher = match chip.image_format.as_str() {
-            "im4p" => Some("hbootpatcher"),
-            "img3" => Some("iboot32patcher"),
+        // The A12's iBoot is beyond the open patcher: there the anchor
+        // patcher, and with it any manifest, since no chip manifest of ours
+        // is this chip's.
+        let patcher = match (chip.patcher.as_str(), chip.image_format.as_str()) {
+            ("cascadia-anchor", "im4p") => Some("cascadia-anchor"),
+            ("", "im4p") => Some("hbootpatcher"),
+            ("", "img3") => Some("iboot32patcher"),
             _ => None,
         };
         let plain = match (chain, data.firmware.keys().next(), patcher) {
             (Some("iboot"), Some(build), Some(patcher)) if !data.chains.contains_key("iboot") => {
-                let step = crate::catalog::BootStep { name: patcher.into(), params: Default::default() };
+                let mut params = serde_json::Map::new();
+                if patcher == "cascadia-anchor" {
+                    params.insert("boot_args".into(), ANCHOR_BOOTARGS.into());
+                    params.insert("any_manifest".into(), true.into());
+                }
+                let step = crate::catalog::BootStep { name: patcher.into(), params };
                 Some(crate::catalog::ChainRecipe {
                     firmware: build.clone(),
                     patch: chip.stages.iter().map(|stage| (stage.clone(), vec![step.clone()])).collect(),
@@ -666,7 +682,10 @@ fn apply_step(
             Ok(out)
         }
         "bytes" => bytes_patch(params, data),
-        "cascadia-anchor" => Ok(iboot::anchor::patch(data, anchor_args(params)?)?),
+        "cascadia-anchor" => {
+            let patched = iboot::anchor::patch(data, anchor_args(params)?)?;
+            Ok(if any_manifest(params) { iboot::anchor::any_manifest(&patched)? } else { patched })
+        }
         _ => Err(unsupported_step(name)),
     }
 }
@@ -683,15 +702,21 @@ fn unsupported_step(name: &str) -> Error {
     Error::new(Code::Unsupported, format!("{name}: unknown patch step"))
 }
 
+/// Whether the step also lets the iBSS take any manifest.
+fn any_manifest(params: &serde_json::Map<String, serde_json::Value>) -> bool {
+    params.get("any_manifest").and_then(|value| value.as_bool()) == Some(true)
+}
+
 fn anchor_args(params: &serde_json::Map<String, serde_json::Value>) -> Result<&str> {
+    let known = 1 + usize::from(params.get("any_manifest").is_some_and(|value| value.is_boolean()));
     let args = params
         .get("boot_args")
         .and_then(|value| value.as_str())
-        .filter(|_| params.len() == 1)
+        .filter(|_| params.len() == known)
         .ok_or_else(|| {
             Error::new(
                 Code::Format,
-                "cascadia-anchor expects only a boot_args string",
+                "cascadia-anchor expects a boot_args string and at most any_manifest",
             )
         })?;
     iboot::anchor::validate_args(args)?;

@@ -305,5 +305,34 @@ pub fn patch(data: &[u8], boot_args: &str) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+/// On top of [`patch`]: the function that checks a manifest's properties
+/// against the device and the image returns 0 at once, so a component loads
+/// with any manifest, whatever its digests, chip and nonce say (Cascadia's
+/// `--any-im4m`, `patch_iboot.py` `resolve_property_callback`, after
+/// badapple's `iboot-image4-patch.py`). The function is found from the
+/// `EKEY` literal it builds with a movz/movk pair, back to the `pacibsp`
+/// that opens it.
+pub fn any_manifest(data: &[u8]) -> Result<Vec<u8>> {
+    const PACIBSP: u32 = 0xd503_237f;
+    let words = data.len() / 4;
+    let mut starts: Vec<usize> = Vec::new();
+    for i in 0..words.saturating_sub(1) {
+        let pair = (word(data, i * 4), word(data, i * 4 + 4));
+        if pair.0.map(|w| w & 0xffff_ffe0) != Some(0x5288_ab20) || pair.1.map(|w| w & 0xffff_ffe0) != Some(0x72a8_a960) {
+            continue;
+        }
+        if let Some(start) = (i.saturating_sub(0x3ff)..=i).rev().find(|j| word(data, j * 4) == Some(PACIBSP)) {
+            if !starts.contains(&start) {
+                starts.push(start);
+            }
+        }
+    }
+    let start = unique(starts, "cascadia-anchor needs exactly one manifest property callback")? * 4;
+    let mut out = data.to_vec();
+    out[start..start + 4].copy_from_slice(&0x5280_0000u32.to_le_bytes()); // mov w0, #0
+    out[start + 4..start + 8].copy_from_slice(&0xd65f_03c0u32.to_le_bytes()); // ret
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests;

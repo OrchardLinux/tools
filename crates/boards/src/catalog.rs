@@ -53,6 +53,14 @@ pub struct Chip {
     /// The page size its kernel runs with, in bytes.
     #[serde(default)]
     pub page_size: u32,
+    /// The iBoot patcher of the `ibss` route where it is not the open
+    /// patcher of the image format: `cascadia-anchor` on the A12.
+    #[serde(default)]
+    pub patcher: String,
+    /// What enters the chip's boot ROM where gaster cannot: `usbliter8`, a
+    /// board the device is plugged into, which leaves its mark in DFU mode.
+    #[serde(default)]
+    pub entry: String,
 }
 
 /// A feature from `features.toml`: its key and its label.

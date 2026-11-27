@@ -28,6 +28,15 @@ m1n1's proxy once it runs; `--proxy` asks for that way whatever the size.
 | wait for DFU mode | `--wait SECONDS` |
 | bound the device work | `--timeout SECONDS` (300) |
 
+## The A12 boards
+
+On the A12 boards (iPhone XR, XS, XS Max; iPad mini 5, iPad Air 3, iPad 8)
+the `ibss` route is the one there is, and no tool of ours enters their boot
+ROM either: a board running usbliter8 does, with the device plugged into it.
+The device then shows as `usbliter8` under Pwned in `devices`, and from there
+`orchard run` goes on as from gaster: Apple's iBSS, patched, then m1n1. The
+iBSS takes any manifest, so no ticket of the device is needed.
+
 ## The 32-bit boards
 
 On the A5 boards (iPad mini, iPad 2) the `ibss` route is the one there is,

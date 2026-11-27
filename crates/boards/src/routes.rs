@@ -366,6 +366,8 @@ source = "s"
             stages: vec![],
             image_format: "im4p".into(),
             page_size: 16384,
+            patcher: String::new(),
+            entry: String::new(),
         }
     }
 
