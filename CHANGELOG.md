@@ -12,7 +12,7 @@ and fails if it is missing or empty.
 ### Command line
 
 - The command line is called `orchard` now (it was `orchard2`) and replaces
-  orchard's Python tool. Install it with
+  orchard's Python tool. Each release carries it for macOS and Linux. Install it with
   `curl -fsSL https://raw.githubusercontent.com/OrchardLinux/tools/main/install.sh | sh`;
   `orchard update` fetches a newer one.
 - `install` and `launch` take `--boot ROUTE` to choose how the device starts
@@ -22,6 +22,13 @@ and fails if it is missing or empty.
 - `install` and `launch` take `--m1n1 FILE`, a local m1n1 instead of the
   published one, for boards whose m1n1 support is not published yet. A file
   of the wrong kind for the route is refused before anything is sent.
+- `install NAME --kernel DIR` installs a release with a kernel built from
+  your own tree; with `--data` and `--m1n1` that also covers a board no
+  release lists yet. The kernel tree option is `--kernel` everywhere now
+  (`--kernel-tree` still works), and `run --kernel` takes a tree or a
+  finished image.
+- `run` in a directory with nothing to run says so and names what works
+  from anywhere.
 - `install`, `launch` and `run` take `--busy-cpu` (Linux, off by default):
   for computers where checkm8 only gets in under load, the exploit runs on
   one core while the others are kept busy.
