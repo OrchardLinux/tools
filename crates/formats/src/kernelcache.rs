@@ -1,6 +1,8 @@
-//! Prelinked ARM64 kernelcaches (the `MH_EXECUTE` kind, iOS 15 and older on
-//! these devices), and firmware embedded in their kexts. Kexts are found by
-//! their prelink info, never by fixed offsets.
+//! ARM64 kernelcaches, and firmware embedded in their kexts. Two kinds: the
+//! prelinked `MH_EXECUTE` kernel (iOS 15 and older on these devices), whose
+//! kexts are found by their prelink info, and the `MH_FILESET` (iOS 16 and
+//! later), whose kexts are fileset entries named by bundle id. Never by
+//! fixed offsets.
 use crate::macho::{self, Section, Segment};
 use crate::osserialize::{self, Value};
 use crate::{im4p, img4, lzfse, lzss, Error, Result};
@@ -45,18 +47,26 @@ pub struct Kernelcache<'a> {
     data: &'a [u8],
     segments: Vec<Segment>,
     sections: Vec<Section>,
+    /// The fileset entries; empty for a prelinked kernel.
+    entries: Vec<macho::Entry>,
 }
 
 impl<'a> Kernelcache<'a> {
     pub fn new(data: &'a [u8]) -> Result<Kernelcache<'a>> {
         let header = macho::parse(data, 0)?;
-        if header.filetype != macho::MH_EXECUTE {
-            return Err(Error("kernelcache is not a prelinked MH_EXECUTE kernel"));
+        if header.filetype != macho::MH_EXECUTE && header.filetype != macho::MH_FILESET {
+            return Err(Error(
+                "kernelcache is neither a prelinked kernel nor a fileset",
+            ));
+        }
+        if header.filetype == macho::MH_FILESET && header.entries.is_empty() {
+            return Err(Error("fileset kernelcache has no entries"));
         }
         Ok(Kernelcache {
             data,
             segments: header.segments,
             sections: header.sections,
+            entries: header.entries,
         })
     }
 
@@ -78,7 +88,7 @@ impl<'a> Kernelcache<'a> {
             .ok_or(Error("mapping extends past the kernelcache"))
     }
 
-    /// The sections of the one prelinked kext with bundle id `bundle`.
+    /// The sections of the one kext with bundle id `bundle`.
     pub fn kext(&self, bundle: &str) -> Result<Vec<Section>> {
         self.kext_or_merged(bundle)?
             .ok_or(Error("kext is merged into the kernel and has no sections of its own"))
@@ -88,6 +98,9 @@ impl<'a> Kernelcache<'a> {
     /// kernel's own: some chips' iOS 12 kernelcaches give a kext a
     /// `ModuleIndex` and no load address, and it has no Mach-O of its own.
     pub fn kext_or_merged(&self, bundle: &str) -> Result<Option<Vec<Section>>> {
+        if !self.entries.is_empty() {
+            return self.fileset_kext(bundle).map(Some);
+        }
         let info = self.section("__PRELINK_INFO", "__info", &self.sections)?;
         let info = osserialize::xml(self.read(info.addr, info.size)?)?;
         let kexts = info
@@ -111,6 +124,19 @@ impl<'a> Kernelcache<'a> {
         Ok(Some(macho::parse(self.data, start)?.sections))
     }
 
+    /// The sections of the fileset entry with id `bundle`, from the Mach-O
+    /// header at the entry's file offset. Their addresses are in the
+    /// kernelcache's own address space, so `read` serves them.
+    fn fileset_kext(&self, bundle: &str) -> Result<Vec<Section>> {
+        let mut matching = self.entries.iter().filter(|e| e.id == bundle);
+        let (Some(entry), None) = (matching.next(), matching.next()) else {
+            return Err(Error("kernelcache does not hold exactly one such kext"));
+        };
+        let start = usize::try_from(entry.fileoff)
+            .map_err(|_| Error("fileset entry lies past the kernelcache"))?;
+        Ok(macho::parse(self.data, start)?.sections)
+    }
+
     pub fn section<'s>(
         &self,
         segment: &str,
@@ -125,6 +151,23 @@ impl<'a> Kernelcache<'a> {
             _ => Err(Error("kernelcache section is missing or repeated")),
         }
     }
+}
+
+/// The bytes of section `segment`.`section` of the kext with bundle id
+/// `bundle`: firmware a kext carries as one whole section. The recipe pins
+/// the hash.
+pub fn kext_section<'a>(
+    kc: &Kernelcache<'a>,
+    bundle: &str,
+    segment: &str,
+    section: &str,
+) -> Result<&'a [u8]> {
+    let sections = kc.kext(bundle)?;
+    let found = kc.section(segment, section, &sections)?;
+    if found.size == 0 {
+        return Err(Error("kext section is empty"));
+    }
+    kc.read(found.addr, found.size)
 }
 
 /// SmartIO firmware: the `__DATA.__firmware` section of a SmartIO kext.
@@ -351,6 +394,185 @@ pub fn vxd<'a>(kc: &Kernelcache<'a>) -> Result<&'a [u8]> {
 mod tests {
     use super::*;
     use crate::der::{self, IA5_STRING, SEQUENCE};
+
+    /// Where the made-up kernelcaches below are mapped, and their size.
+    const BASE: u64 = 0xffff_fff0_0700_4000;
+    const SIZE: usize = 0x4000;
+    /// The two kexts each holds, and their Mach-Os' file offsets.
+    const KEXTS: [(&str, usize); 2] = [("com.example.one", 0x1000), ("com.example.two", 0x2000)];
+
+    /// A 64-bit ARM64 Mach-O header with these load commands.
+    fn header(filetype: u32, commands: &[Vec<u8>]) -> Vec<u8> {
+        let total: usize = commands.iter().map(Vec::len).sum();
+        let mut v = Vec::new();
+        for word in [0xfeed_facf, 0x0100_000c, 0, filetype, commands.len() as u32] {
+            v.extend(u32::to_le_bytes(word));
+        }
+        for word in [total as u32, 0, 0] {
+            v.extend(word.to_le_bytes());
+        }
+        commands.iter().for_each(|c| v.extend(c));
+        v
+    }
+
+    fn fixed(name: &str) -> [u8; 16] {
+        let mut raw = [0; 16];
+        raw[..name.len()].copy_from_slice(name.as_bytes());
+        raw
+    }
+
+    /// An LC_SEGMENT_64 mapping `size` file bytes from `fileoff` at
+    /// `vmaddr`, with sections given as (name, address, size).
+    fn segment(
+        name: &str,
+        vmaddr: u64,
+        fileoff: usize,
+        size: usize,
+        sections: &[(&str, u64, u64)],
+    ) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend(0x19u32.to_le_bytes());
+        v.extend(((72 + 80 * sections.len()) as u32).to_le_bytes());
+        v.extend(fixed(name));
+        for quad in [vmaddr, size as u64, fileoff as u64, size as u64] {
+            v.extend(quad.to_le_bytes());
+        }
+        for word in [3u32, 3, sections.len() as u32, 0] {
+            v.extend(word.to_le_bytes());
+        }
+        for (section, addr, len) in sections {
+            v.extend(fixed(section));
+            v.extend(fixed(name));
+            v.extend(addr.to_le_bytes());
+            v.extend(len.to_le_bytes());
+            v.extend([0; 32]);
+        }
+        v
+    }
+
+    /// An LC_FILESET_ENTRY whose id string follows the fixed fields.
+    fn entry(id: &str, vmaddr: u64, fileoff: usize) -> Vec<u8> {
+        let mut name = id.as_bytes().to_vec();
+        name.resize((id.len() + 8) & !7, 0);
+        let mut v = Vec::new();
+        v.extend(0x8000_0035u32.to_le_bytes());
+        v.extend(((32 + name.len()) as u32).to_le_bytes());
+        v.extend(vmaddr.to_le_bytes());
+        v.extend((fileoff as u64).to_le_bytes());
+        v.extend([32, 0, 0, 0, 0, 0, 0, 0]);
+        v.extend(name);
+        v
+    }
+
+    fn put(file: &mut [u8], at: usize, bytes: &[u8]) {
+        file[at..at + bytes.len()].copy_from_slice(bytes);
+    }
+
+    /// Writes each kext's own Mach-O at its offset: a `__DATA` segment with
+    /// a 0x40-byte `fwFirmwareImage` of its own bytes, an empty section and
+    /// one beyond the kernelcache's mapping.
+    fn kexts(file: &mut [u8]) {
+        for (i, (_, at)) in KEXTS.iter().enumerate() {
+            let data = BASE + *at as u64 + 0x100;
+            let sections = [
+                ("fwFirmwareImage", data, 0x40),
+                ("__empty", data + 0x40, 0),
+                ("__outside", BASE + 0x8000, 0x10),
+            ];
+            let commands = [
+                segment("__TEXT", BASE + *at as u64, *at, 0x100, &[]),
+                segment("__DATA", data, at + 0x100, 0x100, &sections),
+            ];
+            put(file, *at, &header(0xb, &commands));
+            let image: Vec<u8> = (0..0x40).map(|b| (b * (i + 3)) as u8).collect();
+            put(file, at + 0x100, &image);
+        }
+    }
+
+    /// A fileset kernelcache with these entries.
+    fn fileset(entries: &[(&str, usize)]) -> Vec<u8> {
+        let mut file = vec![0; SIZE];
+        let mut commands = vec![segment("__TEXT", BASE, 0, SIZE, &[])];
+        commands.extend(
+            entries
+                .iter()
+                .map(|(id, at)| entry(id, BASE + *at as u64, *at)),
+        );
+        put(&mut file, 0, &header(macho::MH_FILESET, &commands));
+        kexts(&mut file);
+        file
+    }
+
+    /// A prelinked kernelcache whose prelink info lists both kexts.
+    fn prelinked() -> Vec<u8> {
+        let listed: String = KEXTS
+            .iter()
+            .map(|(id, at)| {
+                format!(
+                    "<dict><key>CFBundleIdentifier</key><string>{id}</string>\
+                     <key>_PrelinkExecutableLoadAddr</key><integer size=\"64\">{:#x}</integer></dict>",
+                    BASE + *at as u64
+                )
+            })
+            .collect();
+        let info =
+            format!("<dict><key>_PrelinkInfoDictionary</key><array>{listed}</array></dict>\0");
+        let mut file = vec![0; SIZE];
+        let commands = [
+            segment("__TEXT", BASE, 0, 0x1000, &[]),
+            segment(
+                "__PRELINK_INFO",
+                BASE + 0x3000,
+                0x3000,
+                0x1000,
+                &[("__info", BASE + 0x3000, info.len() as u64)],
+            ),
+            segment("__PRELINK_TEXT", BASE + 0x1000, 0x1000, 0x2000, &[]),
+        ];
+        put(&mut file, 0, &header(macho::MH_EXECUTE, &commands));
+        put(&mut file, 0x3000, info.as_bytes());
+        kexts(&mut file);
+        file
+    }
+
+    #[test]
+    fn a_kext_section_by_bundle_id_in_both_kinds_of_kernelcache() {
+        for file in [fileset(&KEXTS), prelinked()] {
+            let kc = Kernelcache::new(&file).unwrap();
+            for (i, (bundle, at)) in KEXTS.iter().enumerate() {
+                let image = kext_section(&kc, bundle, "__DATA", "fwFirmwareImage").unwrap();
+                assert_eq!(image, &file[at + 0x100..at + 0x140]);
+                assert_eq!(image[1], (i + 3) as u8);
+                // An empty section, one outside the mapping, and names the
+                // kext does not have.
+                assert!(kext_section(&kc, bundle, "__DATA", "__empty").is_err());
+                assert!(kext_section(&kc, bundle, "__DATA", "__outside").is_err());
+                assert!(kext_section(&kc, bundle, "__TEXT", "fwFirmwareImage").is_err());
+                assert!(kext_section(&kc, bundle, "__DATA", "other").is_err());
+            }
+            assert!(kext_section(&kc, "com.example.three", "__DATA", "fwFirmwareImage").is_err());
+        }
+    }
+
+    #[test]
+    fn fileset_entries_must_be_unique_and_inside_the_file() {
+        let (one, two) = (KEXTS[0], KEXTS[1]);
+        let twice = fileset(&[one, two, one]);
+        let kc = Kernelcache::new(&twice).unwrap();
+        assert!(kc.kext(one.0).is_err());
+        assert!(kc.kext(two.0).is_ok());
+        let past = fileset(&[one, ("com.example.two", SIZE + 0x1000)]);
+        assert!(Kernelcache::new(&past).unwrap().kext(two.0).is_err());
+        // A fileset without entries, and an entry whose id lies outside its
+        // command.
+        assert!(Kernelcache::new(&fileset(&[])).is_err());
+        let mut bad = fileset(&[one]);
+        let id = 32 + 72 + 24;
+        put(&mut bad, id, &200u32.to_le_bytes());
+        assert!(Kernelcache::new(&bad).is_err());
+        // Neither kind: a kext's own Mach-O.
+        assert!(Kernelcache::new(&twice[one.1..]).is_err());
+    }
 
     #[test]
     fn gpu_firmware_follows_the_build_variant_and_starts_with_a_branch() {

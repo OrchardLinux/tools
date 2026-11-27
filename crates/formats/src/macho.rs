@@ -3,9 +3,22 @@
 use crate::{Error, Result};
 
 pub const MH_EXECUTE: u32 = 2;
+/// A Mach-O made of several Mach-Os, one per fileset entry: the kernelcache
+/// kind of iOS 16 and later.
+pub const MH_FILESET: u32 = 0xc;
 const MAGIC_64: u32 = 0xfeed_facf;
 const CPU_ARM64: u32 = 0x0100_000c;
 const LC_SEGMENT_64: u32 = 0x19;
+const LC_FILESET_ENTRY: u32 = 0x8000_0035;
+
+/// One Mach-O of a fileset: its id (for a kext, the bundle id) and where its
+/// own header lies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Entry {
+    pub id: String,
+    pub vmaddr: u64,
+    pub fileoff: u64,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Segment {
@@ -29,6 +42,7 @@ pub struct Header {
     pub filetype: u32,
     pub segments: Vec<Segment>,
     pub sections: Vec<Section>,
+    pub entries: Vec<Entry>,
 }
 
 /// Reads the Mach-O header that starts at `start` in `data`.
@@ -65,6 +79,7 @@ pub fn parse(data: &[u8], start: usize) -> Result<Header> {
         filetype,
         segments: Vec::new(),
         sections: Vec::new(),
+        entries: Vec::new(),
     };
     let mut at = start + 32;
     for _ in 0..count {
@@ -93,6 +108,20 @@ pub fn parse(data: &[u8], start: usize) -> Result<Header> {
                     size: quad(s + 40)?,
                 });
             }
+        } else if cmd == LC_FILESET_ENTRY {
+            if len < 32 {
+                return Err(Error("truncated Mach-O fileset entry"));
+            }
+            // The id is a C string inside the command, at the offset it gives.
+            let id = word(at + 24)? as usize;
+            if !(32..len).contains(&id) {
+                return Err(Error("bad Mach-O fileset entry id"));
+            }
+            header.entries.push(Entry {
+                id: name(&data[at + id..at + len]),
+                vmaddr: quad(at + 8)?,
+                fileoff: quad(at + 16)?,
+            });
         }
         at += len;
     }
