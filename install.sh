@@ -53,6 +53,6 @@ case ":$PATH:" in
         [ -z "$found" ] || [ "$found" = "$bin/$NAME" ] || say "Your shell finds $found first: remove it, or put $bin before it on PATH." ;;
     *) say "$bin is not on your PATH: add it, or run $bin/$NAME." ;;
 esac
-# The Python tool this one replaces kept its own cache, which nothing reads now.
-old=${XDG_CACHE_HOME:-$HOME/.cache}/orchard
-[ ! -d "$old/tooling" ] || say "The earlier orchard's cache is still in $old; nothing uses it any more (rm -rf to free the space)."
+# The launcher this replaces kept its downloaded nightlies, which nothing reads now.
+old=${XDG_CACHE_HOME:-$HOME/.cache}/orchard/tooling
+[ ! -d "$old" ] || say "The earlier launcher's downloaded nightlies are still in $old; nothing uses them any more."
