@@ -1,7 +1,7 @@
 //! A RAM boot: m1n1 on the device in DFU mode, alone or with a Linux it
 //! starts at once, by the board's boot route.
 //!
-//! `orchard2 run --kernel Image.gz --dtb board.dtb --initramfs initramfs.cpio.gz`
+//! `orchard run --kernel Image.gz --dtb board.dtb --initramfs initramfs.cpio.gz`
 //!
 //! The kernel, device tree and initramfs go up in one upload behind m1n1
 //! where they fit, and through m1n1's proxy where they are too large for
@@ -161,7 +161,7 @@ fn shortcut(source: &Path, platform: Option<&str>) -> Result<PathBuf> {
     let built = platform.map(|platform| source.join("out").join(platform).join(SHORTCUT));
     match built {
         Some(built) if built.is_file() => Ok(built),
-        Some(built) => Err(Error::new(Code::NotFound, format!("no build for this board in {}", source.display())).hint(format!("orchard2 build makes {}", built.display()))),
+        Some(built) => Err(Error::new(Code::NotFound, format!("no build for this board in {}", source.display())).hint(format!("orchard build makes {}", built.display()))),
         None => Err(Error::new(Code::NotFound, format!("no {SHORTCUT} in {}", source.display()))),
     }
 }

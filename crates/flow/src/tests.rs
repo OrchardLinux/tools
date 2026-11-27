@@ -1038,16 +1038,16 @@ fn a_device_whose_work_is_over_is_free_for_other_work() {
 fn a_device_other_work_holds_is_waited_for_not_unplugged() {
     let held = |by: &str| Other { name: "iPad".into(), mode: "dfu".into(), held_by: Some(by.into()) };
     let with = |others: Vec<Other>| step(App::Launcher, Flow::new(), Event::Others(others)).0;
-    let flow = with(vec![held("orchard2 load")]);
+    let flow = with(vec![held("orchard load")]);
     assert!(flow.refusing());
     let said = flow.in_use().unwrap();
     assert_eq!(said.title, "This device is in use");
-    assert_eq!(said.hint, "orchard2 load is working on it. This goes on when it has finished.");
+    assert_eq!(said.hint, "orchard load is working on it. This goes on when it has finished.");
     // Who holds it is not always known.
     assert!(with(vec![held("")]).in_use().unwrap().hint.starts_with("Another Orchard program is working on it."));
     assert_eq!(with(vec![held("a"), held("b")]).in_use().unwrap().title, "These devices are in use");
     // With a device that nobody holds beside it, it is "more than one device".
-    assert_eq!(with(vec![held("orchard2 load"), iphone()]).in_use(), None);
+    assert_eq!(with(vec![held("orchard load"), iphone()]).in_use(), None);
     assert_eq!(with(vec![]).in_use(), None);
 }
 

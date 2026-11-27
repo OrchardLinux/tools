@@ -1,7 +1,7 @@
 # cache
 
 ```sh
-orchard2 cache
+orchard cache
 ```
 
 lists what is cached, with sizes and when each was last used:

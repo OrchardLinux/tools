@@ -1,33 +1,33 @@
 # This computer: install, update, doctor and setup
 
-orchard2 fetches its own tools (palera1n, checkra1n, m1n1, Pongo) when a run
+orchard fetches its own tools (palera1n, checkra1n, m1n1, Pongo) when a run
 needs them and talks to USB by itself, without libusb. What it takes from
 the computer is little, and `doctor` lists it with what each is for.
 
-## Installing and updating orchard2
+## Installing and updating orchard
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/OrchardLinux/tools/main/install.sh | sh
-orchard2 update
+orchard update
 ```
 
-The script puts `orchard2` into `~/.local/bin` (`ORCHARD_BIN` names another
+The script puts `orchard` into `~/.local/bin` (`ORCHARD_BIN` names another
 directory) and needs no root. It takes the file for this computer from the
 newest build of the tools' main branch that passed its tests, checks it
 against the build's checksums, and replaces an older one in one step.
 macOS (Apple Silicon and Intel) and Linux (x86_64 and aarch64).
 
 `update` does the same from the program itself and says when it is the
-newest already. `orchard2 --version` names the commit a build is from. A
+newest already. `orchard --version` names the commit a build is from. A
 program built in a source checkout is not replaced: build it again.
 
 ## doctor
 
 ```sh
-orchard2 doctor
+orchard doctor
 ```
 
-changes nothing. It lists what orchard2 takes from the computer, what each
+changes nothing. It lists what orchard takes from the computer, what each
 is for, whether it is there, and for what is not the command that gets it:
 
 ```
@@ -36,13 +36,13 @@ is for, whether it is there, and for what is not the command that gets it:
 ├────────────┼──────────┼────────────┼───────────────────────┤
 │ Python     │ building │ 3.14.0     │                       │
 │ git        │ building │ ready      │                       │
-│ Podman     │ building │ VM stopped │ orchard2 setup podman │
+│ Podman     │ building │ VM stopped │ orchard setup podman │
 │ Free space │ building │ 30 GB      │                       │
 │ ssh-keygen │ SSH      │ ready      │                       │
 └────────────┴──────────┴────────────┴───────────────────────┘
 ```
 
-A state in yellow is missing and orchard2 can get it with the command
+A state in yellow is missing and orchard can get it with the command
 beside it. One in red is for you to do, and the last cell says what.
 In `--json`
 these are the states `ready`, `missing` and `yours`.
@@ -65,8 +65,8 @@ four. On macOS nothing is needed for USB.
 ## setup
 
 ```sh
-orchard2 setup podman
-orchard2 setup usb git
+orchard setup podman
+orchard setup usb git
 ```
 
 gets the named things, one after the other, and prints each command before
@@ -78,7 +78,7 @@ it runs it. Without a name it only shows what `doctor` shows.
 | `python`, `git`, `podman` | installs the package: with glu, else Homebrew, on macOS; with apt, dnf or pacman through `sudo` on Linux |
 | `podman`, on macOS | also creates its VM if there is none, and starts it |
 
-What is ready is left alone. `ssh` and `disk` are yours: orchard2 says what
+What is ready is left alone. `ssh` and `disk` are yours: orchard says what
 is missing and stops (`unsupported`). With no package manager it knows, a
 tool is yours too.
 

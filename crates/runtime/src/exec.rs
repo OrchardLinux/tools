@@ -300,7 +300,7 @@ impl Executor {
         routes::read(&catalog)?.named(Kind::Boot, asked).map(|_| ())
     }
 
-    /// orchard2's cache directory.
+    /// orchard's cache directory.
     pub fn cache(&self) -> &Path {
         &self.cache
     }

@@ -49,7 +49,7 @@ impl Shared {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.subsec_nanos());
         let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-        let name = format!("orchard2-session-{}-{seq}-{nanos}", std::process::id());
+        let name = format!("orchard-session-{}-{seq}-{nanos}", std::process::id());
         let path = std::env::temp_dir().join(name);
         let mut options = File::options();
         options.read(true).write(true).create_new(true);

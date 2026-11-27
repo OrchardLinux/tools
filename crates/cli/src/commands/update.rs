@@ -94,8 +94,8 @@ mod tests {
 
     #[test]
     fn a_build_in_a_checkout_is_not_replaced() {
-        assert!(built_here(Path::new("/home/a/tools/target/release/orchard2")));
-        assert!(!built_here(Path::new("/home/a/.local/bin/orchard2")));
+        assert!(built_here(Path::new("/home/a/tools/target/release/orchard")));
+        assert!(!built_here(Path::new("/home/a/.local/bin/orchard")));
     }
 
     #[test]

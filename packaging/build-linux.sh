@@ -1,6 +1,6 @@
 #!/bin/bash
 # Linux release binaries under podman (orchard's way): out/linux/<bin>-<arch>
-# for orchard-installer and orchard (the launcher).
+# for orchard-installer and orchard-launcher.
 #   packaging/build-linux.sh aarch64|x86_64
 # The source is mounted read-only; each arch builds into its own volume.
 set -euo pipefail
@@ -34,7 +34,7 @@ export CXX_x86_64_unknown_linux_gnu="clang++ --target=x86_64-unknown-linux-gnu -
 export AR_x86_64_unknown_linux_gnu=ar
 export PKG_CONFIG_ALLOW_CROSS=1 PKG_CONFIG_SYSROOT_DIR=$sys PKG_CONFIG_LIBDIR=$sys/usr/lib/pkgconfig:$sys/usr/share/pkgconfig
 cargo build --release -p orchard-installer-app --target x86_64-unknown-linux-gnu
-for b in orchard-installer orchard; do cp /target/x86_64-unknown-linux-gnu/release/$b /out/$b-x86_64; done
+for b in orchard-installer orchard-launcher; do cp /target/x86_64-unknown-linux-gnu/release/$b /out/$b-x86_64; done
 SH
-else echo "cargo build --release -p orchard-installer-app && for b in orchard-installer orchard; do cp /target/release/\$b /out/\$b-$arch; done"; fi)"
-echo "Built out/linux/orchard-installer-$arch and out/linux/orchard-$arch"
+else echo "cargo build --release -p orchard-installer-app && for b in orchard-installer orchard-launcher; do cp /target/release/\$b /out/\$b-$arch; done"; fi)"
+echo "Built out/linux/orchard-installer-$arch and out/linux/orchard-launcher-$arch"

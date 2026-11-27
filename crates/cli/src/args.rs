@@ -12,7 +12,7 @@ fn version() -> &'static str {
 
 #[derive(Parser)]
 #[command(
-    name = "orchard2",
+    name = "orchard",
     version = version(),
     about = "Boot Linux on iPhones and iPads over USB"
 )]
@@ -61,7 +61,7 @@ pub struct DeviceArgs {
     /// Device ECID, in any hex spelling
     #[arg(long, global = true)]
     pub ecid: Option<String>,
-    /// USB location, as `orchard2 devices` prints it
+    /// USB location, as `orchard devices` prints it
     #[arg(long, global = true)]
     pub location: Option<String>,
 }
@@ -128,7 +128,7 @@ pub enum Command {
         reach: ReachArgs,
     },
     /// Run a command on the running RAM payload or installed system:
-    /// orchard2 exec -- CMD...
+    /// orchard exec -- CMD...
     Exec {
         #[command(flatten)]
         reach: ReachArgs,
@@ -178,7 +178,7 @@ pub enum Command {
         #[arg(long)]
         output: std::path::PathBuf,
     },
-    /// Keep one device locked while a command runs; orchard2 commands in it
+    /// Keep one device locked while a command runs; orchard commands in it
     /// work on that device
     Session {
         /// Seconds all device work in the session may take together
@@ -204,7 +204,7 @@ pub enum Command {
     },
     /// Replace this program with its newest build
     Update,
-    /// Show what this computer has of what orchard2 uses, and what each is
+    /// Show what this computer has of what orchard uses, and what each is
     /// needed for; changes nothing
     Doctor,
     /// Get one of the things doctor lists as missing; without a name, show

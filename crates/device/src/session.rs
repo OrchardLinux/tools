@@ -7,7 +7,7 @@
 //! [`Session::wait_for`] finds it again in its new mode and checks that it
 //! is still the same device.
 //!
-//! A session can run a command ([`Session::run`]). The orchard2 commands
+//! A session can run a command ([`Session::run`]). The orchard commands
 //! that command starts continue the session: same lock, same deadline, and
 //! what one of them learns about the device the next one knows.
 use crate::deadline::Deadline;
@@ -210,7 +210,7 @@ impl<D: Discovery> Session<D> {
         let mut child = std::process::Command::new(program);
         child.args(args);
         self.lock.hand_to(&mut child)?;
-        // The command's orchard2 commands share the state through a file
+        // The command's orchard commands share the state through a file
         // made for them, or the one this session was given itself.
         let made;
         let shared = match &self.shared {

@@ -43,7 +43,7 @@ on stderr, or with `--json` on stdout:
 | `too-large` | 9 | something is larger than it may be |
 | `unsupported` | 10 | this version, or this device, cannot do it |
 | `timeout` | 11 | it took too long |
-| `locked` | 12 | another orchard2 holds the device |
+| `locked` | 12 | another orchard holds the device |
 | `device-changed` | 13 | the device is not the one, or not in the state, it was |
 | `refused` | 14 | the device or a check refused |
 | `build` | 15 | a build's recipe failed |

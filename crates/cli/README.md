@@ -1,4 +1,4 @@
-# orchard2
+# orchard
 
 The command line. Its documentation is in [`docs/`](../../docs/README.md):
 

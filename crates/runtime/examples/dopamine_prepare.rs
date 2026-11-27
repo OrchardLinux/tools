@@ -1,4 +1,4 @@
-//! Puts Resize APFS into a Dopamine IPA as `orchard2 resize --dopamine`
+//! Puts Resize APFS into a Dopamine IPA as `orchard resize --dopamine`
 //! does, without signing: for comparing with resize-apfs's `embed.py`.
 //! `dopamine_prepare DOPAMINE.ipa ACCESS_DIR OUT_DIR`
 use orchard_runtime::access_dopamine::prepare;

@@ -58,12 +58,12 @@ pub fn read(root: &Path) -> Result<Contract> {
     if !path.is_file() {
         // A copy of a nightly is refreshed by the tool, a checkout by its owner.
         let hint = match crate::snapshot::record(root) {
-            Some(_) => "orchard2 data update fetches orchard's newest recipes",
+            Some(_) => "orchard data update fetches orchard's newest recipes",
             None => "update this orchard checkout, or leave --data out to use orchard's nightly",
         };
         return Err(Error::new(
             Code::Unsupported,
-            format!("no {NAME}: these recipes are older than this orchard2 builds from"),
+            format!("no {NAME}: these recipes are older than this orchard builds from"),
         )
         .context(root.display())
         .hint(hint));
@@ -79,14 +79,14 @@ pub fn read(root: &Path) -> Result<Contract> {
     let schema = number("schema")?;
     if schema > SCHEMA {
         return Err(newer(format!(
-            "these recipes state their contract in form {schema}; this orchard2 reads up to {SCHEMA}"
+            "these recipes state their contract in form {schema}; this orchard reads up to {SCHEMA}"
         )));
     }
     let kernel_producer = u32::try_from(number("kernel-producer")?)
         .map_err(|_| bad("kernel-producer must be a version number".into()))?;
     if kernel_producer > KERNEL_PRODUCER {
         return Err(newer(format!(
-            "these recipes make kernels of version {kernel_producer}; this orchard2 knows up to {KERNEL_PRODUCER}"
+            "these recipes make kernels of version {kernel_producer}; this orchard knows up to {KERNEL_PRODUCER}"
         )));
     }
     let inputs = file
@@ -140,7 +140,7 @@ pub fn read(root: &Path) -> Result<Contract> {
 }
 
 fn newer(message: String) -> Error {
-    Error::new(Code::Unsupported, message).hint("update orchard2")
+    Error::new(Code::Unsupported, message).hint("update orchard")
 }
 
 #[cfg(test)]
@@ -226,6 +226,6 @@ mod tests {
             .hint
             .as_deref()
             .unwrap()
-            .contains("orchard2 data update"));
+            .contains("orchard data update"));
     }
 }

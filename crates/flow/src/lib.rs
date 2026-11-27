@@ -428,7 +428,7 @@ pub struct Other {
     pub name: String,
     /// What it runs: dfu, recovery, ios, pongo, m1n1, linux.
     pub mode: String,
-    /// Other work holds it (its lock): the program, such as `orchard2
+    /// Other work holds it (its lock): the program, such as `orchard
     /// load`, or nothing where that is not known. None: nobody does.
     pub held_by: Option<String>,
 }

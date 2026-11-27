@@ -95,7 +95,7 @@ pub fn read(directory: &Path) -> Result<Project> {
             .find(|old| directory.join(old).is_file())
         {
             return Err(invalid(format!(
-                "{} is a project file from before {NAME}, which orchard2 reads instead",
+                "{} is a project file from before {NAME}, which orchard reads instead",
                 directory.join(old).display()
             ))
             .hint(format!(

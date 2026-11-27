@@ -533,7 +533,7 @@ fn assemble(build: &Build, output: &Path, payload: &Payload) -> Result<Value> {
     for name in names {
         std::fs::rename(work.join(name), output.join(name)).context(output.join(name).display())?;
     }
-    // `run`'s own options for this build, written down: `orchard2 run DIR`.
+    // `run`'s own options for this build, written down: `orchard run DIR`.
     let mut run = toml::Table::new();
     run.insert("kernel".into(), kernel.to_string_lossy().into_owned().into());
     run.insert("dtb".into(), dtbs.iter().map(|d| toml::Value::from(d.to_string_lossy().into_owned())).collect::<Vec<_>>().into());

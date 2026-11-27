@@ -168,7 +168,7 @@ fn dopamine(executor: &orchard_runtime::exec::Executor, app: &orchard_runtime::r
     // Xcode's account where there is one, else xtool with its own sign-in.
     let teams = match cfg!(target_os = "macos") && !args.xtool {
         true => {
-            let work = std::env::temp_dir().join(format!("orchard2-teams-{}", std::process::id()));
+            let work = std::env::temp_dir().join(format!("orchard-teams-{}", std::process::id()));
             std::fs::create_dir_all(&work)?;
             let teams = access_dopamine::teams(&work);
             let _ = std::fs::remove_dir_all(&work);

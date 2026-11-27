@@ -6,15 +6,15 @@
 curl -fsSL https://raw.githubusercontent.com/OrchardLinux/tools/main/install.sh | sh
 ```
 
-puts `orchard2`, the command line, into `~/.local/bin`: the newest build of
+puts `orchard`, the command line, into `~/.local/bin`: the newest build of
 this repository's main branch that passed its tests, checked against its
-checksums. `orchard2 update` replaces it with a newer one later. Then, with
+checksums. `orchard update` replaces it with a newer one later. Then, with
 an iPad or iPhone in DFU mode:
 
 ```sh
-orchard2 install omarchy-a     # install a distribution
-orchard2 launch                # start what is installed
-orchard2 doctor                # what this computer has and lacks
+orchard install omarchy-a     # install a distribution
+orchard launch                # start what is installed
+orchard doctor                # what this computer has and lacks
 ```
 
 [`docs/`](docs/README.md) has every command. The graphical installer comes
@@ -31,7 +31,7 @@ start it, built in Rust on shared libraries:
   its name, wordmark and release.
 - **Orchard**: the launcher, which starts an installed system. It is neutral
   and shared by every distribution.
-- **The command line** (`orchard2`, in progress): the same building blocks for
+- **The command line** (`orchard`): the same building blocks for
   scripts and development. Its documentation is in [`docs/`](docs/README.md).
 
 They build on [orchard](https://github.com/OrchardLinux/orchard), which holds
@@ -52,7 +52,7 @@ aarch64).
 | `crates/build` | `build`: the component cache and orchard's producers |
 | `crates/remote` | `shell`, `exec`, `push`, `pull`: a running system over SSH or the serial console |
 | `crates/device`, `crates/cli` | The command line |
-| `docs` | What `orchard2` does, command by command |
+| `docs` | What `orchard` does, command by command |
 | `TODO.md` | What is decided but not done |
 | `companion` | The iPad app that splits the storage, with its helper |
 | `crates/inapp`, `ios-installer` | The installer that runs on the device itself: its engine, app and helper ([`ios-installer/README.md`](ios-installer/README.md)) |
@@ -62,7 +62,7 @@ aarch64).
 ## Build
 
 ```sh
-cargo build --release -p orchard-installer-app   # orchard-installer and orchard
+cargo build --release -p orchard-installer-app   # orchard-installer and orchard-launcher
 cargo test --workspace
 ```
 

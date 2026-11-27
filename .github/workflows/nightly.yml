@@ -1,8 +1,8 @@
 name: Nightly
 
-# The command line, orchard2, as one file per computer, from every commit on
+# The command line, orchard, as one file per computer, from every commit on
 # main that passed its tests: the rolling `nightly` pre-release, which
-# install.sh and `orchard2 update` download from.
+# install.sh and `orchard update` download from.
 
 on:
   workflow_run:
@@ -57,7 +57,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential clang pkg-config
           cargo build --release -p orchard-cli
-          cp target/release/orchard2 "orchard2-${{ matrix.name }}"
+          cp target/release/orchard "orchard-${{ matrix.name }}"
 
       # One file for Apple Silicon and Intel, signed ad hoc as the linker
       # signs each half.
@@ -70,17 +70,17 @@ jobs:
           rustup target add x86_64-apple-darwin --toolchain 1.98.0
           cargo build --release -p orchard-cli
           cargo build --release -p orchard-cli --target x86_64-apple-darwin
-          lipo -create -output orchard2-macos target/release/orchard2 target/x86_64-apple-darwin/release/orchard2
-          codesign --force --sign - orchard2-macos
-          codesign --verify --strict orchard2-macos
+          lipo -create -output orchard-macos target/release/orchard target/x86_64-apple-darwin/release/orchard
+          codesign --force --sign - orchard-macos
+          codesign --verify --strict orchard-macos
 
       - name: Check that it runs
-        run: ./orchard2-${{ matrix.name }} --version
+        run: ./orchard-${{ matrix.name }} --version
 
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: ${{ matrix.name }}
-          path: orchard2-${{ matrix.name }}
+          path: orchard-${{ matrix.name }}
           if-no-files-found: error
 
   publish:
@@ -103,20 +103,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          assets=(orchard2-macos orchard2-linux-x86_64 orchard2-linux-aarch64)
+          assets=(orchard-macos orchard-linux-x86_64 orchard-linux-aarch64)
           for asset in "${assets[@]}"; do
             test -s "$asset"
           done
           printf '%s\n' "$COMMIT" > BUILD
           sha256sum "${assets[@]}" BUILD > SHA256SUMS
-          notes="orchard2, the command line, built from $COMMIT. Install or update: \`curl -fsSL https://raw.githubusercontent.com/OrchardLinux/tools/main/install.sh | sh\`"
+          notes="orchard, the command line, built from $COMMIT. Install or update: \`curl -fsSL https://raw.githubusercontent.com/OrchardLinux/tools/main/install.sh | sh\`"
           # The tag moves with each build; the assets are replaced, the
           # checksums last, so that a download in between fails its check
           # instead of installing a mix.
           if gh release view nightly >/dev/null 2>&1; then
             gh release edit nightly --target "$COMMIT" --notes "$notes" --prerelease
           else
-            gh release create nightly --target "$COMMIT" --title 'orchard2 nightly' --notes "$notes" --prerelease
+            gh release create nightly --target "$COMMIT" --title 'orchard nightly' --notes "$notes" --prerelease
           fi
           gh api -X PATCH "repos/$GH_REPO/git/refs/tags/nightly" -f sha="$COMMIT" -F force=true >/dev/null
           gh release upload nightly "${assets[@]}" BUILD --clobber

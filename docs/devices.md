@@ -3,7 +3,7 @@
 ## devices
 
 ```sh
-orchard2 devices [--mode MODE]
+orchard devices [--mode MODE]
 ```
 
 lists the iPhones and iPads on USB and takes no lock, so it works while
@@ -65,7 +65,7 @@ iPhone and iPad is unplugged.
 ## wait
 
 ```sh
-orchard2 wait MODE [--timeout SECONDS]
+orchard wait MODE [--timeout SECONDS]
 ```
 
 waits until one device shows up in `dfu`, `recovery`, `pongo`, `m1n1` or
@@ -75,27 +75,27 @@ is `ambiguous`; none in time is `timeout` (exit status 11).
 ## session
 
 ```sh
-orchard2 session [--timeout SECONDS] -- COMMAND…
+orchard session [--timeout SECONDS] -- COMMAND…
 ```
 
 keeps one device for a whole script. It picks the device, locks it, runs
-COMMAND and ends with its exit status. Every `orchard2` inside works on
+COMMAND and ends with its exit status. Every `orchard` inside works on
 that device without naming it, also after it changed modes, and they share
 what was learned about it: its identity, which only the boot ROM and iBoot
 report.
 
 ```sh
-orchard2 session -- sh -c '
-    orchard2 dfu send ibss.img4 &&
-    orchard2 wait recovery &&
-    orchard2 recovery command "getenv build-version"'
+orchard session -- sh -c '
+    orchard dfu send ibss.img4 &&
+    orchard wait recovery &&
+    orchard recovery command "getenv build-version"'
 ```
 
 - `--timeout` is the time all device work in the session may take together;
   without it there is none. A command's own `--timeout` counts too, and the
   shorter one ends it.
 - **The lock** is per USB location (`/tmp/orchard2-locks/`). While a device
-  is locked, another `orchard2` that wants it fails at once with `locked`
+  is locked, another `orchard` that wants it fails at once with `locked`
   (exit status 12) and says which process holds it. `install`, `launch`,
   `run` and the low-level commands take the lock for as long as they work
   on a device, each through a session of its own.

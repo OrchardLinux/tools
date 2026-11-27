@@ -1,11 +1,11 @@
 //! A running system on the device: a shell on it, a command, a file to or
-//! from it. A RAM payload (`orchard2 build` gives it its USB session) or an
+//! from it. A RAM payload (`orchard build` gives it its USB session) or an
 //! installed system.
 //!
 //! An installed system is reached as its user with this computer's key,
-//! which `orchard2 install --ssh` imported; root there is sudo, as on any
+//! which `orchard install --ssh` imported; root there is sudo, as on any
 //! system. A RAM payload is reached as root with this computer's key for
-//! payloads, which `orchard2 build` put into it. The payload makes a new
+//! payloads, which `orchard build` put into it. The payload makes a new
 //! host key each time it starts; it is read over the USB serial console,
 //! which is the cable and so trusted, and pinned for that start. An address
 //! given by hand (`--host`) is trusted as `ssh` trusts a new one: on first
@@ -79,7 +79,7 @@ fn choose(listed: &[Device], consoles: &[Option<PathBuf>]) -> Result<Target> {
         ([], [one]) => *one,
         ([], []) => {
             return Err(Error::new(Code::NoDevice, "no running RAM payload or installed system is connected")
-                .hint("orchard2 devices lists what is there; a payload needs its USB session, a system its USB network"))
+                .hint("orchard devices lists what is there; a payload needs its USB session, a system its USB network"))
         }
         _ => {
             return Err(Error::new(Code::Ambiguous, "more than one running system is connected")
@@ -111,11 +111,11 @@ impl Keys {
     }
 
     fn payload_identity(&self) -> Result<PathBuf> {
-        Keys::identity(&self.payloads, "orchard2 build makes the key and puts it into the payload")
+        Keys::identity(&self.payloads, "orchard build makes the key and puts it into the payload")
     }
 
     fn system_identity(&self) -> Result<PathBuf> {
-        Keys::identity(&self.systems, "orchard2 install --ssh makes the key and lets it sign in")
+        Keys::identity(&self.systems, "orchard install --ssh makes the key and lets it sign in")
     }
 
     /// The user an install on this computer set up, or the one named: the
@@ -138,7 +138,7 @@ impl Keys {
 }
 
 /// The name an installed system's host key is kept under: the unit's, as
-/// `orchard2 install --ssh` forgets it by.
+/// `orchard install --ssh` forgets it by.
 pub fn alias(unit: &str) -> String {
     format!("orchard-{unit}")
 }
@@ -205,7 +205,7 @@ pub fn connect(cache: &Path, reach: &Reach) -> Result<Vec<OsString>> {
     )?;
     if code != 0 {
         return Err(Error::new(Code::Unsupported, "this payload has no SSH")
-            .hint("its init must run /usr/libexec/orchard/usb-session, which orchard2 build adds unless orchard.toml says transport = false; --serial copies files without it"));
+            .hint("its init must run /usr/libexec/orchard/usb-session, which orchard build adds unless orchard.toml says transport = false; --serial copies files without it"));
     }
     let (boot, key) = boot_and_key(&printed)?;
     let pinned = format!("{} {key}\n", ssh::HOST);
@@ -553,7 +553,7 @@ mod tests {
         assert_eq!(keys.user(Some("named"), Some("0123456789ab")).unwrap(), "named");
         assert_eq!(alias("0123456789ab"), "orchard-0123456789ab");
         // No key yet: said, with what makes one.
-        assert!(keys.payload_identity().unwrap_err().hint.unwrap().contains("orchard2 build"));
+        assert!(keys.payload_identity().unwrap_err().hint.unwrap().contains("orchard build"));
         assert!(keys.system_identity().unwrap_err().hint.unwrap().contains("install --ssh"));
     }
 

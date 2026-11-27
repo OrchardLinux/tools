@@ -1,7 +1,7 @@
-//! `doctor` and `setup`: what this computer has of what orchard2 uses from
+//! `doctor` and `setup`: what this computer has of what orchard uses from
 //! it, each with what it is needed for, and getting one of them.
 //!
-//! orchard2 fetches its own tools when a run needs them, so this is only
+//! orchard fetches its own tools when a run needs them, so this is only
 //! about the computer: access to USB on Linux, and what a build runs.
 //! `doctor` changes nothing; `setup NAME` does one thing and says what it
 //! runs before it runs it.
@@ -35,7 +35,7 @@ pub struct Check {
     pub needed_for: &'static str,
     /// What was found, or what is missing.
     pub detail: String,
-    /// The command that gets it, when orchard2 can.
+    /// The command that gets it, when orchard can.
     pub setup: Option<String>,
 }
 
@@ -169,7 +169,7 @@ fn tool(name: &'static str, program: &str, needed_for: &'static str) -> Check {
                 state: State::Missing,
                 needed_for,
                 detail: format!("{program} is not on PATH"),
-                setup: Some(format!("orchard2 setup {name}  ({})", argv.join(" "))),
+                setup: Some(format!("orchard setup {name}  ({})", argv.join(" "))),
             },
             Err(how) => Check { name, state: State::Yours, needed_for, detail: format!("{program} is not on PATH; {how}"), setup: None },
         },
@@ -206,7 +206,7 @@ fn checks(cache: &Path) -> Vec<Check> {
                 state: State::Missing,
                 needed_for: FOR,
                 detail: format!("{} is not there, or not this version's", orchard_runtime::usb_access::RULES),
-                setup: Some("orchard2 setup usb  (installs the udev rule; asks for your password)".into()),
+                setup: Some("orchard setup usb  (installs the udev rule; asks for your password)".into()),
             },
         });
     }
@@ -224,7 +224,7 @@ fn checks(cache: &Path) -> Vec<Check> {
                 state: State::Missing,
                 needed_for: PYTHON,
                 detail: e.message,
-                setup: Some(format!("orchard2 setup python  ({})", argv.join(" "))),
+                setup: Some(format!("orchard setup python  ({})", argv.join(" "))),
             },
             Err(how) => Check { name: "python", state: State::Yours, needed_for: PYTHON, detail: format!("{}; {how}", e.message), setup: None },
         },
@@ -246,7 +246,7 @@ fn checks(cache: &Path) -> Vec<Check> {
         if let Some((detail, how)) = missing {
             podman.state = State::Missing;
             podman.detail = detail;
-            podman.setup = Some(format!("orchard2 setup podman  ({how})"));
+            podman.setup = Some(format!("orchard setup podman  ({how})"));
         }
     }
     found.push(podman);
@@ -264,7 +264,7 @@ fn checks(cache: &Path) -> Vec<Check> {
             name: "disk",
             state: State::Yours,
             needed_for: DISK,
-            detail: format!("{free:.1} GB free of the {needed:.0} a build needs; orchard2 cache prune"),
+            detail: format!("{free:.1} GB free of the {needed:.0} a build needs; orchard cache prune"),
             setup: None,
         },
         Err(e) => Check { name: "disk", state: State::Yours, needed_for: DISK, detail: e.to_string(), setup: None },
@@ -313,7 +313,7 @@ pub fn setup(global: &Global, names: &[String]) -> Result<Output> {
         };
         match check.state {
             State::Ready => done.push(format!("{name}: ready already ({})", check.detail)),
-            State::Yours => return Err(Error::new(Code::Unsupported, format!("{name}: {}", check.detail)).hint("orchard2 cannot do this one for you")),
+            State::Yours => return Err(Error::new(Code::Unsupported, format!("{name}: {}", check.detail)).hint("orchard cannot do this one for you")),
             State::Missing => match name.as_str() {
                 "usb" => {
                     eprintln!("+ install {} (asks for your password)", orchard_runtime::usb_access::RULES);
@@ -376,8 +376,8 @@ mod tests {
         let check = |state, detail: &str, setup: Option<&str>| Check { name: "podman", state, needed_for: "x", detail: detail.into(), setup: setup.map(str::to_owned) };
         assert_eq!(check(State::Ready, "/usr/bin/podman", None).cells(), ("ready".into(), String::new()));
         assert_eq!(
-            check(State::Missing, "VM stopped", Some("orchard2 setup podman  (podman machine start)")).cells(),
-            ("VM stopped".into(), "orchard2 setup podman".into())
+            check(State::Missing, "VM stopped", Some("orchard setup podman  (podman machine start)")).cells(),
+            ("VM stopped".into(), "orchard setup podman".into())
         );
         assert_eq!(
             check(State::Yours, "it does not answer; its VM may hang: podman machine stop, then start", None).cells(),

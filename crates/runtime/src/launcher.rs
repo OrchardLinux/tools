@@ -31,7 +31,7 @@ pub fn spawn(executor: Executor, events: Sender<Event>) -> Sender<Job> {
                         // after loading, still reports a failure while the
                         // window is open.
                         // Started only once the command is all out (the entry's
-                        // name in m1n1's memory, then the call): `orchard2
+                        // name in m1n1's memory, then the call): `orchard
                         // launch` ends on EntryStarted, and quitting mid-command
                         // left m1n1 in its proxy with a black screen.
                         let sent = std::time::Instant::now();

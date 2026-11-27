@@ -21,7 +21,7 @@ pub enum Code {
     Unsupported,
     /// The device or the work as a whole took longer than allowed.
     Timeout,
-    /// Another orchard2 process is working on the device.
+    /// Another orchard process is working on the device.
     Locked,
     /// The device is not the one, or not in the mode, the work started with.
     DeviceChanged,

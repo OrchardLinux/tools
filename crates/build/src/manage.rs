@@ -67,7 +67,7 @@ pub fn check_free(paths: &[&Path]) -> Result<()> {
                 Code::Io,
                 format!("only {free:.1} GB free on the disk of {}; a build needs {needed} GB", path.display()),
             )
-            .hint("free space first (orchard2 cache prune, your own out/ builds), or set ORCHARD_MIN_FREE_GB to change the limit"));
+            .hint("free space first (orchard cache prune, your own out/ builds), or set ORCHARD_MIN_FREE_GB to change the limit"));
         }
     }
     Ok(())
@@ -465,7 +465,7 @@ pub fn fit(cache: &Components, limit: u64, say: &dyn Fn(&str)) -> u64 {
             ),
         };
         say(&format!(
-            "The build cache uses {}, over its {} limit{note}. See orchard2 cache ls; ORCHARD_CACHE_BUDGET_GB changes the limit",
+            "The build cache uses {}, over its {} limit{note}. See orchard cache ls; ORCHARD_CACHE_BUDGET_GB changes the limit",
             human(used),
             human(limit)
         ));

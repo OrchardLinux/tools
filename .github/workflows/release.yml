@@ -99,7 +99,7 @@ jobs:
           packaging/build-macos.sh
           ditto -x -k out/generic/Orchard-macOS.zip "$RUNNER_TEMP/check"
           codesign --verify --strict "$RUNNER_TEMP/check/Orchard.app"
-          "$RUNNER_TEMP/check/Orchard.app/Contents/MacOS/orchard" --version
+          "$RUNNER_TEMP/check/Orchard.app/Contents/MacOS/orchard-launcher" --version
 
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
@@ -158,10 +158,10 @@ jobs:
         run: |
           cargo build --release -p orchard-installer-app
           mkdir -p out/linux
-          for bin in orchard-installer orchard; do
+          for bin in orchard-installer orchard-launcher; do
             cp "target/release/$bin" "out/linux/$bin-${{ matrix.arch }}"
           done
-          out/linux/orchard-${{ matrix.arch }} --version
+          out/linux/orchard-launcher-${{ matrix.arch }} --version
 
       - name: Package
         run: packaging/package-linux.sh ${{ matrix.arch }}

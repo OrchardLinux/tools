@@ -197,7 +197,7 @@ pub fn build_m1n1(build: &Build) -> Result<PathBuf> {
     if root.join("boot/m1n1/series").exists() {
         return Err(Error::new(
             Code::Unsupported,
-            "this data keeps m1n1 as patch files (boot/m1n1/series), which this orchard2 no longer applies",
+            "this data keeps m1n1 as patch files (boot/m1n1/series), which this orchard no longer applies",
         )
         .hint("use newer orchard data, or supply --loader FILE"));
     }

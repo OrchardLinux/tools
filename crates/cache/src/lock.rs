@@ -112,7 +112,7 @@ impl Lock {
         self.inherited
     }
 
-    /// Sets `command` up to inherit this lock: its orchard2 commands on the
+    /// Sets `command` up to inherit this lock: its orchard commands on the
     /// same device then continue this session.
     pub fn hand_to(&self, command: &mut std::process::Command) -> Result<()> {
         inherit::pass(&self.file, command, FD_VAR)?;
@@ -143,7 +143,7 @@ impl Drop for Lock {
     }
 }
 
-/// This program and its command, such as `orchard2 session`.
+/// This program and its command, such as `orchard session`.
 fn program() -> String {
     let mut args = std::env::args();
     let name = args.next().unwrap_or_default();
@@ -201,10 +201,10 @@ fn same_file(_open: &fs::Metadata, _path: &Path) -> bool {
 
 /// How a device that other work holds is described, in the refusal and
 /// where it is listed; who holds it follows where that is known.
-pub const IN_USE: &str = "in use by another orchard2";
+pub const IN_USE: &str = "in use by another orchard";
 
 /// Who holds the device a refusal is about, as its note names them:
-/// `(pid 12: orchard2 load)`, or nothing.
+/// `(pid 12: orchard load)`, or nothing.
 pub fn holder(refusal: &Error) -> &str {
     refusal.message.split_once(IN_USE).map_or("", |(_, who)| who.trim())
 }
@@ -309,7 +309,7 @@ mod tests {
         let _held = Lock::acquire_in(dir.path(), "0x100000").unwrap();
         fs::write(dir.path().join("0x100000.lock"), "x\x1b[2J\nsecret=1").unwrap();
         let refused = Lock::acquire_in(dir.path(), "0x100000").unwrap_err();
-        assert!(refused.message.ends_with("another orchard2"));
+        assert!(refused.message.ends_with("another orchard"));
         assert_eq!(holder(&refused), "");
     }
 

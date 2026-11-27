@@ -360,7 +360,7 @@ impl Worker {
         if account.ssh {
             if let Some(a) = plan.get_mut("account").filter(|a| a.is_object()) {
                 a["ssh_keys"] = json!(crate::ssh_keys::keys(self.executor.cache())?);
-                // Who this computer signs in as afterwards (orchard2 shell).
+                // Who this computer signs in as afterwards (orchard shell).
                 if let Some(user) = a.get("user").and_then(|u| u.as_str()) {
                     // By the unit: the id the install environment says in
                     // its USB serial, which the installed system says too;

@@ -2,7 +2,7 @@
 # Builds the companion for iOS 12+ (arm64) into out/: the app bundle, the
 # root helper and the entry program, ad-hoc signed. Needs Xcode's iOS SDK and
 # ldid. The helper links resize-apfs's engine from a checkout at the pinned
-# commit (RESIZE_APFS, default ../../resize-apfs next to orchard2).
+# commit (RESIZE_APFS, default ../../resize-apfs next to orchard).
 set -euo pipefail
 cd "$(dirname "$0")"
 

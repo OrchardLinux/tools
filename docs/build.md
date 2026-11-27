@@ -1,7 +1,7 @@
 # build
 
 ```sh
-orchard2 build [DIRECTORY]
+orchard build [DIRECTORY]
 ```
 
 builds a project: a RAM payload, or in a distribution checkout its release.
@@ -62,7 +62,7 @@ and the loader into one image.
 | `commands.sh` | what the build ran, as plain commands |
 
 `--explain` prints `commands.sh` instead of the result. Every line runs by
-path with the variables the build gave it, without orchard2.
+path with the variables the build gave it, without orchard.
 
 Parts given finished bypass their recipe: `--kernel-dir DIR` (a staged
 kernel, device trees and modules), `--busybox FILE`, `--loader FILE` (m1n1,
@@ -76,18 +76,18 @@ In a checkout with `[release]`, `build` runs the distribution's own script:
 BUILD --version VERSION --output out/releases/VERSION [--platform P …]
 ```
 
-with `ORCHARD_CHECKOUT` (the orchard data), `ORCHARD_TOOL` (this orchard2),
+with `ORCHARD_CHECKOUT` (the orchard data), `ORCHARD_TOOL` (this orchard),
 `ORCHARD_PYTHON`, `ORCHARD_CACHE`, and, when given, `ORCHARD_KERNEL_TREE`
 and `ORCHARD_PACKAGES`. `--version` names the release (default
 `dev-DATE-TIME`); `--platform` is passed on when the script selects
 platforms. Afterwards the release's index and manifest are checked against
 the files they pin, and `out/releases/latest.json` names it, which is what
-`orchard2 install` without a source installs.
+`orchard install` without a source installs.
 
-The script asks orchard2 for what orchard supplies finished:
+The script asks this tool for what the orchard repository supplies finished:
 
 ```sh
-orchard2 inputs --output FILE [--platform P …]
+orchard inputs --output FILE [--platform P …]
 ```
 
 writes one JSON document: per platform its kernel bundle and its boards
@@ -108,14 +108,14 @@ where it differs from the published repository.
 The recipes (`kernel/build`, `boot/m1n1/build`, the assembly scripts in
 `producers/` …) come from `--data DIR`, an orchard checkout, else from a
 copy of orchard's newest nightly in the cache (`recipes/TAG`), fetched once
-and refreshed by `orchard2 data update`. They are Python scripts and need
+and refreshed by `orchard data update`. They are Python scripts and need
 Python 3.11 or newer: `ORCHARD_PYTHON`, else `python3`, else the newest
 `python3.N` on PATH. Most build in Podman containers; a failed recipe says
 when Podman is missing, does not answer, or its VM is not running.
 
 `producers/contract.toml` in the data says which files decide each
 component and which version the kernel producers have. Data without it, or
-that states more than this orchard2 knows, is refused.
+that states more than this orchard knows, is refused.
 
 ## Components and their keys
 
@@ -132,10 +132,10 @@ stored once.
   tools when its own key matches, and `inputs` also the kernel bundle;
   a payload's kernel is always built here. `ORCHARD_PUBLISHED=off` builds
   everything here; `ORCHARD_KERNEL=local` only the kernels.
-- `orchard2 component-keys --output FILE [PLATFORM…]` writes those keys
+- `orchard component-keys --output FILE [PLATFORM…]` writes those keys
   as CI publishes them (`component-keys.json`), from the data's files
   alone, for comparing with what CI published. CI itself does not use
-  orchard2. It is not listed in `--help`.
+  orchard. It is not listed in `--help`.
 - **Pongo** needs macOS with Xcode to build and is the same for every
   device: an unchanged recipe uses the released binary.
 

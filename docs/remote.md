@@ -4,10 +4,10 @@ Four commands work on a system that runs on the device: a RAM payload, or an
 installed system. They start nothing and change no boot state.
 
 ```sh
-orchard2 shell                       # a shell on it, at this terminal
-orchard2 exec -- uname -a            # one command; its exit status is this command's
-orchard2 push build/app /root/app    # a file to it
-orchard2 pull /var/log/messages .log # a file from it
+orchard shell                       # a shell on it, at this terminal
+orchard exec -- uname -a            # one command; its exit status is this command's
+orchard push build/app /root/app    # a file to it
+orchard pull /var/log/messages .log # a file from it
 ```
 
 ## Which system
@@ -19,8 +19,8 @@ Two of a kind is `ambiguous`: connect one, or name an address with `--host`.
 
 | System | Signed in as | With |
 | --- | --- | --- |
-| a RAM payload | root | this computer's key for payloads, which `orchard2 build` put into it |
-| an installed system | its user | this computer's key, which `orchard2 install --ssh` imported |
+| a RAM payload | root | this computer's key for payloads, which `orchard build` put into it |
+| an installed system | its user | this computer's key, which `orchard install --ssh` imported |
 
 - **A payload's host key** is new each time it starts. It is read over the
   USB serial console, which is the cable and so trusted, and pinned for that
@@ -28,7 +28,7 @@ Two of a kind is `ambiguous`: connect one, or name an address with `--host`.
 - **An installed system's host key** is learned on the first connection and
   kept under the unit's own name, which the system says on USB: every
   device on the cable has the same address, and two tablets are still two
-  hosts. `orchard2 install --ssh` forgets the unit's old key, since the new
+  hosts. `orchard install --ssh` forgets the unit's old key, since the new
   system makes a new one, and remembers the user per unit. `--user NAME` signs in as another user than the one the install set
   up; root is `sudo` there, as on any system.
 - **`--host ADDRESS`** reaches a system over a network instead of the cable,
@@ -45,7 +45,7 @@ that another tool made are not tried.
 
 ## A system installed without SSH
 
-`orchard2 ssh-access` gives this computer its access afterwards. It signs in
+`orchard ssh-access` gives this computer its access afterwards. It signs in
 once on the system's USB serial console as its user, with the password you
 type, and adds this computer's keys to that user's `authorized_keys`, as
 `install --ssh` does. `--user NAME` names the user; without it, the one
@@ -55,7 +55,7 @@ login, over the cable; it is not kept.
 ## Apple's device tree, for bringing up a board
 
 ```sh
-orchard2 capture-adt --output private/j71b.adt
+orchard capture-adt --output private/j71b.adt
 ```
 
 saves the device tree (ADT) iBoot made for the unit, which m1n1 hands on

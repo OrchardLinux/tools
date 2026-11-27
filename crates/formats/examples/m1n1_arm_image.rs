@@ -1,4 +1,4 @@
-//! Wraps the 32-bit m1n1 for `bootx`, as `orchard2` does: for comparing
+//! Wraps the 32-bit m1n1 for `bootx`, as `orchard` does: for comparing
 //! with orchard's `producers/m1n1_armv7.py`.
 //! `m1n1_arm_image M1N1 OUT [BOOTARGS DTB KERNEL INITRAMFS]`
 use orchard_formats::m1n1;

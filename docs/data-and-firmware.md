@@ -2,7 +2,7 @@
 
 ## The orchard data
 
-What orchard2 knows about a device it reads from the orchard data: one
+What orchard knows about a device it reads from the orchard data: one
 directory per board (`devices/BOARD/`), the chips, the platforms and the
 features.
 
@@ -10,15 +10,15 @@ features.
   checkout, or anything with `devices/` in it.
 - Without it, a copy of orchard's main branch in the cache
   (`data/current`), fetched the first time it is needed and then used as it
-  is, however old. `orchard2 data update` fetches it again.
+  is, however old. `orchard data update` fetches it again.
 
 `install` and `launch` differ: without `--data` they use the board data of
 orchard's newest release, with its Pongo and m1n1. `build` takes its
 recipes from the newest nightly ([build.md](build.md#recipes)).
 
 ```sh
-orchard2 data            # where the data comes from: main at which commit, or local
-orchard2 data update     # fetch main now
+orchard data            # where the data comes from: main at which commit, or local
+orchard data update     # fetch main now
 ```
 
 `data` also names the loaders that are current: the m1n1, Pongo and
@@ -29,8 +29,8 @@ them.
 ## boards, board
 
 ```sh
-orchard2 boards          # every board: name, chip, status, display name
-orchard2 board j71b      # one board
+orchard boards          # every board: name, chip, status, display name
+orchard board j71b      # one board
 ```
 
 `board NAME` prints the board's products, chip and board number, support

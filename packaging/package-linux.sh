@@ -11,14 +11,14 @@ arch=$1 out=out/generic
 stage=$out/stage-linux-$arch
 rm -rf "$stage" && mkdir -p "$stage/applications" "$stage/icons"
 cp "out/linux/orchard-installer-$arch" "$out/orchard-installer-linux-$arch"
-cp "out/linux/orchard-$arch" "$stage/orchard"
+cp "out/linux/orchard-launcher-$arch" "$stage/orchard-launcher"
 cp -R packaging/icons/hicolor "$stage/icons/"
 cat > "$stage/applications/orchard.desktop" <<D
 [Desktop Entry]
 Type=Application
 Name=Orchard
 Comment=Start the system installed on your iPad or iPhone
-Exec=orchard
+Exec=orchard-launcher
 Icon=orchard
 Categories=System;
 Terminal=false
