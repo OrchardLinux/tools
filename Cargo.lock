@@ -3799,7 +3799,7 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "orchard-boards"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "cc",
  "crc32fast",
@@ -3818,7 +3818,7 @@ dependencies = [
 
 [[package]]
 name = "orchard-build"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "flate2",
  "libc",
@@ -3834,7 +3834,7 @@ dependencies = [
 
 [[package]]
 name = "orchard-cache"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "libc",
  "orchard-formats",
@@ -3847,7 +3847,7 @@ dependencies = [
 
 [[package]]
 name = "orchard-cli"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "clap",
  "libc",
@@ -3870,7 +3870,7 @@ dependencies = [
 
 [[package]]
 name = "orchard-device"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "libc",
  "orchard-boards",
@@ -3885,11 +3885,11 @@ dependencies = [
 
 [[package]]
 name = "orchard-flow"
-version = "0.1.5"
+version = "0.2.0"
 
 [[package]]
 name = "orchard-formats"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "aes",
  "cbc",
@@ -3901,7 +3901,7 @@ dependencies = [
 
 [[package]]
 name = "orchard-inapp"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "flate2",
  "getrandom 0.3.4",
@@ -3918,7 +3918,7 @@ dependencies = [
 
 [[package]]
 name = "orchard-installer-app"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "gpui",
  "orchard-boards",
@@ -3930,7 +3930,7 @@ dependencies = [
 
 [[package]]
 name = "orchard-remote"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "libc",
  "orchard-cache",
@@ -3941,7 +3941,7 @@ dependencies = [
 
 [[package]]
 name = "orchard-runtime"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "flate2",
  "getrandom 0.3.4",
@@ -3962,7 +3962,7 @@ dependencies = [
 
 [[package]]
 name = "orchard-usb"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "crc32fast",
  "libc",

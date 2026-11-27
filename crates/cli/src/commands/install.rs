@@ -1,4 +1,4 @@
-//! `orchard2 install` and `orchard2 launch`: the graphical installer's flow
+//! `orchard install` and `orchard launch`: the graphical installer's flow
 //! and runtime (crates/flow, crates/runtime) in the terminal, drawn as the T
 //! mockups in installer-app.pen. Resizing iPadOS is opt-in (--split): without
 //! it the system goes into the existing split. Every question has a flag;
@@ -985,7 +985,7 @@ impl Shared {
                     out.sub(said.hint.clone());
                     out.term.live_restart(vec![s("Waiting for it to be free", SUB)]);
                 } else if absent {
-                    out.sub("Connect the one --ecid or --location names; orchard2 devices lists what is there.");
+                    out.sub("Connect the one --ecid or --location names; orchard devices lists what is there.");
                     out.term.live_restart(vec![s("Waiting for the named device", SUB)]);
                 } else {
                     out.sub(self.unplug_hint());
@@ -1080,7 +1080,7 @@ pub fn install(global: &Global, args: &InstallArgs) -> ExitCode {
     let mut out = Out { term: Term::new(args.log.as_deref()), json: global.json };
     let given = args.index.as_deref().or(args.source.as_deref()).map(index_for);
     let Some(index) = given.or_else(last_build) else {
-        out.fail("Which system? orchard2 install NAME (a distribution's name, the URL of its release index, or a file)");
+        out.fail("Which system? orchard install NAME (a distribution's name, the URL of its release index, or a file)");
         return finish(&mut out, Exit::Usage, "usage", "no distribution given");
     };
     if let Some(Some(gb)) = args.split {
@@ -1429,7 +1429,7 @@ pub fn install(global: &Global, args: &InstallArgs) -> ExitCode {
                 out.term.blank();
                 out.heading("Starting it again later", None);
                 out.sub(orchard_flow::for_device(&format!("After a restart your iPad starts iPadOS as usual. To start {name},")).to_owned());
-                out.term.line(vec![s("  run ", SUB), s("orchard2 launch", BLUE), s(orchard_flow::for_device(" and put your iPad in DFU mode."), SUB)]);
+                out.term.line(vec![s("  run ", SUB), s("orchard launch", BLUE), s(orchard_flow::for_device(" and put your iPad in DFU mode."), SUB)]);
                 if ssh_chosen {
                     out.term.blank();
                     out.heading("Signing in from this computer", None);
@@ -1568,7 +1568,7 @@ pub fn launch(global: &Global, args: &LaunchArgs) -> ExitCode {
                     Some(id) => match entries.iter().position(|e| &e.id == id) {
                         Some(i) => i,
                         None => {
-                            out.fail(format!("No boot entry {id}; orchard2 launch --list shows them"));
+                            out.fail(format!("No boot entry {id}; orchard launch --list shows them"));
                             return finish(&mut out, Exit::Usage, "usage", "unknown entry");
                         }
                     },

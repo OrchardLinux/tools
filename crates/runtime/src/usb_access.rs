@@ -1,5 +1,5 @@
 //! Linux: lets the user's own account reach the device on USB, once per
-//! computer: a udev rule for every stage orchard2 and the windows talk to
+//! computer: a udev rule for every stage orchard and the windows talk to
 //! (DFU, recovery, Pongo, m1n1, and Orchard's own systems with their serial
 //! consoles), plus write access to the port's `disable` control of a device
 //! in DFU, for the USB port reset after checkm8 (replug.rs).

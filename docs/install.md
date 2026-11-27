@@ -1,7 +1,7 @@
 # install
 
 ```sh
-orchard2 install NAME
+orchard install NAME
 ```
 
 installs a distribution on the iPad or iPhone that is put in DFU mode. It is
@@ -10,14 +10,14 @@ the same questions, and takes an option where a script cannot answer.
 
 ## The source
 
-`orchard2 install [SOURCE]`, or `--index SOURCE`:
+`orchard install [SOURCE]`, or `--index SOURCE`:
 
 | SOURCE | Is |
 | --- | --- |
 | a distribution's name | the newest release of `OrchardLinux/NAME` on GitHub (its `index.toml`) |
 | an `https://` URL | a release index, or one release's manifest |
 | a file | the same, with the files it names read from beside it |
-| nothing, in a distribution checkout | the release its last `orchard2 build` made |
+| nothing, in a distribution checkout | the release its last `orchard build` made |
 
 A release index (`kind = "orchard.index"`) pins one release's manifest by
 size and SHA-256; a manifest (`kind = "orchard.install"`) pins every file of
@@ -38,7 +38,7 @@ the release. Each file is checked before it is used.
    screen PIN (6 digits) are asked twice each, or read from
    `--password-file FILE` and `--pin-file FILE` (`-`: the next line of
    stdin, password first). `--ssh` lets this computer sign in over SSH with
-   its keys, and remembers the user for `orchard2 shell`
+   its keys, and remembers the user for `orchard shell`
    ([remote.md](remote.md)); `--no-ssh` doesn't and doesn't ask.
 5. **Writing.** The system is written and finished on the device, which then
    starts it.
@@ -53,7 +53,7 @@ names the option: `--yes`, `--password-file`, `--pin-file`, `--split GB`.
 Resizing and SSH are off unless their options are given.
 
 ```sh
-orchard2 --json install NAME --yes --no-ssh \
+orchard --json install NAME --yes --no-ssh \
     --password-file pw --pin-file pin --wait 600
 ```
 
@@ -67,7 +67,7 @@ orchard2 --json install NAME --yes --no-ssh \
   buttons.
 - **The device is in recovery mode**, in a terminal: a guided run takes the
   steps' place, and the hold takes seconds. Enter starts it; the lit step
-  counts down while you hold the buttons, and orchard2 restarts the device
+  counts down while you hold the buttons, and orchard restarts the device
   at the right moment. Esc (or q) stops it until that restart has gone out.
   When the device comes back in recovery mode instead, the steps stand
   again. DFU mode reached by hand counts as before.
@@ -80,7 +80,7 @@ orchard2 --json install NAME --yes --no-ssh \
   one is. `--ecid` or `--location` names the one a run is for; then no other
   is found or started, but two connected still stop it
   ([devices.md](devices.md#one-device-for-install-and-launch)).
-- **Another orchard2 works on the device**: it is shown as in use, and the
+- **Another orchard works on the device**: it is shown as in use, and the
   run goes on when that has finished ([devices.md](devices.md#session)).
 - **A start that fails** asks for DFU mode again and tries again.
 - `--wait SECONDS` ends the run with exit status 3 when no device shows up

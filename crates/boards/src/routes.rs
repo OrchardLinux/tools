@@ -143,7 +143,7 @@ pub fn read(catalog: &Catalog) -> Result<Routes> {
     let text = std::fs::read_to_string(&path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             Error::new(Code::NotFound, "the board data has no routes (routes.toml)")
-                .hint("use newer board data: orchard2 data update, or --data DIR")
+                .hint("use newer board data: orchard data update, or --data DIR")
         } else {
             Error::from(e)
         }

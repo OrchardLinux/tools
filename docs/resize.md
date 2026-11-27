@@ -1,7 +1,7 @@
 # resize
 
 ```sh
-orchard2 resize
+orchard resize
 ```
 
 gets **Resize APFS** onto the iPad or iPhone in DFU mode and running. Resize
@@ -60,7 +60,7 @@ Without DFU mode. The app is installed on the device and stays there; it
 gets storage access by itself when it is opened.
 
 1. Connect the device, unlock it and trust the computer.
-2. `orchard2 resize --dopamine` puts Resize APFS into the pinned official
+2. `orchard resize --dopamine` puts Resize APFS into the pinned official
    Dopamine app, signs it with your Apple ID and installs it. On Linux, and
    on a Mac whose Xcode has no account, xtool signs: it asks for the Apple
    ID, its password and the two-factor code in the terminal the first time

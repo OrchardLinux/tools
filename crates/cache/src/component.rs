@@ -297,7 +297,7 @@ fn reuse(name: &str, target: &Path, say: &dyn Fn(&str)) -> Result<Found> {
             Code::Format,
             format!("cached component inventory changed: {}", target.display()),
         )
-        .hint("remove it (orchard2 cache rm) and rebuild"));
+        .hint("remove it (orchard cache rm) and rebuild"));
     }
     for (relative, expected) in &recorded {
         let path = target.join(relative);
@@ -309,7 +309,7 @@ fn reuse(name: &str, target: &Path, say: &dyn Fn(&str)) -> Result<Found> {
                 Code::Format,
                 format!("cached component changed: {}", path.display()),
             )
-            .hint("remove that component (orchard2 cache rm) and rebuild"));
+            .hint("remove that component (orchard cache rm) and rebuild"));
         }
     }
     touch(target)?;

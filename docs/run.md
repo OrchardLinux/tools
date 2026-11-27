@@ -1,7 +1,7 @@
 # run
 
 ```sh
-orchard2 run [DIRECTORY] [--boot ROUTE]
+orchard run [DIRECTORY] [--boot ROUTE]
 ```
 
 builds the project in DIRECTORY (this one by default), as
@@ -37,9 +37,9 @@ with a boot ROM that checkm8 from a Raspberry Pi Pico entered (it shows as
 there:
 
 ```sh
-orchard2 run
-orchard2 run --bare
-orchard2 run --kernel zImage --dtb board.dtb --initramfs initramfs.cpio.gz
+orchard run
+orchard run --bare
+orchard run --kernel zImage --dtb board.dtb --initramfs initramfs.cpio.gz
 ```
 
 Apple's iBSS and iBEC are sent patched, the iBEC takes Apple's device tree
@@ -56,8 +56,8 @@ what it is sent as soon as an upload ends, and is sent Cascadia's loader
 with the kernel, the board's device tree and the initramfs.
 
 ```sh
-orchard2 run --autogo
-orchard2 run --autogo --kernel zImage --dtb board.dtb --initramfs initramfs.cpio.gz
+orchard run --autogo
+orchard run --autogo --kernel zImage --dtb board.dtb --initramfs initramfs.cpio.gz
 ```
 
 The loader is the project's own build of it, `--loader FILE`, or the one

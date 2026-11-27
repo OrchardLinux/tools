@@ -8,7 +8,7 @@ macro_rules! platforms {
             #[cfg(any($(target_os = $platform),*))]
             pub use self::$module::*;
 
-            // libc dropped ENOATTR on Linux, where it is ENODATA (orchard2 patch).
+            // libc dropped ENOATTR on Linux, where it is ENODATA (orchard patch).
             #[cfg(all(any($(target_os = $platform),*), any(target_os = "linux", target_os = "android")))]
             pub const ENOATTR: ::libc::c_int = ::libc::ENODATA;
             #[cfg(all(any($(target_os = $platform),*), not(any(target_os = "linux", target_os = "android"))))]

@@ -3,14 +3,14 @@ use super::*;
 use clap::Parser;
 
 fn args(given: &[&str]) -> Args {
-    match crate::args::Cli::try_parse_from([&["orchard2", "run"], given].concat()).map(|cli| cli.command) {
+    match crate::args::Cli::try_parse_from([&["orchard", "run"], given].concat()).map(|cli| cli.command) {
         Ok(crate::args::Command::Run(args)) => args,
         _ => panic!("{given:?} does not parse"),
     }
 }
 
 fn parses(given: &[&str]) -> bool {
-    crate::args::Cli::try_parse_from([&["orchard2", "run"], given].concat()).is_ok()
+    crate::args::Cli::try_parse_from([&["orchard", "run"], given].concat()).is_ok()
 }
 
 #[test]

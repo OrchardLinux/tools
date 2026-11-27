@@ -18,8 +18,6 @@ that `prep`, `load` and `boot` ran on is gone. Still to do:
   installer app on palera1n, checkra1n and Dopamine. Today the storage is
   split through palera1n only (`chain::boot_ipados`); checkra1n's and
   Dopamine's ways are in resize-apfs's scripts.
-- **orchard's `run`** handed over to `orchard2 run` where orchard2 is
-  switched on (orchard's `tools/launcher`).
 - **The old data formats.** `boards` still reads `boot-paths.toml` into the
   copy of the data and `boot.json` schema 2 (chains with patch steps,
   `loaders.cascadia`). Only the 32-bit autogo chain and the A12 and A13
@@ -77,26 +75,26 @@ yet.
 
 Looked at on 2026-11-26, for the day the Python tool goes:
 
-- `run`'s start of what was built, until orchard hands it to `orchard2
+- `run`'s start of what was built, until orchard hands it to `orchard
   run` (above), and `boot` (a release's recovery or an image, in RAM,
   without installing). Releases have had no recovery since
   about 0.3 (Henrik), so the distribution-checkout form of both may have
   nothing left to boot; check before porting it.
 - `python -m orchard.published keys`: orchard's build.yml writes
   `component-keys.json` with it, and keeps doing so: CI does not use
-  orchard2 (Henrik, 2026-11-26). orchard2 reads that document, and its
+  this tool (Henrik, 2026-11-26). This tool reads that document, and its
   hidden `component-keys` writes the same one, for comparing.
 - `python -m orchard.installer release` and `core`: `install.sh` with
   `orchard-install.pyz` in every distribution release, and
   `orchard-core.pyz` for `orchard update`. They ship the Python tool and go
-  with it; before that, orchard2 needs its own way to be installed
+  with it; before that, orchard needs its own way to be installed
   (`curl | sh`, perhaps a brew tap) and to update itself. To be discussed
   with Henrik; `adopt` goes with them.
 - `resolve` (download and verify what a published release needs for a
   board, without a device): named in omarchy-a's release checklist for a
   person to run. orchard's verify-public.yml also runs it, but that
   workflow is stale (old wheel pair, renamed repositories, expects a
-  recovery) and CI does not use orchard2. Not ported; the installer does
+  recovery) and CI does not use orchard. Not ported; the installer does
   the same work only with a device attached.
 - `mixin`, `setup-host`: no use found anywhere.
 - `distros`: undecided.
@@ -109,7 +107,7 @@ tests and the scripted demo only:
 - `--ecid` and `--location` for `install` and `launch`;
 - the guided run from recovery mode in `install` and `launch` (the steps,
   Enter and Esc, the countdown): seen in the demo
-  (`ORCHARD_DEMO_RECOVERY=1 orchard2 launch --demo`), not with a device;
+  (`ORCHARD_DEMO_RECOVERY=1 orchard launch --demo`), not with a device;
 - the lock in the runtime;
 - the `checkra1n` boot route (`install`, `launch` and `run` by the `ibss`
   route ran on a j71b);

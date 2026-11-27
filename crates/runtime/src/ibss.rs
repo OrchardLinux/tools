@@ -170,7 +170,7 @@ fn start_arm(
     let published = loaders::resolve(store).and_then(|record| loaders::file(store, &record, "m1n1", "m1n1-armv7.macho")).unwrap_or_default();
     let m1n1 = image(&published)?;
     if !orchard_formats::m1n1::is_macho_arm(&m1n1) {
-        return Err(Error::new(Code::NotFound, "Orchard's current build publishes no 32-bit m1n1 for this board").hint("give one with --m1n1 FILE (m1n1-armv7.macho), or update: orchard2 data update"));
+        return Err(Error::new(Code::NotFound, "Orchard's current build publishes no 32-bit m1n1 for this board").hint("give one with --m1n1 FILE (m1n1-armv7.macho), or update: orchard data update"));
     }
     let kernel = orchard_formats::m1n1::kernel_image_arm(&m1n1).map_err(|e| Error::new(Code::Format, e.to_string()))?;
 

@@ -37,7 +37,7 @@ fn interruption() -> Option<Error> {
 }
 
 /// Notes SIGINT, SIGTERM and SIGHUP while a tool runs, so that the tool's
-/// processes are ended before orchard2 stops. Dropping it puts the earlier
+/// processes are ended before orchard stops. Dropping it puts the earlier
 /// handlers back.
 struct Signals(Vec<(i32, libc::sigaction)>);
 
@@ -109,7 +109,7 @@ impl Drop for Group {
 }
 
 /// Runs `command` until it ends, for `timeout` at most. A signal to
-/// orchard2 in that time ends the tool and is the error returned.
+/// orchard in that time ends the tool and is the error returned.
 fn run(command: &mut Command, timeout: Duration) -> Result<()> {
     let _runner = RUNNER
         .lock()

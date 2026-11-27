@@ -1,5 +1,5 @@
 //! The keys an install imports for "Allow SSH from this computer": Orchard's
-//! own key for this computer (made once, in orchard2's cache under
+//! own key for this computer (made once, in orchard's cache under
 //! private/ssh, as orchard's computer_key.py) and the user's public keys, so
 //! plain `ssh USER@172.16.42.1` works over the USB cable. Each as
 //! "TYPE BASE64", the form the install tools accept (no comment).
@@ -69,7 +69,7 @@ pub fn unit(serial_number: &str) -> String {
 }
 
 /// After an install that lets this computer sign in: remembers the user for
-/// `orchard2 shell` and its kin (`private/ssh/user`, and `user-UNIT` where
+/// `orchard shell` and its kin (`private/ssh/user`, and `user-UNIT` where
 /// the unit is known), and forgets the host key kept for that unit, since
 /// the new system made a new one.
 pub fn installed(cache: &Path, user: &str, unit: Option<&str>) -> Result<()> {

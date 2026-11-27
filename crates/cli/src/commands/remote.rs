@@ -65,7 +65,7 @@ struct Access {
 impl Report for Access {
     fn human(&self) -> Vec<u8> {
         let keys = if self.keys == 1 { "1 key".to_owned() } else { format!("{} keys", self.keys) };
-        format!("SSH access for {} added from this computer ({keys}). Try: orchard2 shell\n", self.user).into_bytes()
+        format!("SSH access for {} added from this computer ({keys}). Try: orchard shell\n", self.user).into_bytes()
     }
 }
 

@@ -1,8 +1,8 @@
 //! After an install: puts Orchard, the launcher, on this computer from the
 //! asset the installer's stamp pins (stamp.rs), so the installed system can be
 //! started again later. macOS: ~/Applications/Orchard.app (the asset is a zip
-//! of it). Linux: ~/.local/bin/orchard with its desktop entry and icons (the
-//! asset is a tar.gz with `orchard`, `applications/` and `icons/`).
+//! of it). Linux: ~/.local/bin/orchard-launcher with its desktop entry and icons (the
+//! asset is a tar.gz with `orchard-launcher`, `applications/` and `icons/`).
 //!
 //! Orchard is shared by every distro's installer: an installed Orchard that is
 //! as new or newer than the pinned one stays (never a downgrade).
@@ -37,7 +37,7 @@ fn installed_version(home: &Path) -> Option<String> {
         let end = rest.find("</string>")?;
         Some(rest[start..end].to_owned())
     } else {
-        home.join(".local/bin/orchard").is_file().then_some(())?;
+        home.join(".local/bin/orchard-launcher").is_file().then_some(())?;
         std::fs::read_to_string(linux_version_file(home)).ok().map(|v| v.trim().to_owned())
     }
 }
@@ -83,7 +83,7 @@ fn install_macos(asset: &Path, home: &Path) -> Result<String, String> {
         std::fs::remove_dir_all(&app).map_err(|e| e.to_string())?;
     }
     run(Command::new("/usr/bin/ditto").arg("-x").arg("-k").arg(asset).arg(&apps))?;
-    if !app.join("Contents/MacOS/orchard").is_file() {
+    if !app.join("Contents/MacOS/orchard-launcher").is_file() {
         return Err("the launcher's archive has no Orchard.app".into());
     }
     Ok("~/Applications/Orchard.app".into())
@@ -100,9 +100,9 @@ fn install_linux(asset: &Path, home: &Path) -> Result<String, String> {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     // A fresh file, not an overwrite in place: a running launcher keeps working.
-    let target = bin.join("orchard");
+    let target = bin.join("orchard-launcher");
     let fresh = bin.join(".orchard.new");
-    std::fs::copy(unpacked.join("orchard"), &fresh).map_err(|e| e.to_string())?;
+    std::fs::copy(unpacked.join("orchard-launcher"), &fresh).map_err(|e| e.to_string())?;
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&fresh, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
     std::fs::rename(&fresh, &target).map_err(|e| e.to_string())?;
@@ -164,9 +164,9 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
         let at = super::install_linux(&asset, &home).unwrap();
         assert!(at.contains("Orchard"));
-        assert!(home.join(".local/bin/orchard").is_file());
+        assert!(home.join(".local/bin/orchard-launcher").is_file());
         let entry = std::fs::read_to_string(home.join(".local/share/applications/orchard.desktop")).unwrap();
-        assert!(entry.contains(&format!("Exec={}", home.join(".local/bin/orchard").display())));
+        assert!(entry.contains(&format!("Exec={}", home.join(".local/bin/orchard-launcher").display())));
         assert!(home.join(".local/share/icons/hicolor/256x256/apps/orchard.png").is_file());
         std::fs::remove_dir_all(&home).unwrap();
     }

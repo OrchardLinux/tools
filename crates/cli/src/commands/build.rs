@@ -119,7 +119,7 @@ impl Report for Built {
         match &self.explain {
             Some(script) => script.clone().into_bytes(),
             None => format!(
-                "{}\nWhat it ran, as plain commands: {} (or orchard2 build --explain)\n",
+                "{}\nWhat it ran, as plain commands: {} (or orchard build --explain)\n",
                 self.output, self.commands
             )
             .into_bytes(),

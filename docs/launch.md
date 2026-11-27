@@ -1,7 +1,7 @@
 # launch
 
 ```sh
-orchard2 launch
+orchard launch
 ```
 
 starts a system installed on the device, from DFU mode, as Orchard (the

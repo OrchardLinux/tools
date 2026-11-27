@@ -152,13 +152,13 @@ fn refusal(said: &str) -> Error {
     let said = said.to_lowercase();
     if said.contains("permission denied") {
         return error.hint(
-            "it does not take this computer's key: a payload gets it from orchard2 build, an installed system from orchard2 install --ssh",
+            "it does not take this computer's key: a payload gets it from orchard build, an installed system from orchard install --ssh",
         );
     }
     // Not the key that was learned for it: another system answers there.
     if said.contains("host key verification failed") || said.contains("host identification has changed") {
         return error.hint(
-            "its host key is not the one this computer knows for it; orchard2 install --ssh forgets the old one, and after an install by another tool its line in private/ssh/known_hosts in the cache has to go",
+            "its host key is not the one this computer knows for it; orchard install --ssh forgets the old one, and after an install by another tool its line in private/ssh/known_hosts in the cache has to go",
         );
     }
     error
@@ -228,7 +228,7 @@ mod tests {
         let argv = words(&["sh", "-c", "echo 'root@x: Permission denied (publickey).' >&2; exit 255", "ssh"]);
         let e = wait(&argv, &|| Ok(()), Duration::from_secs(30)).unwrap_err();
         assert_eq!(e.code, Code::Refused);
-        assert!(e.hint.unwrap().contains("orchard2 build"));
+        assert!(e.hint.unwrap().contains("orchard build"));
         // The device going away ends it too.
         let gone = wait(&words(&["true"]), &|| Err(Error::new(Code::DeviceChanged, "gone")), Duration::from_secs(30));
         assert_eq!(gone.unwrap_err().code, Code::DeviceChanged);
@@ -238,7 +238,7 @@ mod tests {
     #[test]
     fn a_refusal_says_what_would_help() {
         let key = refusal("root@172.16.42.1: Permission denied (publickey).");
-        assert!(key.hint.unwrap().contains("orchard2 build"));
+        assert!(key.hint.unwrap().contains("orchard build"));
         let host = refusal("@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @\nHost key verification failed.");
         assert!(host.hint.unwrap().contains("known_hosts"));
         assert!(refusal("kex_exchange_identification: read: Connection reset by peer").hint.is_none());

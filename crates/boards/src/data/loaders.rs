@@ -48,7 +48,7 @@ pub struct File {
     pub sha256: String,
 }
 
-/// The loaders orchard2 takes from orchard's builds.
+/// The loaders taken from the orchard repository's builds.
 const LOADERS: [&str; 3] = ["m1n1", "pongo", "cascadia"];
 
 /// Which loaders are current, and the build that names them.
@@ -213,7 +213,7 @@ fn file_with(
             Code::NotFound,
             format!("orchard's build {} publishes no {name}", record.release),
         )
-        .hint("`orchard2 data update` reads the newest build")
+        .hint("`orchard data update` reads the newest build")
     })?;
     let key = Key::Origin(format!("loader {name} {} {asset}", loader.key));
     if let Some(bytes) = store.get(&key)? {

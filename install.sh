@@ -1,11 +1,11 @@
 #!/bin/sh
-# Install orchard2, the Orchard command line, or replace it with its newest
+# Install orchard, the Orchard command line, or replace it with its newest
 # build:
 #   curl -fsSL https://raw.githubusercontent.com/OrchardLinux/tools/main/install.sh | sh
 # It goes into ~/.local/bin (ORCHARD_BIN names another directory). Nothing
-# needs root. `orchard2 update` does the same later.
+# needs root. `orchard update` does the same later.
 set -eu
-NAME=orchard2
+NAME=orchard
 BUILDS=${ORCHARD_BUILDS_URL:-https://github.com/OrchardLinux/tools/releases/download/nightly}
 bin=${ORCHARD_BIN:-$HOME/.local/bin}
 
@@ -47,6 +47,12 @@ cp "$work/$asset" "$bin/.$NAME-$$"
 mv -f "$bin/.$NAME-$$" "$bin/$NAME"
 say "Installed $("$bin/$NAME" --version) in $bin."
 case ":$PATH:" in
-    *":$bin:"*) ;;
+    *":$bin:"*)
+        # Another program of the name earlier on PATH would be run instead.
+        found=$(command -v "$NAME" 2>/dev/null || true)
+        [ -z "$found" ] || [ "$found" = "$bin/$NAME" ] || say "Your shell finds $found first: remove it, or put $bin before it on PATH." ;;
     *) say "$bin is not on your PATH: add it, or run $bin/$NAME." ;;
 esac
+# The Python tool this one replaces kept its own cache, which nothing reads now.
+old=${XDG_CACHE_HOME:-$HOME/.cache}/orchard
+[ ! -d "$old/tooling" ] || say "The earlier orchard's cache is still in $old; nothing uses it any more (rm -rf to free the space)."

@@ -241,7 +241,7 @@ pub fn latest(root: &Path) -> Result<PathBuf> {
     if !record.is_file() {
         return Err(
             Error::new(Code::NotFound, format!("no build in {}", root.display()))
-                .hint("run orchard2 build"),
+                .hint("run orchard build"),
         );
     }
     let value: serde_json::Value = serde_json::from_str(&read_text(&record)?)
@@ -251,7 +251,7 @@ pub fn latest(root: &Path) -> Result<PathBuf> {
         .expect("inside out/releases")
         .join(value["index"].as_str().unwrap_or(""));
     if !index.is_file() {
-        return Err(Error::new(Code::NotFound, "the last build is gone").hint("run orchard2 build"));
+        return Err(Error::new(Code::NotFound, "the last build is gone").hint("run orchard build"));
     }
     Ok(index)
 }

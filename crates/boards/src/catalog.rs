@@ -584,12 +584,12 @@ pub fn check_schema(found: u32, want: u32) -> Result<()> {
             Code::Unsupported,
             format!("board data is schema {found}, older than this version reads (schema {want})"),
         )
-        .hint("run `orchard2 data update` for newer board data")),
+        .hint("run `orchard data update` for newer board data")),
         std::cmp::Ordering::Greater => Err(Error::new(
             Code::Unsupported,
             format!("board data is schema {found}, newer than this version reads (schema {want})"),
         )
-        .hint("update orchard2 to read this board data")),
+        .hint("update orchard to read this board data")),
     }
 }
 

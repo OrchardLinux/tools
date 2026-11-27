@@ -15,8 +15,8 @@ name = "orchard-installer"
 path = "src/bin/orchard-installer.rs"
 
 [[bin]]
-name = "orchard"
-path = "src/bin/orchard.rs"
+name = "orchard-launcher"
+path = "src/bin/orchard-launcher.rs"
 
 [dependencies]
 orchard-flow = { path = "../flow" }

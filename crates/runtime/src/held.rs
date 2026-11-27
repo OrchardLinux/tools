@@ -24,7 +24,7 @@ pub struct Held {
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Look {
     /// Ports with a device in DFU mode that other work holds, and who holds
-    /// it where that is known (`(pid 12: orchard2 load)`).
+    /// it where that is known (`(pid 12: orchard load)`).
     pub in_use: Vec<(String, String)>,
     /// Locks that could not be used; the run goes on without them.
     pub problems: Vec<String>,

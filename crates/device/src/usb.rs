@@ -14,7 +14,7 @@ pub fn error(e: orchard_usb::Error) -> Error {
     match e.kind {
         Kind::Busy => error.hint("another program is using the device; close it and try again"),
         Kind::Denied => error.hint("this user may not open the device; check its permissions"),
-        Kind::WrongMode => error.hint("`orchard2 devices` shows the mode each device is in"),
+        Kind::WrongMode => error.hint("`orchard devices` shows the mode each device is in"),
         _ => error,
     }
 }
