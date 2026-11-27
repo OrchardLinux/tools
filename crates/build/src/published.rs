@@ -376,6 +376,32 @@ pub fn extract(archive: &Path, prefix: &str, into: &Path) -> Result<()> {
 mod tests {
     use super::*;
 
+    /// The keys orchard's nightly publishes (`ci/keys.py`) are the ones
+    /// computed here, for an orchard checkout that `ORCHARD_TEST_DATA`
+    /// names. Where they differed nothing would fail: every build would
+    /// only stop finding the nightly's components and make its own.
+    #[test]
+    fn the_published_keys_are_the_ones_computed_here() {
+        let Ok(dir) = std::env::var("ORCHARD_TEST_DATA") else {
+            eprintln!("ORCHARD_TEST_DATA is not set; no orchard checkout to read");
+            return;
+        };
+        let script = Path::new(&dir).join("ci/keys.py");
+        if !script.is_file() {
+            eprintln!("this orchard has no ci/keys.py yet");
+            return;
+        }
+        let work = tempfile::tempdir().unwrap();
+        let store = orchard_cache::store::Store::open(Some(&work.path().join("cache"))).unwrap();
+        let build = Build::new(Path::new(&dir), &store, &|_| {}).unwrap();
+        let platforms = ["apple-16k", "apple-4k", "apple-armv7"].map(str::to_owned);
+        let output = work.path().join("keys.json");
+        let ran = std::process::Command::new(&build.python).arg(&script).arg("--output").arg(&output).args(&platforms).output().unwrap();
+        assert!(ran.status.success(), "{}", String::from_utf8_lossy(&ran.stderr));
+        let published: Value = serde_json::from_slice(&std::fs::read(&output).unwrap()).unwrap();
+        assert_eq!(keys_document(&build, &platforms).unwrap(), published);
+    }
+
     /// A gzipped tar with regular files and one entry of another type.
     pub fn tarball(path: &Path, files: &[(&str, &[u8], u32)], link: Option<&str>) {
         use std::io::Write;
