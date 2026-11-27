@@ -171,8 +171,18 @@ fn pristine(loader: &[u8], profile: &Profile) -> Result<[u32; 16]> {
             "the loader is built for another load address or kernel offset",
         ));
     }
-    if words[DTB_OFFSET..].iter().any(|&word| word != 0) {
-        return Err(Error("the loader's configuration is already filled in"));
+    // orchard builds a loader for its board, with the board's addresses in
+    // the record (`boot/cascadia/build --profile`); they have to be this
+    // board's. What a bundle adds (the tree, the initramfs, the size and the
+    // checksum) has to be empty still.
+    let board = profile.board();
+    for (at, word) in words.iter().enumerate().skip(DTB_OFFSET) {
+        match board.iter().find(|(place, _)| *place == at) {
+            Some(&(_, value)) if *word == value || *word == 0 => {}
+            Some(_) => return Err(Error("the loader is built for another board's addresses")),
+            None if *word == 0 => {}
+            None => return Err(Error("the loader's configuration is already filled in")),
+        }
     }
     Ok(words)
 }

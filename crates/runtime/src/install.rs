@@ -335,8 +335,8 @@ impl Worker {
         if self.session()?.info()?.phase != Phase::Ready {
             return Ok(());
         }
-        let release = self.executor.release()?;
         let device = self.device.clone().ok_or(Fail::Other(Error::new(Code::NotFound, "no device")))?;
+        let release = self.executor.release_for(&device.board)?;
         let gpt = self.gpt.clone().ok_or(Fail::Other(Error::new(Code::NotFound, "no layout yet")))?;
         let platform = release
             .platform_for(&device.board)
@@ -386,8 +386,8 @@ impl Worker {
     /// `staged` list): after the plan, and again before streaming, so an
     /// install picked up after a restart has them too.
     fn stage(&mut self) -> std::result::Result<(), Fail> {
-        let release = self.executor.release()?;
         let device = self.device.clone().ok_or(Fail::Other(Error::new(Code::NotFound, "no device")))?;
+        let release = self.executor.release_for(&device.board)?;
         let platform = release
             .platform_for(&device.board)
             .ok_or_else(|| Error::new(Code::NotFound, format!("{} does not cover this board yet", release.name)))?
@@ -430,7 +430,8 @@ impl Worker {
     }
 
     fn stream(&mut self) -> std::result::Result<(), Fail> {
-        let release = self.executor.release()?;
+        let board = self.device.as_ref().map(|d| d.board.clone()).unwrap_or_default();
+        let release = self.executor.release_for(&board)?;
         let root = self.executor.download(&release.root)?;
         let mut file = std::fs::File::open(&root).map_err(|e| Fail::Other(e.into()))?;
         let t = std::time::Instant::now();

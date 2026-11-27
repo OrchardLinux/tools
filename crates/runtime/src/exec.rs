@@ -37,6 +37,8 @@ pub struct Executor {
     cache: PathBuf,
     events: Sender<Event>,
     release: Arc<Mutex<Option<Release>>>,
+    /// The release's manifest for the 32-bit boards, once read.
+    release_arm: Arc<Mutex<Option<Release>>>,
     /// Where the release index is: the published one, or a local build's.
     index: String,
     /// A companion built into a directory, until the installer embeds it.
@@ -73,7 +75,7 @@ impl Executor {
     }
 
     pub fn new(data: Option<&Path>, cache: &Path, events: Sender<Event>) -> Executor {
-        Executor { explicit_data: data.map(Path::to_owned), data: Arc::default(), cache: cache.to_owned(), events, release: Arc::default(), kernel: Arc::default(), index: String::new(), companion: None, overlay: Arc::default(), verified: Arc::default(), pongo: None, boot: crate::flags::boot(), m1n1: None, downloads: Arc::default(), tools: Arc::default(), serials: Arc::default() }
+        Executor { explicit_data: data.map(Path::to_owned), data: Arc::default(), cache: cache.to_owned(), events, release: Arc::default(), release_arm: Arc::default(), kernel: Arc::default(), index: String::new(), companion: None, overlay: Arc::default(), verified: Arc::default(), pongo: None, boot: crate::flags::boot(), m1n1: None, downloads: Arc::default(), tools: Arc::default(), serials: Arc::default() }
     }
 
     /// A device's serial number was seen (iBoot says it in recovery mode).
@@ -136,13 +138,16 @@ impl Executor {
         let need_board = || board.ok_or_else(|| Error::new(Code::NotFound, "no board known yet"));
         match asset {
             Asset::RootImage => {
-                let rel = self.release()?;
+                let rel = match board {
+                    Some(board) => self.release_for(board)?,
+                    None => self.release()?,
+                };
                 self.download(&rel.root_map)?;
                 self.download(&rel.root).map(drop)
             }
             Asset::PlatformLayer => {
-                let rel = self.release()?;
                 let board = need_board()?;
+                let rel = self.release_for(board)?;
                 let platform = rel.platform_for(board).ok_or_else(|| {
                     Error::new(Code::NotFound, format!("{} {} does not cover {board} yet", rel.name, rel.version))
                 })?;
@@ -155,7 +160,11 @@ impl Executor {
                 if self.index.is_empty() {
                     return Ok(());
                 }
-                self.download(&self.release()?.install_tools).map(drop)
+                let rel = match board {
+                    Some(board) => self.release_for(board)?,
+                    None => self.release()?,
+                };
+                self.download(&rel.install_tools).map(drop)
             }
             Asset::Firmware => {
                 let board = need_board()?;
@@ -175,8 +184,8 @@ impl Executor {
                 self.palera1n(pin, release).map(drop)
             }
             Asset::KernelPackage => {
-                let rel = self.release()?;
                 let board = need_board()?;
+                let rel = self.release_for(board)?;
                 let layer = &rel
                     .platform_for(board)
                     .ok_or_else(|| Error::new(Code::NotFound, format!("{} does not cover {board} yet", rel.name)))?
@@ -448,7 +457,27 @@ impl Executor {
 
     /// The current release, read once from the index.
     pub fn release(&self) -> Result<Release> {
-        let mut slot = self.release.lock().expect("release lock");
+        self.load_release(false)
+    }
+
+    /// The release for `board`: a release has one root, and so one manifest,
+    /// per architecture, and a 32-bit board takes the 32-bit one.
+    pub fn release_for(&self, board: &str) -> Result<Release> {
+        self.load_release(self.is_arm(board))
+    }
+
+    /// Whether a board's chip is one of the 32-bit ones.
+    pub fn is_arm(&self, board: &str) -> bool {
+        let read = || -> Result<bool> {
+            let catalog = orchard_boards::catalog::Catalog::open(&self.data()?)?;
+            let board = catalog.board(board)?;
+            Ok(catalog.chip(board.chip)?.architecture == "arm")
+        };
+        read().unwrap_or(false)
+    }
+
+    fn load_release(&self, arm: bool) -> Result<Release> {
+        let mut slot = if arm { &self.release_arm } else { &self.release }.lock().expect("release lock");
         if let Some(rel) = slot.as_ref() {
             return Ok(rel.clone());
         }
@@ -469,7 +498,10 @@ impl Executor {
         let rel = if release::is_release(&text) {
             release::parse_release(&text, release::base_of(&self.index))?
         } else {
-            let manifest = release::parse_index(&text, release::base_of(&self.index))?;
+            let manifest = match arm {
+                true => release::parse_index_arm(&text, release::base_of(&self.index))?,
+                false => release::parse_index(&text, release::base_of(&self.index))?,
+            };
             let bytes = get(&manifest)?;
             let text = String::from_utf8(bytes).map_err(|_| Error::new(Code::Format, "release is not UTF-8"))?;
             release::parse_release(&text, release::base_of(&manifest.url))?

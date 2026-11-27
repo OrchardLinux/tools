@@ -79,7 +79,7 @@ pub fn payload(executor: &Executor, device: &Device) -> Result<Vec<u8>> {
 /// The install payload behind `m1n1`: its plain build for Pongo, its Mach-O
 /// build for a patched iBoot.
 fn payload_behind(executor: &Executor, device: &Device, m1n1: &[u8]) -> Result<Vec<u8>> {
-    let rel = executor.release()?;
+    let rel = executor.release_for(&device.board)?;
     let layer = &rel
         .platform_for(&device.board)
         .ok_or_else(|| fail(format!("{} does not cover {} yet", rel.name, device.board)))?
@@ -92,6 +92,35 @@ fn payload_behind(executor: &Executor, device: &Device, m1n1: &[u8]) -> Result<V
     let add_on = install_env::add_on(&tools, &install_env::Device { ecid })?;
     let logo = rel.logo.as_ref().map(|l| executor.download(l).and_then(|p| Ok(std::fs::read(p)?))).transpose()?;
     install_env::payload(m1n1, logo.as_deref(), &boot, &add_on)
+}
+
+/// The install system for Cascadia's loader, on the 32-bit boards: the
+/// release's loader for the board (else Orchard's published one), the
+/// layer's kernel and device tree, and its initrd with the add-on behind it.
+fn install_bundle(executor: &Executor, session: &Session<Host>, device: &Device) -> Result<orchard_formats::cascadia::Bundle> {
+    let rel = executor.release_for(&device.board)?;
+    let layer = &rel
+        .platform_for(&device.board)
+        .ok_or_else(|| fail(format!("{} does not cover {} yet", rel.name, device.board)))?
+        .layer;
+    let layer = std::fs::read(executor.download(layer)?)?;
+    let tree = executor.devicetree(&device.board)?;
+    let boot = install_env::boot_files(&layer, &format!("{tree}.dtb"))?;
+    let ecid = u64::from_str_radix(&device.id.0, 16).map_err(|_| fail("the device's ECID is not hex"))?;
+    let tools = std::fs::read(executor.download(&rel.install_tools)?)?;
+    let add_on = install_env::add_on(&tools, &install_env::Device { ecid })?;
+    let mut initramfs = boot.initrd.clone();
+    initramfs.resize(initramfs.len().next_multiple_of(4), 0);
+    initramfs.extend_from_slice(&add_on);
+    let loader = match rel.cascadia.get(&device.board) {
+        Some(loader) => executor.download(loader)?,
+        None => executor.download(&crate::orchard_tools::published(&format!("cascadia-{}.bin", device.board))?)?,
+    };
+    let catalog = orchard_boards::catalog::Catalog::open(&executor.data()?)?;
+    let profile = catalog.board(&device.board)?.cascadia()?;
+    let serial = session.device().identity.serial_number.clone();
+    orchard_formats::cascadia::bundle(&std::fs::read(loader)?, &boot.kernel, &boot.tree, &initramfs, &profile, serial.as_deref())
+        .map_err(|e| Error::new(Code::Format, e.to_string()))
 }
 
 /// Runs palera1n on the device in DFU: checks it is the user's device
@@ -477,8 +506,13 @@ pub fn boot_install_env(executor: &Executor, device: &Device) -> Result<()> {
 
 /// [`boot_install_env`] in a session that follows the device already.
 pub fn boot_install_env_in(executor: &Executor, session: &mut Session<Host>, device: &Device) -> Result<()> {
-    if executor.boot_route(&device.board)?.name == "ibss" {
+    let route = executor.boot_route(&device.board)?;
+    if route.name == "ibss" {
         return crate::ibss::start(executor, session, &device.board, None, |m1n1| payload_behind(executor, device, m1n1));
+    }
+    if route.ends.as_deref() == Some("cascadia") {
+        let bundle = install_bundle(executor, session, device)?;
+        return crate::autogo::start(executor, session, &device.board, None, &bundle);
     }
     let payload = payload(executor, device)?;
     start_image(executor, session, &device.board, &payload)

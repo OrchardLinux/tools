@@ -40,8 +40,12 @@ pub struct Release {
     pub base: String,
     pub root: Receipt,
     pub root_map: Receipt,
-    pub pongo: Receipt,
-    pub m1n1: Receipt,
+    /// The loaders the release was built with, where it names them: a
+    /// release for the 32-bit boards names each board's Cascadia loader.
+    pub pongo: Option<Receipt>,
+    pub m1n1: Option<Receipt>,
+    /// A board's Cascadia loader, by board.
+    pub cascadia: std::collections::BTreeMap<String, Receipt>,
     pub install_tools: Receipt,
     /// The boot logo m1n1 shows, when the release has one.
     pub logo: Option<Receipt>,
@@ -126,6 +130,18 @@ pub fn parse_index(text: &str, base: &str) -> Result<Receipt> {
     receipt(table(&parse(text, "orchard.index")?, "release")?, base)
 }
 
+/// The manifest an index pins for the 32-bit boards (`[releases.armv7]`):
+/// a release has one root per architecture.
+pub fn parse_index_arm(text: &str, base: &str) -> Result<Receipt> {
+    let doc = parse(text, "orchard.index")?;
+    let row = doc
+        .get("releases")
+        .and_then(|r| r.get("armv7"))
+        .and_then(toml::Value::as_table)
+        .ok_or_else(|| format_error("this release has no system for the 32-bit boards"))?;
+    receipt(row, base)
+}
+
 pub fn parse_release(text: &str, base: &str) -> Result<Release> {
     let doc = parse(text, "orchard.install")?;
     let receipt = |doc: &toml::Table| receipt(doc, base);
@@ -166,8 +182,19 @@ pub fn parse_release(text: &str, base: &str) -> Result<Release> {
         account_user,
         root: receipt(root)?,
         root_map: receipt(table(root, "map")?)?,
-        pongo: receipt(table(&doc, "pongo")?)?,
-        m1n1: receipt(table(&doc, "m1n1")?)?,
+        pongo: doc.get("pongo").and_then(toml::Value::as_table).map(receipt).transpose()?,
+        m1n1: doc.get("m1n1").and_then(toml::Value::as_table).map(receipt).transpose()?,
+        cascadia: doc
+            .get("cascadia")
+            .and_then(toml::Value::as_table)
+            .map(|boards| {
+                boards
+                    .iter()
+                    .filter_map(|(board, row)| row.as_table().map(|row| receipt(row).map(|r| (board.clone(), r))))
+                    .collect::<Result<_>>()
+            })
+            .transpose()?
+            .unwrap_or_default(),
         install_tools: receipt(table(&doc, "install_tools")?)?,
         logo: doc.get("logo").and_then(toml::Value::as_table).map(receipt).transpose()?,
         board_data: doc.get("board_data").and_then(toml::Value::as_table).map(receipt).transpose()?,
@@ -226,7 +253,7 @@ mod tests {
     fn file_names_resolve_next_to_the_manifest() {
         let text = release().replace("\"url\" = \"https://example/pongo.bin\"", "\"file\" = \"pongo.bin\"");
         let rel = parse_release(&text, "file:///builds/dev/").unwrap();
-        assert_eq!(rel.pongo.url, "file:///builds/dev/pongo.bin");
+        assert_eq!(rel.pongo.unwrap().url, "file:///builds/dev/pongo.bin");
         let bad = release().replace("\"url\" = \"https://example/pongo.bin\"", "\"file\" = \"../pongo.bin\"");
         assert!(parse_release(&bad, "file:///builds/dev/").is_err());
         assert_eq!(base_of("https://h/a/b/index.toml"), "https://h/a/b/");

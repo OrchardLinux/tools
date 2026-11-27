@@ -40,9 +40,9 @@ use std::collections::BTreeMap;
 
 /// What the flow needs to know about a board, from the catalog.
 pub fn describe(catalog: &Catalog, board: &Board, ecid: &str) -> Device {
-    // Every start here goes through palera1n, which reaches 64-bit chips
-    // only: a 32-bit board is refused before anything is started on it.
-    let reachable = catalog.chip(board.chip).map_or(true, |chip| chip.architecture != "arm");
+    // Which boards a start reaches is the boot routes' matter (routes.toml):
+    // one without a route is told so when the start is asked for.
+    let reachable = catalog.chip(board.chip).is_ok();
     let product = board.products.first().map(String::as_str).unwrap_or("");
     let (model, sequence) = layout(product);
     Device {
@@ -365,7 +365,7 @@ mod tests {
     }
 
     #[test]
-    fn a_32_bit_board_is_unsupported_whatever_its_status() {
+    fn a_32_bit_board_has_its_status_like_any_other() {
         let root = std::env::temp_dir().join(format!("orchard-runtime-arch-{}", std::process::id()));
         let write = |path: &str, text: &str| {
             std::fs::create_dir_all(root.join(path).parent().unwrap()).unwrap();
@@ -388,7 +388,9 @@ mod tests {
         let support = |name: &str| describe(&catalog, &catalog.board(name).unwrap(), "1").support;
         assert_eq!(support("wide"), Support::Experimental);
         assert_eq!(support("plain"), Support::Experimental);
-        assert_eq!(support("narrow"), Support::Unsupported);
+        // A 32-bit board has its status too: whether a start reaches it is
+        // the boot routes' matter.
+        assert_eq!(support("narrow"), Support::Experimental);
         std::fs::remove_dir_all(&root).unwrap();
     }
 
