@@ -79,7 +79,11 @@ jobs:
       # nothing is compiled. No device.
       - name: Build a payload with the nightly's components
         if: matrix.name == 'Linux aarch64'
+        env:
+          # The runner's own python3 is older than orchard's producers take.
+          ORCHARD_PYTHON: python3.11
         run: |
+          sudo apt-get install -y python3.11
           commit=$(curl -fsSL --retry 3 https://github.com/OrchardLinux/orchard/releases/download/nightly/latest.json |
             python3 -c 'import json, sys; print(json.load(sys.stdin)["commit"])')
           git -C orchard-data fetch --quiet --depth 1 origin "$commit"
