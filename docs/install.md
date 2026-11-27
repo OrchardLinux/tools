@@ -89,9 +89,26 @@ orchard --json install NAME --yes --no-ssh \
 ## Which devices
 
 A board the orchard data marks supported or experimental. A board it does
-not know, one it marks otherwise, and every 32-bit board is refused with
-exit status 4 before anything is started on it. The release must cover the
-board.
+not know, or one it marks otherwise, is refused with exit status 4 before
+anything is started on it. The release must cover the board: for a 32-bit
+board (iPad mini, iPad 2) it needs a 32-bit root, which a release's index
+names beside the 64-bit one.
+
+### The 32-bit boards
+
+Nothing of this has run on a device. The tablet has to be in DFU mode from
+a Raspberry Pi Pico, or in kDFU, as for [`run`](run.md#the-32-bit-boards).
+
+- The install system starts behind m1n1's 32-bit build (`ibss`, the
+  default) or through Cascadia's loader (`--autogo`).
+- The disk is iOS's, partitioned with LwVM. The system goes into free
+  space of at least 8 GiB, or replaces a Linux partition; nothing of iOS is
+  resized or touched, so the free space has to be there already.
+- The install adds two entries to the partition header: a boot partition
+  of 512 MiB, which m1n1 starts the system from, and the root. The install
+  system writes the new header only if it adds exactly these over free
+  space and changes nothing else.
+- `launch` then starts it through m1n1, as on every other board.
 
 ## How the device is entered
 
@@ -106,8 +123,8 @@ data; the first that fits is taken.
 | `ibss` | gaster enters the boot ROM, and Apple's own iBSS (and iBEC, where the chip loads one), patched, takes the install system. The firmware is fetched from Apple, and its keys are read from the device the first time |
 
 The data also names `autogo` (`--autogo`), the 32-bit boards' route into
-Cascadia's loader, taken only when asked for by name. No command of this
-version starts it yet.
+Cascadia's loader, taken only when asked for by name: `install` starts the
+install system through it, `run` a payload.
 
 `--boot ROUTE` names one, else `ORCHARD_BOOT`
 ([reference.md](reference.md#environment)). `--ibss` is short for
