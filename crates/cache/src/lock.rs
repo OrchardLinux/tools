@@ -29,6 +29,9 @@ pub struct Lock {
     inherited: bool,
     /// The lock's file, while this process offers the lock to its own work.
     offered: Option<PathBuf>,
+    /// Whether child processes were given the lock, which then holds until
+    /// the last of them ends.
+    handed: std::sync::atomic::AtomicBool,
 }
 
 /// The locks this process offers to work it starts itself: a window that
@@ -87,6 +90,7 @@ impl Lock {
             location: location.to_owned(),
             inherited,
             offered: None,
+            handed: false.into(),
         };
         if !inherited {
             lock.note(&format!("pid {}: {}", std::process::id(), program()));
@@ -116,6 +120,7 @@ impl Lock {
     /// same device then continue this session.
     pub fn hand_to(&self, command: &mut std::process::Command) -> Result<()> {
         inherit::pass(&self.file, command, FD_VAR)?;
+        self.handed.store(true, std::sync::atomic::Ordering::Relaxed);
         command.env(LOCATION_VAR, &self.location);
         Ok(())
     }
@@ -139,6 +144,12 @@ impl Drop for Lock {
         // The one who took the lock takes its note away again.
         if !self.inherited {
             self.note("");
+            // Released now, not when the file closes: a process this one is
+            // starting at this moment holds a copy of the file until it runs
+            // its program, and would keep the device locked meanwhile.
+            if !self.handed.load(std::sync::atomic::Ordering::Relaxed) {
+                let _ = self.file.unlock();
+            }
         }
     }
 }
@@ -330,6 +341,7 @@ mod tests {
         let path = dir.path().join("0x100000.lock");
 
         // What a command run by the session does with the descriptor.
+        held.hand_to(&mut std::process::Command::new("true")).unwrap();
         let passed_on = inherit::adopt(held.file.as_raw_fd(), |f| same_file(f, &path)).unwrap();
         passed_on.try_lock().unwrap();
         // The lock now lives as long as either of the two.
