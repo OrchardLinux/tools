@@ -38,6 +38,8 @@ and fails if it is missing or empty.
   free space, and adds a boot partition and a root.
 - With the device in recovery mode, `install` and `launch` guide it into
   DFU mode step by step.
+- `install` says that it is still downloading the system when the write
+  waits for that, instead of standing at "Writing the system 0%".
 - `run` starts a RAM boot on every board by its route; `run SOURCE` takes
   the options `build` wrote; `--no-wait` ends once the start has gone out;
   in a distribution checkout it starts that distribution's installer system.
