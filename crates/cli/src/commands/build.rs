@@ -36,8 +36,8 @@ pub struct BuildArgs {
     #[arg(long, conflicts_with = "kernel_tree")]
     kernel_dir: Option<PathBuf>,
     /// Build this kernel tree as it is, with its own defconfig (default:
-    /// kernel-tree in orchard.local.toml, else orchard's own kernel)
-    #[arg(long)]
+    /// kernel in orchard.local.toml, else orchard's own kernel)
+    #[arg(long = "kernel", alias = "kernel-tree", value_name = "DIR")]
     kernel_tree: Option<PathBuf>,
     /// Distribution checkouts: build the image's [orchard] packages from
     /// this checkout of OrchardLinux/packages where it differs from the
@@ -82,7 +82,7 @@ pub struct InputsArgs {
     #[arg(long, value_name = "BOARD=FILE", value_parser = pair)]
     loader: Vec<(String, PathBuf)>,
     /// Build the kernels from this kernel tree
-    #[arg(long, env = "ORCHARD_KERNEL_TREE")]
+    #[arg(long = "kernel", alias = "kernel-tree", value_name = "DIR", env = "ORCHARD_KERNEL_TREE")]
     kernel_tree: Option<PathBuf>,
 }
 
@@ -162,6 +162,12 @@ impl BuildArgs {
 
     pub fn directory(&self) -> &Path {
         &self.directory
+    }
+
+    /// `run`'s other reading of `--kernel`: a path that is no directory is
+    /// a finished kernel image to boot, and nothing is built.
+    pub fn kernel_image(&self) -> Option<&Path> {
+        self.kernel_tree.as_deref().filter(|path| !path.is_dir())
     }
 }
 
@@ -373,4 +379,27 @@ pub fn component_keys(global: &Global, output: &Path, platforms: &[String]) -> R
         keys,
     }
     .into())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::args::{Cli, Command};
+    use clap::Parser;
+    use std::path::Path;
+
+    #[test]
+    fn the_kernel_tree_is_named_by_kernel_and_by_its_older_name() {
+        for flag in ["--kernel", "--kernel-tree"] {
+            let Ok(Command::Build(args)) = Cli::try_parse_from(["orchard", "build", "payload", flag, "linux"]).map(|cli| cli.command) else {
+                panic!("build {flag} does not parse");
+            };
+            assert_eq!(args.kernel_tree.as_deref(), Some(Path::new("linux")), "{flag}");
+            let Ok(Command::Inputs(args)) = Cli::try_parse_from(["orchard", "inputs", "--output", "inputs.json", flag, "linux"]).map(|cli| cli.command) else {
+                panic!("inputs {flag} does not parse");
+            };
+            assert_eq!(args.kernel_tree.as_deref(), Some(Path::new("linux")), "{flag}");
+        }
+        assert!(Cli::try_parse_from(["orchard", "build", "--kernel", "linux", "--kernel-dir", "staged"]).is_err());
+        assert!(Cli::try_parse_from(["orchard", "build", "--kernel", "a", "--kernel-tree", "b"]).is_err());
+    }
 }

@@ -35,6 +35,7 @@ const IBOOT_UPLOAD: usize = 40 << 20;
 const SHORTCUT: &str = "run.toml";
 
 #[derive(clap::Args)]
+#[command(mut_arg("kernel_tree", |arg| arg.value_name("PATH").help(KERNEL).long_help(KERNEL)))]
 pub struct Args {
     /// The project to build and boot (the build's own options apply), or
     /// a run.toml or a directory with one: the options below, written down
@@ -44,12 +45,8 @@ pub struct Args {
     #[arg(long, conflicts_with = "bare")]
     no_build: bool,
     /// Start m1n1 alone and leave it waiting on USB
-    #[arg(long, conflicts_with_all = ["kernel", "dtb", "initramfs", "bootargs", "firmware", "proxy"])]
+    #[arg(long, conflicts_with_all = ["kernel_tree", "dtb", "initramfs", "bootargs", "firmware", "proxy"])]
     bare: bool,
-    /// Linux kernel image, instead of a project's: with --dtb and
-    /// --initramfs, nothing is built or read from a file
-    #[arg(long)]
-    kernel: Option<PathBuf>,
     /// A Linux device tree; repeat for a kernel of several boards (m1n1
     /// takes the board's)
     #[arg(long)]
@@ -98,6 +95,10 @@ pub struct Args {
     timeout: u64,
 }
 
+/// What `--kernel` is to `run`: the build's option, and a kernel to boot.
+const KERNEL: &str = "A directory: the kernel tree to build the project's kernel from, as it is. A file: a Linux kernel \
+                      image to boot instead of a project, with --dtb and --initramfs; nothing is built or read from a file";
+
 /// `run.toml`: `run`'s own options for a Linux, written down. Paths count
 /// from the file's directory.
 #[derive(Debug, Default, PartialEq, serde::Deserialize)]
@@ -129,7 +130,7 @@ struct Wanted {
 fn wanted(args: &Args, file: Option<(Shortcut, &Path)>) -> Result<Option<Wanted>> {
     let (file, base) = file.map(|(file, path)| (file, path.parent().unwrap_or(Path::new(".")).to_owned())).unwrap_or_default();
     let from_file = |path: PathBuf| base.join(path);
-    let kernel = args.kernel.clone().or(file.kernel.map(from_file));
+    let kernel = args.build.kernel_image().map(Path::to_owned).or(file.kernel.map(from_file));
     let dtbs = match args.dtb.is_empty() {
         true => file.dtb.into_iter().map(from_file).collect(),
         false => args.dtb.clone(),
@@ -179,7 +180,7 @@ pub fn run(global: &Global, args: &Args) -> Result<Output> {
     // the project, built first. The board's platform names the file of a
     // build that is taken as it is.
     let directory = args.build.directory();
-    let explicit = args.bare || args.kernel.is_some();
+    let explicit = args.bare || args.build.kernel_image().is_some();
     if explicit {
         wanted(args, None)?;
     }

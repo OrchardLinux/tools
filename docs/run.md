@@ -18,7 +18,8 @@ m1n1's proxy once it runs; `--proxy` asks for that way whatever the size.
 | To | Give |
 | --- | --- |
 | boot the last build as it is | `--no-build` |
-| boot files of your own | `--kernel K --dtb D… --initramfs I [--bootargs "…"]`: nothing is built |
+| build the project with a kernel tree of your own | `--kernel DIR`, as for `build` |
+| boot files of your own | `--kernel FILE --dtb D… --initramfs I [--bootargs "…"]`: nothing is built |
 | start m1n1 alone and leave it waiting on USB | `--bare` |
 | use a local m1n1 | `--m1n1 FILE`: the plain build for palera1n and checkra1n, the Mach-O build for ibss |
 | use a local loader of Cascadia's on the autogo route | `--loader FILE`, as for `build` |

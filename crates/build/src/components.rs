@@ -305,7 +305,7 @@ pub fn prepare(build: &Build, device: &str, given: &Given) -> Result<Components>
     let described = descriptor(&build.root, device)?;
     if given.kernel.is_some() && given.kernel_tree.is_some() {
         return Err(invalid(
-            "give a staged kernel (--kernel-dir) or a kernel tree (--kernel-tree), not both",
+            "give a staged kernel (--kernel-dir) or a kernel tree (--kernel), not both",
         ));
     }
     let cascadia = described.loader == "cascadia";
