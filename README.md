@@ -6,9 +6,9 @@
 curl -fsSL https://raw.githubusercontent.com/OrchardLinux/tools/main/install.sh | sh
 ```
 
-puts `orchard`, the command line, into `~/.local/bin`: the newest build of
-this repository's main branch that passed its tests, checked against its
-checksums. `orchard update` replaces it with a newer one later. Then, with
+puts `orchard`, the command line, into `~/.local/bin`: the newest release,
+checked against its checksums. `orchard update` replaces it with a newer
+one later. Then, with
 an iPad or iPhone in DFU mode:
 
 ```sh
@@ -19,6 +19,13 @@ orchard doctor                # what this computer has and lacks
 
 [`docs/`](docs/README.md) has every command. The graphical installer comes
 with each distribution's release.
+
+To work on it, build it instead (Rust 1.98):
+
+```sh
+git clone https://github.com/OrchardLinux/tools && cd tools
+cargo build --release -p orchard-cli    # target/release/orchard
+```
 
 ## What is here
 

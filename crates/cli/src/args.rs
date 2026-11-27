@@ -2,7 +2,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use orchard_device::select::Selector;
 use orchard_usb::Mode;
 
-/// The version, and in a published build the commit it was built from.
+/// The version, and in a release the commit it was built from.
 fn version() -> &'static str {
     match option_env!("ORCHARD_BUILD") {
         Some(commit) => format!("{} ({})", env!("CARGO_PKG_VERSION"), commit.get(..12).unwrap_or(commit)).leak(),
@@ -202,7 +202,7 @@ pub enum Command {
         #[command(subcommand)]
         command: Option<DataCommand>,
     },
-    /// Replace this program with its newest build
+    /// Replace this program with its newest release
     Update,
     /// Show what this computer has of what orchard uses, and what each is
     /// needed for; changes nothing
