@@ -202,6 +202,13 @@ jobs:
       group: release-${{ github.ref }}
       cancel-in-progress: false
     steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+          path: source
+
       - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
         with:
           pattern: '{macos,linux-*}'
@@ -223,8 +230,17 @@ jobs:
             test -s "$asset"
           done
           sha256sum "${assets[@]}" > SHA256SUMS
+          # The version's section of CHANGELOG.md, without its heading.
+          changes=$(awk -v heading="## [$version]" \
+            'index($0, heading) == 1 { found = 1; next } found && /^## \[/ { exit } found' \
+            ../source/CHANGELOG.md)
+          if [[ -z "${changes//[[:space:]]/}" ]]; then
+            echo "CHANGELOG.md has no section for $version" >&2
+            exit 1
+          fi
           {
-            printf 'Orchard tools %s: the generic installer and Orchard, the launcher. ' "$version"
+            printf '%s\n\n' "$changes"
+            printf 'Orchard tools %s: the command line, the generic installer and Orchard, the launcher. ' "$version"
             printf '%s\n\n' 'Distributions stamp the installer (packaging/stamp.py) and offer it in their own releases.'
             printf '%s\n' '| Asset | Bytes | SHA-256 |' '| --- | ---: | --- |'
             while read -r hash asset; do
