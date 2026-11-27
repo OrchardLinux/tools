@@ -376,6 +376,12 @@ mod tests {
             eprintln!("ORCHARD_TEST_DATA is not set; no orchard checkout to read");
             return;
         };
+        // The script and the producers need a current Python; where there
+        // is none (Ubuntu 22.04's runners), another runner compares.
+        if crate::python().is_err() {
+            eprintln!("no Python that runs orchard's scripts here");
+            return;
+        }
         let script = Path::new(&dir).join("ci/keys.py");
         if !script.is_file() {
             eprintln!("this orchard has no ci/keys.py yet");
