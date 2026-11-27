@@ -28,9 +28,11 @@ const MAX_MANIFEST: u64 = 1 << 20;
 /// The boot arguments iBoot32Patcher writes, as Project Cascadia's build
 /// scripts pass them.
 const BOOTARGS: &str = "cs_enforcement_disable=1 debug=0x14";
-/// The boot arguments the anchor patcher writes into an A12 iBSS, as Project
-/// Cascadia's `devices/a12/boot/prepare-device-bootset.py` passes them.
-const ANCHOR_BOOTARGS: &str = "-v wdt=-1";
+/// The boot arguments the anchor patcher writes into an A12 iBSS. Project
+/// Cascadia's `devices/a12/boot/prepare-device-bootset.py` also passes `-v`,
+/// which makes iBoot hand m1n1 a verbose boot (`video.display` 0). No other
+/// chip's route asks for that, so this one does not either.
+const ANCHOR_BOOTARGS: &str = "wdt=-1";
 /// The chip IM4M manifests, keyed by chip id (`0x8010`) with their SHA-256.
 /// They are Apple-signed, so not part of this repository or the binary: an
 /// IMG4 chain downloads its chip's from remote_boot (BSD-3-Clause) at a pinned
@@ -58,7 +60,7 @@ const MANIFEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30)
 /// Raise it with every change to how an image is made here or in `formats`
 /// (decoding, patch steps, the trampoline, wrapping, the list of files), so
 /// that nothing built by older code is taken from the cache.
-const BUILD: u32 = 4;
+const BUILD: u32 = 5;
 
 /// The empty trust cache iBoot is given before the kernelcache: version 1, a
 /// UUID, no entries (remote_boot's `empty_trustcache.bin`, byte for byte).

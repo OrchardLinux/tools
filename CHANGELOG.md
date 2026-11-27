@@ -27,6 +27,8 @@ and fails if it is missing or empty.
   release lists yet. The kernel tree option is `--kernel` everywhere now
   (`--kernel-tree` still works), and `run --kernel` takes a tree or a
   finished image.
+- On the A12 boards Apple's boot loader is no longer asked for a verbose
+  start, as on every other chip.
 - `run` in a directory with nothing to run says so and names what works
   from anywhere.
 - `install`, `launch` and `run` take `--busy-cpu` (Linux, off by default):
