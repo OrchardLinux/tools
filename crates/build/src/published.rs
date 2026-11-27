@@ -33,12 +33,21 @@ pub fn source_inputs(build: &Build, platform: &str) -> Result<Value> {
     let root = &build.root;
     let described = descriptor(root, platform)?;
     // The source is the lock's commit of OrchardLinux/linux, as it is.
-    let paths = [
-        described.upstream.as_str(),
-        described.config.as_str(),
-        "kernel/Containerfile",
-        "kernel/install-toolchain",
+    let mut paths = vec![
+        described.upstream.clone(),
+        described.config.clone(),
+        "kernel/Containerfile".to_owned(),
+        "kernel/install-toolchain".to_owned(),
     ];
+    // The modules its boards bring are built into the same bundle.
+    if let Some(modules) = &build.contract.board_modules {
+        for board in crate::platform::boards(root, platform)?.keys() {
+            if root.join(modules).join(board).is_dir() {
+                paths.push(format!("{modules}/{board}"));
+            }
+        }
+    }
+    let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
     Ok(json!({
         "platform": platform,
         "build": described.build_fields(false),

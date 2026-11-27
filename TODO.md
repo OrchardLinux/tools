@@ -57,8 +57,8 @@ the board's firmware keys. What is missing is small, because the means to
 get the keys are here already: the boot firmware of the 32-bit chains is
 built from IMG3 with keys from the key store, a file, the board data or the
 device (`crates/boards/src/boot_firmware.rs`, `data/firmware_keys.rs`,
-`crates/formats/src/img3.rs`). To add, after orchard's Python
-(`legacy_images.py`, `remote_ipsw.py`):
+`crates/formats/src/img3.rs`). To add, after orchard's readers
+(`src/orchard/apple/legacy_images.py`, `remote_ipsw.py`):
 
 - the kernel input: an IMG3 kernelcache decrypted with its key and
   decompressed (`img3_kernelcache`);
@@ -70,34 +70,6 @@ The step that follows is ported and checked against Python on a made-up
 kernel (`sgx543-from-kernelcache@1`); p105's real file has not been made.
 `install` refuses 32-bit boards before it gets there, so nobody meets this
 yet.
-
-## What orchard's Python still does
-
-Looked at on 2026-11-26, for the day the Python tool goes:
-
-- `run`'s start of what was built, until orchard hands it to `orchard
-  run` (above), and `boot` (a release's recovery or an image, in RAM,
-  without installing). Releases have had no recovery since
-  about 0.3 (Henrik), so the distribution-checkout form of both may have
-  nothing left to boot; check before porting it.
-- `python -m orchard.published keys`: orchard's build.yml writes
-  `component-keys.json` with it, and keeps doing so: CI does not use
-  this tool (Henrik, 2026-11-26). This tool reads that document, and its
-  hidden `component-keys` writes the same one, for comparing.
-- `python -m orchard.installer release` and `core`: `install.sh` with
-  `orchard-install.pyz` in every distribution release, and
-  `orchard-core.pyz` for `orchard update`. They ship the Python tool and go
-  with it; before that, orchard needs its own way to be installed
-  (`curl | sh`, perhaps a brew tap) and to update itself. To be discussed
-  with Henrik; `adopt` goes with them.
-- `resolve` (download and verify what a published release needs for a
-  board, without a device): named in omarchy-a's release checklist for a
-  person to run. orchard's verify-public.yml also runs it, but that
-  workflow is stale (old wheel pair, renamed repositories, expects a
-  recovery) and CI does not use orchard. Not ported; the installer does
-  the same work only with a device attached.
-- `mixin`, `setup-host`: no use found anywhere.
-- `distros`: undecided.
 
 ## Not run on a device yet
 

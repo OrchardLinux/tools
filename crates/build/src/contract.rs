@@ -36,6 +36,9 @@ pub struct Contract {
     pub pongo: Vec<String>,
     /// The same for a board's Cascadia loader, its profile as `{profile}`.
     cascadia: Vec<String>,
+    /// Where boards keep kernel modules of their own (`DIR/BOARD`), when a
+    /// platform's kernel key covers those of its boards.
+    pub board_modules: Option<String>,
 }
 
 impl Contract {
@@ -130,7 +133,19 @@ pub fn read(root: &Path) -> Result<Contract> {
     if !cascadia.iter().any(|path| path == PROFILE) {
         return Err(bad(format!("inputs.cascadia must name {PROFILE}")));
     }
+    let board_modules = match file.get("board-modules") {
+        None => None,
+        Some(value) => {
+            let name = value.as_str().unwrap_or("");
+            let inside = !name.is_empty() && !Path::new(name).is_absolute() && name.split('/').all(|part| part != "..");
+            if !inside {
+                return Err(bad("board-modules must be a directory in the data".into()));
+            }
+            Some(name.to_owned())
+        }
+    };
     Ok(Contract {
+        board_modules,
         kernel_producer,
         m1n1: list("m1n1")?,
         tools: list("tools")?,
@@ -175,6 +190,9 @@ mod tests {
         ));
         let contract = read(dir.path()).unwrap();
         assert_eq!(contract.kernel_producer, 2);
+        assert_eq!(contract.board_modules, None);
+        let with = data(&format!("schema = 1\nkernel-producer = 2\nboard-modules = \"kernel/modules\"\n{INPUTS}"));
+        assert_eq!(read(with.path()).unwrap().board_modules.as_deref(), Some("kernel/modules"));
         assert_eq!(contract.m1n1, ["boot/m1n1"]);
         assert_eq!(
             contract.cascadia("devices/p105/cascadia.toml"),
