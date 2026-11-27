@@ -1,6 +1,6 @@
-//! Recipe steps against orchard's Python: the inputs in `data/steps/` are
-//! made by `make.py` there, which also prints what Python's extractors give
-//! for them. The values here are those.
+//! Recipe steps on the made-up inputs in `data/steps/`: small, and shaped
+//! like the real files only as far as the extractors look. The values here
+//! are what orchard's Python extractors gave for them before they went.
 use orchard_formats::kernelcache::{self, Kernelcache};
 use orchard_formats::z2fw::{self, Profile, N1};
 use orchard_formats::{bluetool, sgx};
