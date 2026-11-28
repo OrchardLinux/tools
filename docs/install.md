@@ -141,7 +141,8 @@ exploit without ever getting in while the computer is idle, and get in
 within seconds while it is under load. `--busy-cpu` (or `ORCHARD_BUSY_CPU=1`,
 which the installer and launcher windows read too) makes that load: the
 exploit tool runs on one CPU core of its own and every other core is kept
-busy until the exploit is through. The fans may spin up for those seconds.
+busy until the tool has ended, which is when PongoOS is up. The fans may
+spin up for that time.
 `install`, `launch` and `run` take it.
 
 `--m1n1 FILE` starts a local m1n1 instead of the published one: the plain
@@ -192,7 +193,7 @@ start it. The layer covers every board the data lists for the platform.
 - The board's peripheral firmware, built from Apple's firmware by its recipe
   ([data-and-firmware.md](data-and-firmware.md)).
 
-The run's log is `--log FILE`, else `logs/cli-TIME.log` in the cache
+The run's log is `--log FILE`, else `logs/DATE-TIME-cli.log` in the cache
 ([reference.md](reference.md#the-run-log)).
 
 ## Ctrl-C

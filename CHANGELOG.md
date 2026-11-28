@@ -33,7 +33,7 @@ and fails if it is missing or empty.
   from anywhere.
 - `install`, `launch` and `run` take `--busy-cpu` (Linux, off by default):
   for computers where checkm8 only gets in under load, the exploit runs on
-  one core while the others are kept busy.
+  one core while the others are kept busy, until PongoOS is up.
 - On Linux the USB port reset after checkm8 waits 10 s instead of 2.5 s, so
   it no longer comes while the device is returning by itself.
 - `install` works on the 32-bit boards: it reads their LwVM disk, offers the
@@ -62,7 +62,8 @@ and fails if it is missing or empty.
   one section of a kext whole (`bundle`, `segment`, `section`): the
   iPhone XR's PMP firmware comes this way.
 
-- `install`, `launch` and `run` keep one run log: orchard's own steps and
+- `install`, `launch` and `run` keep one run log, named by when the run
+  started (`logs/2026-11-28-114812-run.log` in the cache): orchard's own steps and
   the output of palera1n, checkra1n and gaster in one file, in order, each
   line with the seconds since the start and who said it. It shows every
   step of the USB port reset, the busy cores, what USB showed and why a tool

@@ -275,11 +275,11 @@ fn run_tool(executor: &Executor, session: &mut Session<Host>, from: Mode, name: 
         c
     };
     // --busy-cpu: the exploit tool on a core of its own, the others busy
-    // until it is through.
+    // until it ends.
     let busy = (from == Mode::Dfu).then(crate::busy::plan).flatten().map(|(core, others)| {
-        eprintln!("chain: busy CPU: {label} on core {core}, {} cores kept busy until the exploit is through", others.len());
+        eprintln!("chain: busy CPU: {label} on core {core}, {} cores kept busy until it ends", others.len());
         crate::busy::pin(&mut command, core);
-        crate::busy::Busy::start(log_path.clone(), &others)
+        crate::busy::Busy::start(&others)
     });
     let child = command
         // palera1n 3 runs as a command only when told to (on macOS it is an app).

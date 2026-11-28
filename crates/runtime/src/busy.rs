@@ -1,6 +1,10 @@
 //! `--busy-cpu` (`ORCHARD_BUSY_CPU=1`), Linux: the exploit tool runs on one
-//! CPU core of its own while every other core is kept busy, until the
-//! exploit is through ("Checkmate") or the tool ends.
+//! CPU core of its own while every other core is kept busy, until the tool
+//! ends: through the exploit and the device's return in download mode, to
+//! PongoOS. The cores stay busy past "Checkmate" because the one run in
+//! which they stopped there was also the one in which the device did not
+//! come back; every measured run that came back had them busy throughout
+//! or not at all.
 //!
 //! On some computers checkm8 only succeeds while the computer is under load.
 //! Measured on one (Ryzen 5 3600, palera1n 2.4, an iPhone 8 Plus): idle, 0 of
@@ -8,12 +12,10 @@
 //! within 1 to 8 seconds. Keeping the CPU out of its sleep states or at its
 //! highest clock did not do it, and a busy loop on the tool's own core made
 //! it worse.
-use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::Duration;
 
 /// The core for the tool (the last this process may use) and the cores to
 /// keep busy (all others). None where the switch is off, the system has no
@@ -83,18 +85,17 @@ pub fn pin(command: &mut Command, core: usize) {
     let _ = (command, core);
 }
 
-/// The cores kept busy while the exploit runs.
+/// The cores kept busy while the exploit tool runs.
 pub struct Busy {
     stop: Arc<AtomicBool>,
     threads: Vec<JoinHandle<()>>,
 }
 
 impl Busy {
-    /// One busy thread on each of `cores`, until "Checkmate" shows in the
-    /// tool's `log` or `finish`.
-    pub fn start(log: PathBuf, cores: &[usize]) -> Busy {
+    /// One busy thread on each of `cores`, until `finish`.
+    pub fn start(cores: &[usize]) -> Busy {
         let stop = Arc::new(AtomicBool::new(false));
-        let mut threads: Vec<JoinHandle<()>> = cores
+        let threads = cores
             .iter()
             .map(|&core| {
                 let stop = stop.clone();
@@ -109,16 +110,6 @@ impl Busy {
                 })
             })
             .collect();
-        let flag = stop.clone();
-        threads.push(std::thread::spawn(move || {
-            while !flag.load(Ordering::Relaxed) {
-                if crate::replug::after_checkmate(&log).is_some() {
-                    orchard_cache::runlog::line("orchard", "busy CPU: the exploit is through, the busy cores stop");
-                    flag.store(true, Ordering::Relaxed);
-                }
-                std::thread::sleep(Duration::from_millis(100));
-            }
-        }));
         Busy { stop, threads }
     }
 
@@ -127,6 +118,7 @@ impl Busy {
         for t in self.threads {
             let _ = t.join();
         }
+        orchard_cache::runlog::line("orchard", "busy CPU: the tool has ended, the busy cores stop");
     }
 }
 
@@ -135,19 +127,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_busy_cores_stop_at_checkmate_and_when_finished() {
-        let log = std::env::temp_dir().join(format!("orchard-busy-{}", std::process::id()));
-        std::fs::write(&log, "UaF race: heuristic strategy failed\n").unwrap();
-        let busy = Busy::start(log.clone(), &[0, 1]);
-        std::thread::sleep(Duration::from_millis(150));
-        assert!(!busy.stop.load(Ordering::Relaxed));
-        std::fs::write(&log, "Entered initial checkm8 state after 76 steps\nCheckmate!\n").unwrap();
-        std::thread::sleep(Duration::from_millis(400));
-        assert!(busy.stop.load(Ordering::Relaxed), "stopped by the log");
+    fn the_busy_cores_run_until_finished() {
+        let busy = Busy::start(&[0, 1]);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert!(busy.threads.iter().all(|t| !t.is_finished()));
         busy.finish();
-
-        std::fs::write(&log, "UaF race: heuristic strategy failed\n").unwrap();
-        Busy::start(log.clone(), &[0]).finish();
-        let _ = std::fs::remove_file(&log);
     }
 }

@@ -1,5 +1,5 @@
 //! The installer's or launcher's run log (`orchard_cache::runlog`):
-//! `logs/installer-<time>.log` in the cache, with everything on stderr (the
+//! `logs/<date>-<time>-installer.log` in the cache, with everything on stderr (the
 //! flags, "exploit attempt", the driver's log) as orchard's own lines next
 //! to the tools' output. Started from the app menu there is no terminal to
 //! read them in; the Details' Copy includes the file's end.

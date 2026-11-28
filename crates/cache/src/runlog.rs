@@ -42,14 +42,20 @@ pub fn start_at(path: &Path, title: &str) -> Option<&'static Path> {
     self::path()
 }
 
-/// Starts the run log as `logs/NAME-TIME.log` in the default cache.
+/// Starts the run log as `logs/DATE-TIME-NAME.log` in the default cache.
 pub fn start(name: &str, title: &str) -> Option<&'static Path> {
     if let Some(path) = path() {
         return Some(path);
     }
+    start_at(&default_path(name)?, title)
+}
+
+/// Where a run log started now goes without a path of its own:
+/// `logs/DATE-TIME-NAME.log` in the default cache, so the logs sort by time.
+pub fn default_path(name: &str) -> Option<PathBuf> {
     let dir = crate::store::default_dir().ok()?.join("logs");
-    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    start_at(&dir.join(format!("{name}-{stamp}.log")), title)
+    let stamp: String = date_time().chars().filter(|c| *c != ':').map(|c| if c == ' ' { '-' } else { c }).collect();
+    Some(dir.join(format!("{stamp}-{name}.log")))
 }
 
 /// The run log's file, once started.
@@ -217,6 +223,14 @@ fn date_time() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_log_is_named_by_when_it_started() {
+        let name = default_path("run").unwrap().file_name().unwrap().to_string_lossy().into_owned();
+        let (date, rest) = name.split_at(10);
+        assert!(date.split('-').map(str::len).eq([4, 2, 2]), "{name}");
+        assert!(rest.len() == "-114812-run.log".len() && rest.ends_with("-run.log") && rest[1..7].chars().all(|c| c.is_ascii_digit()), "{name}");
+    }
 
     #[test]
     fn an_ecid_is_never_written() {

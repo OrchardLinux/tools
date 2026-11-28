@@ -74,7 +74,7 @@ pub struct Term {
     live: Option<(Vec<Span>, Instant)>,
     /// What is shown also goes into the run log.
     log: bool,
-    /// Where the log goes (--log, else the cache's logs/cli-<time>.log).
+    /// Where the log goes (--log, else the cache's logs/<date>-<time>-cli.log).
     pub log_path: Option<std::path::PathBuf>,
     raw: Option<libc::termios>,
     /// Rows of the block being printed (see `begin_block`).
@@ -91,13 +91,8 @@ impl Term {
         let color = tty && std::env::var_os("NO_COLOR").is_none();
         // SAFETY: duplicates fd 2 for our own use, then points fd 2 at the log.
         let out = unsafe { File::from_raw_fd(libc::dup(2)) };
-        // Without --log, as the app: the cache's logs/cli-<time>.log.
-        let log_path = log.map(|p| p.to_owned()).or_else(|| {
-            let dir = orchard_cache::store::default_dir().ok()?.join("logs");
-            std::fs::create_dir_all(&dir).ok()?;
-            let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-            Some(dir.join(format!("cli-{stamp}.log")))
-        });
+        // Without --log, as the app: the cache's logs/<date>-<time>-cli.log.
+        let log_path = log.map(|p| p.to_owned()).or_else(|| orchard_cache::runlog::default_path("cli"));
         // The file is the run log: stderr goes into it as orchard's lines,
         // next to the tools' output. Without one, stderr is dropped.
         let log_path = log_path.and_then(|p| orchard_cache::runlog::start_at(&p, &super::run_title()).map(|p| p.to_owned()));
