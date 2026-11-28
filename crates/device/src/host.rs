@@ -228,7 +228,8 @@ impl Connect for orchard_usb::Host {
             files: &[&data],
             dir: &worker.dir,
         };
-        let reply = tool::reply(&tool, timeout, data.len(), inherit)?;
+        orchard_cache::runlog::hide(ecid);
+        let reply = tool::reply(&tool, timeout, data.len(), bags.is_none(), inherit)?;
         Ok(reply.as_chunks::<48>().0.to_vec())
     }
     fn dfu(&mut self, device: &Device) -> Result<Box<dyn DfuMode>, Error> {

@@ -61,6 +61,17 @@ and fails if it is missing or empty.
 - A failed download or unusable file is reported in the same words as the
   installer window.
 - `launch` says when a device has nothing installed.
+- Firmware recipes can take a kext's firmware from an iOS 16 or later
+  kernelcache too, and the new step `section-from-kernelcache@1` takes any
+  one section of a kext whole (`bundle`, `segment`, `section`): the
+  iPhone XR's PMP firmware comes this way.
+
+- `install`, `launch` and `run` keep one run log: orchard's own steps and
+  the output of palera1n, checkra1n and gaster in one file, in order, each
+  line with the seconds since the start and who said it. It shows every
+  step of the USB port reset, the busy cores, what USB showed and why a tool
+  was ended. A cancelled run keeps its log up to there, the ECID is left
+  out, and a failed `run` ends with the log's path.
 
 ### Installer and launcher
 
@@ -74,6 +85,8 @@ and fails if it is missing or empty.
 - The launcher's program file is `orchard-launcher`, so it no longer has the
   command line's name.
 - Bundle identifiers are under `org.orchardlinux`.
+- The window's log is the same run log as the command line's, with the
+  tools' output in it.
 
 ## [0.1.5] - 2026-11-25
 

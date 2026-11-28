@@ -125,3 +125,8 @@ impl Report for Done {
         text.into_bytes()
     }
 }
+
+/// The run log's first line: which orchard, on what.
+pub(crate) fn run_title() -> String {
+    format!("orchard {}, {} {}", crate::args::version(), std::env::consts::OS, std::env::consts::ARCH)
+}

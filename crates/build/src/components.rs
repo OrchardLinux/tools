@@ -104,19 +104,20 @@ struct Released {
 /// a copy of a nightly uses the Pongo that nightly was published with.
 fn released_pongo(build: &Build) -> Option<Released> {
     let root = &build.root;
-    let (base, release) = if root.join(".git").exists() {
-        let tag = crate::sources::git(
-            root,
-            &["describe", "--tags", "--abbrev=0", "--match", "v*"],
-            &[],
-        )
-        .ok()?;
+    let described = root.join(".git").exists().then(|| {
+        crate::sources::git(root, &["describe", "--tags", "--abbrev=0", "--match", "v*"], &[]).ok()
+    });
+    let (base, release) = if let Some(Some(tag)) = described {
         let mut unchanged = vec!["diff", "--quiet", &tag, "--"];
         unchanged.extend(build.contract.pongo.iter().map(String::as_str));
         if !crate::sources::git_ok(root, &unchanged) {
             return None;
         }
         (format!("{RELEASES}/{tag}"), tag)
+    } else if let Some(None) = described {
+        // A checkout without its tags (a shallow clone): the newest
+        // release's own recipe, from its source archive, says.
+        return newest_release_pongo(build);
     } else {
         let tag = crate::snapshot::record(root)?["tag"].as_str()?.to_owned();
         (format!("{RELEASES}/{tag}"), tag)
@@ -127,6 +128,27 @@ fn released_pongo(build: &Build) -> Option<Released> {
         url: format!("{base}/pongo.bin"),
         release,
         checksum,
+    })
+}
+
+/// The newest release's Pongo, when that release's recipe is the data's.
+fn newest_release_pongo(build: &Build) -> Option<Released> {
+    let base = "https://github.com/OrchardLinux/orchard/releases/latest/download";
+    let text = published::fetch(&format!("{base}/SHA256SUMS"), 1 << 20).ok()?;
+    let sums = published::sums(&String::from_utf8_lossy(&text));
+    let source = "orchard-source.tar.gz";
+    let archive = build.store.fetch(&format!("{base}/{source}"), sums.get(source)?, 64 << 20).ok()?;
+    let unpacked = tempfile::tempdir().ok()?;
+    published::extract(&archive, "", unpacked.path()).ok()?;
+    let paths: Vec<&str> = build.contract.pongo.iter().map(String::as_str).collect();
+    let theirs = crate::recipes::key(unpacked.path(), &paths, crate::recipes::IGNORE).ok()?;
+    if theirs != key_of(build, &build.contract.pongo).ok()? {
+        return None;
+    }
+    Some(Released {
+        url: format!("{base}/pongo.bin"),
+        release: "the newest release".to_owned(),
+        checksum: sums.get("pongo.bin")?.clone(),
     })
 }
 

@@ -42,10 +42,12 @@ pub fn progress(global: &Global, text: &str) {
 pub fn finish(global: &Global, result: Result<Output, Error>) -> ExitCode {
     match result {
         Ok(out) if global.json => {
+            orchard_cache::runlog::release_stderr();
             println!("{}", out.json);
             ExitCode::SUCCESS
         }
         Ok(out) => {
+            orchard_cache::runlog::release_stderr();
             let mut stdout = std::io::stdout().lock();
             match stdout.write_all(&out.human).and_then(|_| stdout.flush()) {
                 Ok(()) => ExitCode::SUCCESS,
@@ -57,7 +59,11 @@ pub fn finish(global: &Global, result: Result<Output, Error>) -> ExitCode {
                 println!("{}", serde_json::json!({ "error": e }));
             } else {
                 eprintln!("error: {e}");
+                if let Some(log) = orchard_cache::runlog::path() {
+                    eprintln!("log: {}", log.display());
+                }
             }
+            orchard_cache::runlog::release_stderr();
             // Ctrl-C ended it: the status a shell gives an interrupted command.
             match orchard_build::was_interrupted() {
                 true => ExitCode::from(130),

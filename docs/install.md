@@ -192,7 +192,8 @@ start it. The layer covers every board the data lists for the platform.
 - The board's peripheral firmware, built from Apple's firmware by its recipe
   ([data-and-firmware.md](data-and-firmware.md)).
 
-The run's log is `--log FILE`, else `logs/cli-TIME.log` in the cache.
+The run's log is `--log FILE`, else `logs/cli-TIME.log` in the cache
+([reference.md](reference.md#the-run-log)).
 
 ## Ctrl-C
 
