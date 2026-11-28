@@ -18,37 +18,37 @@ struct Pin {
 }
 
 /// Orchard's external worker for entry and firmware key acquisition,
-/// orchard-worker-v0.1.2: sizes and checksums from the release's
+/// orchard-worker-v0.1.3: sizes and checksums from the release's
 /// `SHA256SUMS`.
-const RELEASE: &str = "https://github.com/OrchardLinux/gaster/releases/download/orchard-worker-v0.1.2";
+const RELEASE: &str = "https://github.com/OrchardLinux/gaster/releases/download/orchard-worker-v0.1.3";
 const PINS: &[Pin] = &[
     Pin {
         os: "macos",
         arch: "aarch64",
         asset: "gaster-worker-macos-aarch64",
-        size: 90336,
-        hash: "82d0826ec1c62cb39450f6c21f910bad3b7c8aa650ec2c37640f2b0c2c02ddd6",
+        size: 90432,
+        hash: "2c81aa131656cbbe322e97d90aa72630678fbe7935d2cffc2b6b42ba606eac5f",
     },
     Pin {
         os: "macos",
         arch: "x86_64",
         asset: "gaster-worker-macos-x86_64",
-        size: 57328,
-        hash: "efa588e89f3018b0af6853215adc2ecceb8ae1e2ad74192a12a74fbb4ab75461",
+        size: 57408,
+        hash: "726e74adda52f837a8cf1362ce80307a146eb4e78f21908635f434c9cebec7e2",
     },
     Pin {
         os: "linux",
         arch: "aarch64",
         asset: "gaster-worker-linux-aarch64",
-        size: 35560,
-        hash: "7ac9be1a8470fbfbc4bf5c75bf114e2c55aca555c8fe9440b593a645e94f7f03",
+        size: 35648,
+        hash: "d7d807b32c5ec7fc99e1b6dfb7eba46347f105388b3e6e6f455db30ac64b1e80",
     },
     Pin {
         os: "linux",
         arch: "x86_64",
         asset: "gaster-worker-linux-x86_64",
-        size: 38520,
-        hash: "489b8b38323b1b321033391a61a7323f9cc45dbc8538ee08c20f6484ead067e3",
+        size: 38600,
+        hash: "7f5fb3acac5faeeb8a6d33b6299cf767909eaa1f1ea7b8464d935781d8161b3b",
     },
 ];
 
