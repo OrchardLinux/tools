@@ -75,6 +75,8 @@ and fails if it is missing or empty.
   was ended. A cancelled run keeps its log up to there, the ECID is left
   out, a failed `run` ends with the log's path, and a run that worked
   has its result as the log's last line.
+- By the ibss route the run log shows each stage gaster tries and whether
+  it worked; until now gaster said nothing while it entered the boot ROM.
 
 ### Installer and launcher
 
