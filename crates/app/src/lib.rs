@@ -909,7 +909,7 @@ pub fn run(app: Kind) {
     let latest = Latest::default();
     // --demo: a scripted device to click through every screen; no hardware.
     let demo = std::env::args().any(|a| a == "--demo");
-    // Our own messages also in logs/installer-<time>.log (launcher-… for
+    // Our own messages also in logs/<date>-<time>-installer.log (…-launcher for
     // Orchard): there's no terminal when started from the app menu.
     if !demo {
         orchard_runtime::session_log::start(if app == Kind::Launcher { "launcher" } else { "installer" });

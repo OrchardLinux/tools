@@ -104,7 +104,7 @@ loader = "/…/loader.bin"             # Cascadia's, on a 32-bit build
 `--dtb`, `--initramfs`, `--bootargs` and `--firmware` on the command line
 count over the file's. With several device trees, m1n1 takes the board's.
 
-The run's log is `logs/run-TIME.log` in the cache
+The run's log is `logs/DATE-TIME-run.log` in the cache
 ([reference.md](reference.md#the-run-log)); a failed run names it.
 
 Each boot route is one function in `crates/runtime`, the same that

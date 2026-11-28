@@ -85,8 +85,9 @@ and with `--json` these events, one object per line with an `event` field:
 ## The run log
 
 `install`, `launch`, `run` and the installer and launcher windows keep one
-log per run in the cache's `logs/` (`cli-TIME.log`, `run-TIME.log`,
-`installer-TIME.log`, `launcher-TIME.log`): what orchard did and what the
+log per run in the cache's `logs/`, named by when the run started and what
+ran (`2026-11-28-114812-run.log`; `-cli` for `install` and `launch`,
+`-installer` and `-launcher` for the windows): what orchard did and what the
 tools it ran printed, in the order it happened.
 
 ```text

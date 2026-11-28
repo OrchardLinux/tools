@@ -101,7 +101,7 @@ pub fn start(executor: &Executor, session: &mut Session<Host>, board: &str, keys
     // with gaster's mark.
     if !pwned {
         say("Entering the boot ROM with gaster");
-        session.gaster(None, worker())?;
+        crate::busy::around("gaster", || session.gaster(None, worker()))?;
     }
     if needs_keys {
         say("Unwrapping the firmware keys on the device");
