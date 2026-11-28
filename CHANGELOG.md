@@ -57,6 +57,10 @@ and fails if it is missing or empty.
 - A failed download or unusable file is reported in the same words as the
   installer window.
 - `launch` says when a device has nothing installed.
+- Firmware recipes can take a kext's firmware from an iOS 16 or later
+  kernelcache too, and the new step `section-from-kernelcache@1` takes any
+  one section of a kext whole (`bundle`, `segment`, `section`): the
+  iPhone XR's PMP firmware comes this way.
 
 ### Installer and launcher
 

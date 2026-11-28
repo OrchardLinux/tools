@@ -40,6 +40,13 @@ enum Step {
     Smartio {
         kext: String,
     },
+    /// One whole section of a kext, found by bundle id in either kind of
+    /// kernelcache.
+    KextSection {
+        bundle: String,
+        segment: String,
+        section: String,
+    },
     Vxd,
     AgxG9p,
     /// A9 GPU firmware, the one C0 image the driver knows.
@@ -201,6 +208,17 @@ fn run(
                 kernelcache::smartio(&Kernelcache::new(kernel(kernels, first, &data)?)?, kext)?
                     .to_vec()
             }
+            Step::KextSection {
+                bundle,
+                segment,
+                section,
+            } => kernelcache::kext_section(
+                &Kernelcache::new(kernel(kernels, first, &data)?)?,
+                bundle,
+                segment,
+                section,
+            )?
+            .to_vec(),
             Step::Vxd => {
                 kernelcache::vxd(&Kernelcache::new(kernel(kernels, first, &data)?)?)?.to_vec()
             }
@@ -475,6 +493,14 @@ fn parse(raw: &catalog::Step, recipe: &Recipe) -> Result<Option<Step>> {
             }
             (Step::Smartio { kext }, &["kext"])
         }
+        "section-from-kernelcache@1" => (
+            Step::KextSection {
+                bundle: string("bundle")?,
+                segment: string("segment")?,
+                section: string("section")?,
+            },
+            &["bundle", "section", "segment"],
+        ),
         "vxd-firmware-from-kernelcache@1" => (Step::Vxd, &[]),
         "agx-g9p-firmware-from-kernelcache@1" => (Step::AgxG9p, &[]),
         "agx-g5p-ldr-from-kernelcache@1" => (Step::AgxG5p, &[]),
@@ -612,6 +638,47 @@ mod tests {
         let plan = Plan::new(&recipe).unwrap();
         assert!(plan.unsupported.is_empty());
         assert_eq!(plan.build[0].1, [Step::AgxG9p]);
+    }
+
+    #[test]
+    fn kext_section_step_takes_bundle_segment_and_section() {
+        let params = [
+            ("bundle", "com.example.firmware"),
+            ("segment", "__DATA"),
+            ("section", "fwFirmwareImage"),
+        ];
+        let plan_of = |params: &[(&str, &str)]| {
+            let recipe = recipe(
+                &[("kernelcache", b"kernel")],
+                vec![output(
+                    "lib/firmware/apple/x.bin",
+                    b"fw",
+                    vec![step(
+                        "section-from-kernelcache@1",
+                        Some("kernelcache"),
+                        params,
+                    )],
+                )],
+            );
+            Plan::new(&recipe).map(|plan| plan.build[0].1.clone())
+        };
+        assert_eq!(
+            plan_of(&params).unwrap(),
+            [Step::KextSection {
+                bundle: "com.example.firmware".into(),
+                segment: "__DATA".into(),
+                section: "fwFirmwareImage".into(),
+            }]
+        );
+        // Each parameter is needed, and nothing else is taken.
+        for missing in 0..params.len() {
+            let mut fewer = params.to_vec();
+            fewer.remove(missing);
+            assert_eq!(plan_of(&fewer).unwrap_err().code, Code::Format);
+        }
+        let mut more = params.to_vec();
+        more.push(("size", "16"));
+        assert_eq!(plan_of(&more).unwrap_err().code, Code::Format);
     }
 
     #[test]
