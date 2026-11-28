@@ -42,11 +42,14 @@ pub fn progress(global: &Global, text: &str) {
 pub fn finish(global: &Global, result: Result<Output, Error>) -> ExitCode {
     match result {
         Ok(out) if global.json => {
+            // The result goes to stdout, which the run log does not see.
+            orchard_cache::runlog::line("orchard", &format!("Result: {}", out.json));
             orchard_cache::runlog::release_stderr();
             println!("{}", out.json);
             ExitCode::SUCCESS
         }
         Ok(out) => {
+            orchard_cache::runlog::line("orchard", &format!("Result: {}", String::from_utf8_lossy(&out.human)));
             orchard_cache::runlog::release_stderr();
             let mut stdout = std::io::stdout().lock();
             match stdout.write_all(&out.human).and_then(|_| stdout.flush()) {
