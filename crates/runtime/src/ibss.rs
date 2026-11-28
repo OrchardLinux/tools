@@ -69,6 +69,9 @@ pub fn start(executor: &Executor, session: &mut Session<Host>, board: &str, keys
     if session.check()?.mode != Mode::Dfu {
         return Err(fail("the device is no longer in DFU mode"));
     }
+    // From here to m1n1 the run log has what USB shows whenever it changes:
+    // gaster and the uploads say nothing about where the device went.
+    let _usb = crate::chain::UsbWatch::start();
     // Where gaster cannot enter the boot ROM, a board the device is plugged
     // into has: the route starts from its mark.
     let board_entered = !chip.entry.is_empty();

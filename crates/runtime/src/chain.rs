@@ -222,6 +222,46 @@ fn usb_now() -> String {
     }
 }
 
+/// Writes what USB shows into the run log whenever it changes, from a
+/// thread of its own, until dropped: for a route whose steps do not look
+/// at USB themselves while a tool runs.
+pub(crate) struct UsbWatch {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl UsbWatch {
+    pub(crate) fn start() -> UsbWatch {
+        use std::sync::atomic::Ordering;
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = stop.clone();
+        let thread = std::thread::spawn(move || {
+            let mut on_usb = String::new();
+            loop {
+                let now = usb_now();
+                if now != on_usb {
+                    step(&format!("USB now: {now}"));
+                    on_usb = now;
+                }
+                if flag.load(Ordering::Relaxed) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+        });
+        UsbWatch { stop, thread: Some(thread) }
+    }
+}
+
+impl Drop for UsbWatch {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
 /// orchard's own step, into the run log.
 fn step(text: &str) {
     orchard_cache::runlog::line("orchard", text);

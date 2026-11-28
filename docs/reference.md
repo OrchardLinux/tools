@@ -104,7 +104,8 @@ the tool with its version (`palera1n 2.4`, `checkra1n 0.1337.3`, `gaster`),
 or `shown` for what `install` and `launch` put on the terminal. Among
 orchard's lines are every start and end of a tool, each step of the USB
 port reset, the busy cores of `--busy-cpu`, and what USB shows whenever it
-changes.
+changes while a device is being started. gaster's lines are the stages it
+tries and whether each worked.
 
 A line is in the file the moment it is said, so a run that is cancelled or
 killed leaves its log up to there. The device's ECID is never written: the
