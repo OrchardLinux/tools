@@ -72,7 +72,8 @@ pub struct Term {
     pub tty: bool,
     color: bool,
     live: Option<(Vec<Span>, Instant)>,
-    log: Option<File>,
+    /// What is shown also goes into the run log.
+    log: bool,
     /// Where the log goes (--log, else the cache's logs/cli-<time>.log).
     pub log_path: Option<std::path::PathBuf>,
     raw: Option<libc::termios>,
@@ -97,17 +98,18 @@ impl Term {
             let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
             Some(dir.join(format!("cli-{stamp}.log")))
         });
-        let log_file = log_path.as_deref().and_then(|p| File::create(p).ok());
-        let target = match &log_file {
-            Some(f) => f.try_clone().ok(),
-            None => File::options().write(true).open("/dev/null").ok(),
-        };
-        if let Some(t) = target {
-            use std::os::fd::AsRawFd;
-            unsafe {
-                libc::dup2(t.as_raw_fd(), 2);
+        // The file is the run log: stderr goes into it as orchard's lines,
+        // next to the tools' output. Without one, stderr is dropped.
+        let log_path = log_path.and_then(|p| orchard_cache::runlog::start_at(&p, &super::run_title()).map(|p| p.to_owned()));
+        if !orchard_cache::runlog::capture_stderr(false) {
+            if let Ok(null) = File::options().write(true).open("/dev/null") {
+                use std::os::fd::AsRawFd;
+                unsafe {
+                    libc::dup2(null.as_raw_fd(), 2);
+                }
             }
         }
+        let log_file = log_path.is_some();
         {
             use std::os::fd::AsRawFd;
             TTY_FD.store(out.as_raw_fd(), Ordering::SeqCst);
@@ -154,9 +156,9 @@ impl Term {
         self.clear_live();
         let text = self.paint(&spans);
         let _ = writeln!(self.out, "{text}");
-        if let Some(log) = self.log.as_mut() {
+        if self.log {
             let plain: String = spans.iter().map(|(t, _)| t.as_str()).collect();
-            let _ = writeln!(log, "{plain}");
+            orchard_cache::runlog::line("shown", &plain);
         }
         self.draw_live();
     }
@@ -260,9 +262,9 @@ impl Term {
         ASKING.store(true, Ordering::SeqCst);
         let read = if secret { self.read_secret(&mut line) } else { std::io::stdin().read_line(&mut line).map(|_| ()) };
         ASKING.store(false, Ordering::SeqCst);
-        if let Some(log) = self.log.as_mut() {
+        if self.log {
             let plain: String = prompt.iter().map(|(t, _)| t.as_str()).collect();
-            let _ = writeln!(log, "{plain}{}", if secret { "(hidden)" } else { line.trim() });
+            orchard_cache::runlog::line("shown", &format!("{plain}{}", if secret { "(hidden)" } else { line.trim() }));
         }
         self.live = live;
         read.ok()?;
@@ -325,11 +327,11 @@ impl Term {
         // The hint goes; the list stays as it was left.
         let _ = write!(self.out, "\x1b[1A\r\x1b[2K");
         let _ = self.out.flush();
-        if let Some(log) = self.log.as_mut() {
+        if self.log {
             for (i, row) in rows.iter().enumerate() {
                 let plain: String = row.iter().map(|(t, _)| t.as_str()).collect();
                 let mark = if chosen == Some(i) { ">" } else { " " };
-                let _ = writeln!(log, "  {mark} {plain}");
+                orchard_cache::runlog::line("shown", &format!("  {mark} {plain}"));
             }
         }
         self.live = live;

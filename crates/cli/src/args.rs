@@ -3,7 +3,7 @@ use orchard_device::select::Selector;
 use orchard_usb::Mode;
 
 /// The version, and in a published build the commit it was built from.
-fn version() -> &'static str {
+pub(crate) fn version() -> &'static str {
     match option_env!("ORCHARD_BUILD") {
         Some(commit) => format!("{} ({})", env!("CARGO_PKG_VERSION"), commit.get(..12).unwrap_or(commit)).leak(),
         None => env!("CARGO_PKG_VERSION"),

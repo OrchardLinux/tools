@@ -5,6 +5,7 @@ pub mod error;
 pub mod http;
 pub mod inherit;
 pub mod lock;
+pub mod runlog;
 pub mod source;
 pub mod store;
 
