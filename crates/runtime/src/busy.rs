@@ -1,4 +1,5 @@
-//! `--busy-cpu` (`ORCHARD_BUSY_CPU=1`), Linux: the exploit tool runs on one
+//! `--busy-cpu` (`ORCHARD_BUSY_CPU=1`), Linux: the exploit tool (palera1n,
+//! checkra1n, or gaster entering the boot ROM) runs on one
 //! CPU core of its own while every other core is kept busy, until the tool
 //! ends: through the exploit and the device's return in download mode, to
 //! PongoOS. The cores stay busy past "Checkmate" because the one run in
@@ -83,6 +84,38 @@ pub fn pin(command: &mut Command, core: usize) {
     }
     #[cfg(not(target_os = "linux"))]
     let _ = (command, core);
+}
+
+/// Puts the calling thread on `cores`.
+#[cfg(target_os = "linux")]
+fn stay_on_all(cores: &[usize]) {
+    // SAFETY: only a system call on a set of our own.
+    unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        for core in cores {
+            libc::CPU_SET(*core, &mut set);
+        }
+        libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn stay_on_all(_cores: &[usize]) {}
+
+/// Runs `work`, which starts `tool` from this thread, the `--busy-cpu` way:
+/// this thread, and so the tool it starts, on one core, and every other
+/// core busy until `work` is done. Without the switch, `work` alone.
+pub fn around<T>(tool: &str, work: impl FnOnce() -> T) -> T {
+    let Some((core, others)) = plan() else { return work() };
+    eprintln!("busy CPU: {tool} on core {core}, {} cores kept busy until it ends", others.len());
+    let busy = Busy::start(&others);
+    stay_on(core);
+    let done = work();
+    let mut all = others;
+    all.push(core);
+    stay_on_all(&all);
+    busy.finish();
+    done
 }
 
 /// The cores kept busy while the exploit tool runs.

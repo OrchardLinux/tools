@@ -33,7 +33,8 @@ and fails if it is missing or empty.
   from anywhere.
 - `install`, `launch` and `run` take `--busy-cpu` (Linux, off by default):
   for computers where checkm8 only gets in under load, the exploit runs on
-  one core while the others are kept busy, until PongoOS is up.
+  one core while the others are kept busy, until PongoOS is up or, by the
+  ibss route, gaster is in the boot ROM.
 - On Linux the USB port reset after checkm8 waits 10 s instead of 2.5 s, so
   it no longer comes while the device is returning by itself.
 - `install` works on the 32-bit boards: it reads their LwVM disk, offers the
