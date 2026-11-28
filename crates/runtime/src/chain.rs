@@ -151,7 +151,7 @@ fn run_palera1n(executor: &Executor, session: &mut Session<Host>, args: &[std::f
 fn run_palera1n_from(executor: &Executor, session: &mut Session<Host>, from: Mode, args: &[std::ffi::OsString], seconds: u64) -> Result<()> {
     let (pin, release) = crate::flags::palera1n_pin().ok_or_else(|| fail("palera1n publishes no build for this computer"))?;
     let palera1n = executor.palera1n(pin, release)?;
-    run_tool(executor, session, from, "palera1n", &palera1n, args, seconds)
+    run_tool(executor, session, from, "palera1n", &labelled("palera1n", release), &palera1n, args, seconds)
 }
 
 /// checkra1n's exploit and Pongo with `pongo_image`,
@@ -160,16 +160,83 @@ fn run_checkra1n(executor: &Executor, session: &mut Session<Host>, pongo_image: 
     let (pin, release) = crate::flags::checkra1n_pin().ok_or_else(|| fail("checkra1n publishes no build for this computer"))?;
     let checkra1n = executor.palera1n(pin, release)?;
     let args: Vec<std::ffi::OsString> = ["-E", "-p", "-v", "-n", "-k"].iter().map(Into::into).chain([pongo_image.as_os_str().to_owned()]).collect();
-    run_tool(executor, session, Mode::Dfu, "checkra1n", &checkra1n, &args, seconds)
+    run_tool(executor, session, Mode::Dfu, "checkra1n", &labelled("checkra1n", release), &checkra1n, &args, seconds)
+}
+
+/// The tool with its version, from the release it is pinned to: "palera1n 2.4".
+fn labelled(name: &str, release: &str) -> String {
+    let version = release.trim_end_matches('/').rsplit('/').next().unwrap_or_default().trim_start_matches('v');
+    format!("{name} {version}").trim_end().to_owned()
+}
+
+/// Copies a tool's output into the run log while the tool runs, line by
+/// line as it appears in the tool's own log file.
+struct Follow {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: std::thread::JoinHandle<()>,
+}
+
+impl Follow {
+    fn start(log: std::path::PathBuf, label: String) -> Follow {
+        use std::sync::atomic::Ordering;
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = stop.clone();
+        let thread = std::thread::spawn(move || {
+            let mut copied = 0;
+            loop {
+                // Read the flag first: what the tool wrote before it was set
+                // is still copied.
+                let last = flag.load(Ordering::Relaxed);
+                let bytes = std::fs::read(&log).unwrap_or_default();
+                // Whole lines only, until the end: a line is not cut in two.
+                let upto = match last {
+                    true => bytes.len(),
+                    false => bytes.iter().rposition(|b| *b == b'\n' || *b == b'\r').map_or(copied, |i| i + 1),
+                };
+                if upto > copied {
+                    orchard_cache::runlog::line(&label, &strip_ansi(&String::from_utf8_lossy(&bytes[copied..upto])));
+                    copied = upto;
+                }
+                if last {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        });
+        Follow { stop, thread }
+    }
+
+    fn finish(self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        let _ = self.thread.join();
+    }
+}
+
+/// The Apple devices on USB right now, as the run log names them: each
+/// one's mode and port. Only lists: nothing is opened.
+fn usb_now() -> String {
+    match orchard_usb::list() {
+        Ok(devices) if devices.is_empty() => "no Apple device".to_owned(),
+        Ok(devices) => devices.iter().map(|d| format!("{:?} at {}", d.mode, d.location)).collect::<Vec<_>>().join(", "),
+        Err(e) => format!("not readable ({e})"),
+    }
+}
+
+/// orchard's own step, into the run log.
+fn step(text: &str) {
+    orchard_cache::runlog::line("orchard", text);
 }
 
 /// One run of the tool that takes the device on from `from`, its output in
 /// a log of its own and followed while it runs.
-fn run_tool(executor: &Executor, session: &mut Session<Host>, from: Mode, name: &str, palera1n: &std::path::Path, args: &[std::ffi::OsString], seconds: u64) -> Result<()> {
+fn run_tool(executor: &Executor, session: &mut Session<Host>, from: Mode, name: &str, label: &str, palera1n: &std::path::Path, args: &[std::ffi::OsString], seconds: u64) -> Result<()> {
     if !now_in(session, from)? {
         return Err(fail(if from == Mode::Dfu { "the device is no longer in DFU mode" } else { "the device is not in Pongo" }));
     }
     let location = session.device().location.clone();
+    if let Some(ecid) = &session.identity().ecid {
+        orchard_cache::runlog::hide(ecid);
+    }
     // Resolved while the device is present: its sysfs node goes away after checkm8.
     // checkra1n is not helped by the port reset (orchard's Python CLI runs
     // it without).
@@ -179,6 +246,16 @@ fn run_tool(executor: &Executor, session: &mut Session<Host>, from: Mode, name: 
     let (log, log_path) = executor.log_file(name)?;
     // ORCHARD_PORT_RESET_SECONDS=0: no reset.
     let reset_off = crate::flags::port_reset().is_some_and(|w| w.is_zero());
+    let shown: Vec<String> = args.iter().map(|a| std::path::Path::new(a).file_name().map_or_else(|| a.to_string_lossy().into_owned(), |n| n.to_string_lossy().into_owned())).collect();
+    step(&format!("Starting {label} {} on the device at {location} ({from:?} mode), limit {seconds} s", shown.join(" ")));
+    if from == Mode::Dfu && name == "palera1n" {
+        step(&match (&control, reset_off) {
+            (Some(_), true) => "USB port reset: switched off (ORCHARD_PORT_RESET_SECONDS=0)".to_owned(),
+            (Some(_), false) => format!("USB port reset: ready, {:.1} s after the device drops if it is not back", crate::replug::timing().settle.as_secs_f64()),
+            (None, _) => "USB port reset: not possible here (no writable port control for this location)".to_owned(),
+        });
+    }
+    let follow = Follow::start(log_path.clone(), label.to_owned());
     let replug = control.filter(|_| !reset_off).map(|c| crate::replug::Watcher::start(log_path.clone(), c));
     let progress = Progress::start(log_path.clone(), executor.events(), replug.as_ref().map(|w| w.done.clone()));
     // In a pseudo-terminal (`script`), so palera1n writes each line at once
@@ -200,7 +277,7 @@ fn run_tool(executor: &Executor, session: &mut Session<Host>, from: Mode, name: 
     // --busy-cpu: the exploit tool on a core of its own, the others busy
     // until it is through.
     let busy = (from == Mode::Dfu).then(crate::busy::plan).flatten().map(|(core, others)| {
-        eprintln!("chain: busy CPU: {name} on core {core}, {} cores kept busy until the exploit is through", others.len());
+        eprintln!("chain: busy CPU: {label} on core {core}, {} cores kept busy until the exploit is through", others.len());
         crate::busy::pin(&mut command, core);
         crate::busy::Busy::start(log_path.clone(), &others)
     });
@@ -215,6 +292,7 @@ fn run_tool(executor: &Executor, session: &mut Session<Host>, from: Mode, name: 
         if let Some(busy) = busy {
             busy.finish();
         }
+        follow.finish();
         if let Some(resets) = replug.map(crate::replug::Watcher::finish).filter(|n| *n > 0) {
             eprintln!("chain: USB port reset {resets}x to bring the device back after checkm8");
         }
@@ -229,10 +307,18 @@ fn run_tool(executor: &Executor, session: &mut Session<Host>, from: Mode, name: 
     };
     let deadline = Instant::now() + Duration::from_secs(seconds);
     let mut looked = Instant::now();
+    let mut on_usb = String::new();
     let status = loop {
+        // What USB shows, into the run log whenever it changes.
+        let now = usb_now();
+        if now != on_usb {
+            step(&format!("USB now: {now}"));
+            on_usb = now;
+        }
         match child.try_wait() {
             Ok(Some(status)) => break Ok(status),
             Ok(None) if Instant::now() > deadline => {
+                step(&format!("{label} did not end within {seconds} s: ended by orchard"));
                 let _ = child.kill();
                 let _ = child.wait();
                 break Err(fail(format!("{name} did not finish")));
@@ -243,6 +329,7 @@ fn run_tool(executor: &Executor, session: &mut Session<Host>, from: Mode, name: 
                 looked = Instant::now();
                 match now_in(session, Mode::Normal) {
                     Ok(true) => {
+                        step(&format!("The device runs iOS again (it restarted normally): ending {label}"));
                         let _ = child.kill();
                         let _ = child.wait();
                         break Err(restarted(&log_path));
@@ -250,6 +337,7 @@ fn run_tool(executor: &Executor, session: &mut Session<Host>, from: Mode, name: 
                     // Another device: palera1n mustn't go on with two on USB
                     // (it would take one running iOS to recovery).
                     Err(e) if e.to_string().contains(ANOTHER) => {
+                        step(&format!("Another Apple device is on USB: ending {label}"));
                         let _ = child.kill();
                         let _ = child.wait();
                         break Err(e);
@@ -263,6 +351,10 @@ fn run_tool(executor: &Executor, session: &mut Session<Host>, from: Mode, name: 
     };
     finish(replug);
     progress.finish();
+    match &status {
+        Ok(status) => step(&format!("{label} ended ({status})")),
+        Err(e) => step(&format!("{label}: {e}")),
+    }
     let status = status?;
     if !status.success() {
         return Err(fail(last_error(&log_path).unwrap_or_else(|| format!("{name} failed ({status})"))));
@@ -569,6 +661,31 @@ pub fn start_image(executor: &Executor, session: &mut Session<Host>, board: &str
 #[cfg(test)]
 mod palera1n_errors {
     use super::*;
+
+    #[test]
+    fn a_tool_is_named_with_its_version() {
+        assert_eq!(labelled("palera1n", "https://github.com/palera1n/palera1n/releases/download/v2.4"), "palera1n 2.4");
+        assert_eq!(labelled("checkra1n", "https://assets.checkra.in/downloads/preview/0.1337.3"), "checkra1n 0.1337.3");
+    }
+
+    /// A tool's output reaches the run log while the tool still runs, whole
+    /// lines only and without colors; the rest when it is finished.
+    #[test]
+    fn a_tools_output_is_copied_into_the_run_log_as_it_appears() {
+        let dir = std::env::temp_dir().join(format!("orchard-follow-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let run = orchard_cache::runlog::start_at(&dir.join("run.log"), "test").unwrap().to_owned();
+        let tool = dir.join("tool.log");
+        std::fs::write(&tool, "\x1b[36mCheckmate!\x1b[0m\r\nhalf a li").unwrap();
+        let follow = Follow::start(tool.clone(), "follow-fixture 1".into());
+        std::thread::sleep(Duration::from_millis(300));
+        let said = |text: &str| -> Vec<String> { text.lines().filter_map(|l| l.split_once("] [follow-fixture 1] ").map(|(_, t)| t.to_owned())).collect() };
+        assert_eq!(said(&std::fs::read_to_string(&run).unwrap()), ["Checkmate!"]);
+        std::fs::write(&tool, "\x1b[36mCheckmate!\x1b[0m\r\nhalf a line\nthe end").unwrap();
+        follow.finish();
+        assert_eq!(said(&std::fs::read_to_string(&run).unwrap()), ["Checkmate!", "half a line", "the end"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn the_last_error_line_without_colors() {

@@ -181,10 +181,13 @@ fn stage(tool: &Tool<'_>, dir: &Path) -> Result<Command> {
 }
 
 /// Fixed-size secret reply over a private socket, never a file or a log.
+/// With `diagnostics`, what the tool says on stderr goes into the run log
+/// as it is said: only for a run that handles no secret.
 pub(super) fn reply(
     tool: &Tool<'_>,
     timeout: Duration,
     expected: usize,
+    diagnostics: bool,
     inherit: &dyn Fn(&mut Command) -> Result<()>,
 ) -> Result<Vec<u8>> {
     use std::io::Read;
@@ -193,15 +196,44 @@ pub(super) fn reply(
     let mut command = stage(tool, dir.path())?;
     let (reader, writer) = UnixStream::pair()?;
     reader.set_read_timeout(Some(Duration::from_secs(1)))?;
-    command
-        .stdout(Stdio::from(OwnedFd::from(writer)))
-        .stderr(Stdio::null());
+    command.stdout(Stdio::from(OwnedFd::from(writer)));
+    let said = match diagnostics {
+        true => {
+            let (said, says) = UnixStream::pair()?;
+            command.stderr(Stdio::from(OwnedFd::from(says)));
+            let name = tool.name.to_owned();
+            Some(std::thread::spawn(move || {
+                use std::io::BufRead;
+                let mut reader = std::io::BufReader::new(said);
+                let mut bytes = Vec::new();
+                while reader.read_until(b'\n', &mut bytes).is_ok_and(|n| n > 0) {
+                    orchard_cache::runlog::line(&name, &String::from_utf8_lossy(&bytes));
+                    bytes.clear();
+                }
+            }))
+        }
+        false => {
+            command.stderr(Stdio::null());
+            None
+        }
+    };
     inherit(&mut command)?;
-    run(&mut command, timeout).map_err(|e| {
+    orchard_cache::runlog::line("orchard", &format!("Starting {}, limit {:.0} s", tool.name, timeout.as_secs_f64()));
+    let ran = run(&mut command, timeout);
+    // The tool and what it started are gone: its stderr ends once our own
+    // end of it is closed too.
+    drop(command);
+    if let Some(said) = said {
+        let _ = said.join();
+    }
+    match &ran {
+        Ok(()) => orchard_cache::runlog::line("orchard", &format!("{} ended", tool.name)),
+        Err(e) => orchard_cache::runlog::line("orchard", &format!("{}: {e}", tool.name)),
+    }
+    ran.map_err(|e| {
         e.context(tool.name)
             .hint("device operation may have run; inspect USB before retrying")
     })?;
-    drop(command);
     let mut bytes = Vec::new();
     reader.take(expected as u64 + 1).read_to_end(&mut bytes)?;
     if bytes.len() != expected {
@@ -226,6 +258,28 @@ mod tests {
 
     const LIMIT: Duration = Duration::from_secs(2);
 
+    /// What a tool says on stderr is in the run log when asked for, with
+    /// the tool's name, and is left out otherwise.
+    #[test]
+    fn diagnostics_go_into_the_run_log_only_when_asked_for() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("run.log");
+        let log = orchard_cache::runlog::start_at(&log, "test").unwrap().to_owned();
+        let tool = |name| Tool {
+            name,
+            executable: b"#!/bin/sh\nprintf reply\necho \"said by $0\" >&2\n",
+            args: &[],
+            files: &[],
+            dir: dir.path(),
+        };
+        reply(&tool("quiet-fixture"), LIMIT, 5, false, &|_| Ok(())).unwrap();
+        reply(&tool("loud-fixture"), LIMIT, 5, true, &|_| Ok(())).unwrap();
+        let text = std::fs::read_to_string(log).unwrap();
+        assert!(text.lines().any(|l| l.contains("] [loud-fixture] said by ")), "{text}");
+        assert!(!text.contains("[quiet-fixture]"), "{text}");
+        assert!(text.contains("] [orchard] Starting loud-fixture, limit 2 s"), "{text}");
+    }
+
     #[test]
     fn private_reply_only_accepts_the_expected_byte_count() {
         let dir = tempfile::tempdir().unwrap();
@@ -236,9 +290,9 @@ mod tests {
             files: &[],
             dir: dir.path(),
         };
-        assert_eq!(reply(&tool, LIMIT, 5, &|_| Ok(())).unwrap(), b"reply");
+        assert_eq!(reply(&tool, LIMIT, 5, false, &|_| Ok(())).unwrap(), b"reply");
         for expected in [4, 6] {
-            let error = reply(&tool, LIMIT, expected, &|_| Ok(())).unwrap_err();
+            let error = reply(&tool, LIMIT, expected, false, &|_| Ok(())).unwrap_err();
             assert_eq!(error.code, Code::Format);
             assert_eq!(
                 error.message,

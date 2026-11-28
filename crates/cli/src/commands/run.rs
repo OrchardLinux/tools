@@ -187,6 +187,10 @@ fn nothing_to_run(directory: &Path, explicit: bool) -> Result<()> {
 }
 
 pub fn run(global: &Global, args: &Args) -> Result<Output> {
+    // The run log: what is said here and what the tools print, in one file.
+    if orchard_cache::runlog::start("run", &super::run_title()).is_some() {
+        orchard_cache::runlog::capture_stderr(true);
+    }
     let started = Instant::now();
     let say = |message: &str| output::progress(global, &format!("[{:.3}s] {message}", started.elapsed().as_secs_f64()));
 

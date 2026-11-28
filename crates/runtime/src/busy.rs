@@ -113,6 +113,7 @@ impl Busy {
         threads.push(std::thread::spawn(move || {
             while !flag.load(Ordering::Relaxed) {
                 if crate::replug::after_checkmate(&log).is_some() {
+                    orchard_cache::runlog::line("orchard", "busy CPU: the exploit is through, the busy cores stop");
                     flag.store(true, Ordering::Relaxed);
                 }
                 std::thread::sleep(Duration::from_millis(100));

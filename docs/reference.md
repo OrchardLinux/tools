@@ -82,6 +82,33 @@ and with `--json` these events, one object per line with an `event` field:
 | `done` | `installed_in` and `ssh`, or `started` |
 | `error` | `code`, `message`, `exit`, `log` |
 
+## The run log
+
+`install`, `launch`, `run` and the installer and launcher windows keep one
+log per run in the cache's `logs/` (`cli-TIME.log`, `run-TIME.log`,
+`installer-TIME.log`, `launcher-TIME.log`): what orchard did and what the
+tools it ran printed, in the order it happened.
+
+```text
+[000.0] [orchard] Run log, 2026-11-28 11:48:12, orchard 0.2.0, linux x86_64
+[000.9] [orchard] Starting palera1n 2.4 -p -k pongo.bin on the device at 3-3 (Dfu mode), limit 120 s
+[000.9] [orchard] USB port reset: ready, 10.0 s after the device drops if it is not back
+[011.2] [palera1n 2.4]  - [11/28/26 11:48:24] <Info>: Checkmate!
+[011.3] [orchard] USB now: no Apple device
+[021.4] [orchard] USB port reset 1: … off and on again, 10.0 s after the device dropped
+```
+
+Each line has the seconds since the run started and who said it: `orchard`,
+the tool with its version (`palera1n 2.4`, `checkra1n 0.1337.3`, `gaster`),
+or `shown` for what `install` and `launch` put on the terminal. Among
+orchard's lines are every start and end of a tool, each step of the USB
+port reset, the busy cores of `--busy-cpu`, and what USB shows whenever it
+changes.
+
+A line is in the file the moment it is said, so a run that is cancelled or
+killed leaves its log up to there. The device's ECID is never written: the
+file can be posted as it is. A failed `run` ends with the log's path.
+
 ## Environment
 
 ### Everywhere

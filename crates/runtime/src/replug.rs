@@ -124,6 +124,11 @@ fn note(text: &str) {
     }
 }
 
+/// A step of the port reset, into the run log.
+fn step(text: &str) {
+    orchard_cache::runlog::line("orchard", text);
+}
+
 /// Watches palera1n's log until stopped; resets the port when the device
 /// dropped after checkm8 and did not come back. Returns the number of resets.
 /// The port is always enabled again.
@@ -140,24 +145,35 @@ pub fn watch(log: &Path, control: &Path, stop: &AtomicBool, timing: Timing) -> u
         }
         std::thread::sleep(Duration::from_millis(100));
     };
+    let since = Instant::now();
+    step(&format!("USB port reset: the device dropped after the exploit; waiting {:.1} s for it to come back", settle.as_secs_f64()));
     if await_until(stop, settle, || returned(log)) {
+        step(&format!("USB port reset: not needed, the device came back by itself after {:.1} s", since.elapsed().as_secs_f64()));
         return 0;
     }
     let mut resets = 0;
     for _ in 0..timing.attempts {
-        if stop.load(Ordering::Relaxed) || std::fs::write(control, "1").is_err() {
+        if stop.load(Ordering::Relaxed) {
+            return resets;
+        }
+        if let Err(e) = std::fs::write(control, "1") {
+            step(&format!("USB port reset: the port could not be switched off ({e})"));
             return resets;
         }
         std::thread::sleep(timing.off);
-        if std::fs::write(control, "0").is_err() {
+        if let Err(e) = std::fs::write(control, "0") {
+            step(&format!("USB port reset: the port could not be switched on again ({e})"));
             return resets;
         }
         resets += 1;
         note(&format!("USB port reset by the installer ({resets})"));
+        step(&format!("USB port reset {resets}: {} off and on again, {:.1} s after the device dropped", control.display(), since.elapsed().as_secs_f64()));
         if await_until(stop, timing.wait, || returned(log)) {
+            step(&format!("USB port reset {resets}: the device came back, {:.1} s after it dropped", since.elapsed().as_secs_f64()));
             return resets;
         }
     }
+    step(&format!("USB port reset: gave up after {resets} resets, the device did not come back"));
     resets
 }
 
