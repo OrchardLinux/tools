@@ -11,6 +11,10 @@ and fails if it is missing or empty.
 
 ### Command line
 
+- Firmware recipes can extract the A7's GPU firmware: step
+  `agx-g3-ldr-from-kernelcache@1` takes AGXFirmwareKextG3's META LDR from an
+  iOS 12 kernelcache, found as the A8's is (the A7 boards' recipes in orchard
+  pin it as `apple/gfx-s5l8960x.bin`).
 - The command line is called `orchard` now (it was `orchard2`) and replaces
   orchard's Python tool. Each release carries it for macOS and Linux. Install it with
   `curl -fsSL https://raw.githubusercontent.com/OrchardLinux/tools/main/install.sh | sh`;

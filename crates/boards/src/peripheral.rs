@@ -48,6 +48,7 @@ enum Step {
     /// each from the candidates in the kernel.
     AgxG4pLdr,
     AgxG4pBorder,
+    AgxG3Ldr,
     AopImage {
         coprocessor: String,
     },
@@ -227,6 +228,11 @@ fn run(
                 output,
                 kernelcache::agx_g4p_borders(kernel(kernels, first, &data)?),
                 "A8 GPU border colour table",
+            )?,
+            Step::AgxG3Ldr => pinned(
+                output,
+                kernelcache::agx_g3_ldrs(kernel(kernels, first, &data)?),
+                "A7 GPU firmware",
             )?,
             Step::AopImage { coprocessor } => aop::image(&data, coprocessor)?,
             Step::Touch { profile, kind } => touch(&data, profile, kind)?,
@@ -480,6 +486,7 @@ fn parse(raw: &catalog::Step, recipe: &Recipe) -> Result<Option<Step>> {
         "agx-g5p-ldr-from-kernelcache@1" => (Step::AgxG5p, &[]),
         "agx-g4p-ldr-from-kernelcache@1" => (Step::AgxG4pLdr, &[]),
         "agx-g4p-border-from-kernelcache@1" => (Step::AgxG4pBorder, &[]),
+        "agx-g3-ldr-from-kernelcache@1" => (Step::AgxG3Ldr, &[]),
         "aop-image@1" => (
             Step::AopImage {
                 coprocessor: string("coprocessor")?,
@@ -615,11 +622,12 @@ mod tests {
     }
 
     #[test]
-    fn a8_and_a9_gpu_firmware_steps_are_supported_without_parameters() {
+    fn a7_a8_and_a9_gpu_firmware_steps_are_supported_without_parameters() {
         let steps = [
             ("agx-g5p-ldr-from-kernelcache@1", Step::AgxG5p),
             ("agx-g4p-ldr-from-kernelcache@1", Step::AgxG4pLdr),
             ("agx-g4p-border-from-kernelcache@1", Step::AgxG4pBorder),
+            ("agx-g3-ldr-from-kernelcache@1", Step::AgxG3Ldr),
         ];
         let outputs = steps
             .iter()
