@@ -259,6 +259,14 @@ pub fn agx_g4p_ldrs(kernel: &[u8]) -> Vec<&[u8]> {
     found
 }
 
+/// A7 GPU firmware candidates: AGXFirmwareKextG3 holds a META LDR of the
+/// A8's kind ("METAFW_G3", HAL G3_B0), found the same way as
+/// [`agx_g4p_ldrs`]: the iOS 12.5.8 kernelcaches of the A7 boards hold
+/// exactly one LDR whose records walk cleanly; the recipe's hash pins it.
+pub fn agx_g3_ldrs(kernel: &[u8]) -> Vec<&[u8]> {
+    agx_g4p_ldrs(kernel)
+}
+
 /// The A8 GPU's border colour table candidates: 0x800 bytes of AGXG4P's
 /// data that open with 0x440 zero bytes and then the word 0x02040000.
 pub fn agx_g4p_borders(kernel: &[u8]) -> Vec<&[u8]> {
@@ -634,6 +642,15 @@ mod tests {
         for broken in [unknown, looped, outside, one[..one.len() - 1].to_vec()] {
             assert!(agx_g4p_ldrs(&broken).is_empty());
         }
+    }
+
+    #[test]
+    fn the_a7_ldr_is_found_as_the_a8_ldr_is() {
+        let one = ldr(b"g3 firmware");
+        let mut kernel = vec![0xff; 5];
+        kernel.extend(&one);
+        assert_eq!(agx_g3_ldrs(&kernel), vec![&one[..]]);
+        assert_eq!(agx_g3_ldrs(&kernel), agx_g4p_ldrs(&kernel));
     }
 
     #[test]
