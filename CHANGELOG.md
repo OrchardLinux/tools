@@ -73,7 +73,8 @@ and fails if it is missing or empty.
   line with the seconds since the start and who said it. It shows every
   step of the USB port reset, the busy cores, what USB showed and why a tool
   was ended. A cancelled run keeps its log up to there, the ECID is left
-  out, and a failed `run` ends with the log's path.
+  out, a failed `run` ends with the log's path, and a run that worked
+  has its result as the log's last line.
 
 ### Installer and launcher
 

@@ -108,7 +108,8 @@ changes.
 
 A line is in the file the moment it is said, so a run that is cancelled or
 killed leaves its log up to there. The device's ECID is never written: the
-file can be posted as it is. A failed `run` ends with the log's path.
+file can be posted as it is. A failed `run` ends with the log's path; a
+run that worked has its result as the log's last line.
 
 ## Environment
 
