@@ -239,9 +239,16 @@ mod tests {
         let (log, control) = (d.join("log"), d.join("disable"));
         std::fs::write(&log, "Checkmate!\nDFU mode device disconnected\n").unwrap();
         std::fs::write(&control, "0").unwrap();
+        // The port stays off long enough to be seen off; the device returns
+        // only once it has been, however slowly the watcher got there.
+        let timing = Timing { off: Duration::from_millis(300), ..FAST };
         let (l, c) = (log.clone(), control.clone());
-        let t = std::thread::spawn(move || watch(&l, &c, &AtomicBool::new(false), FAST));
-        std::thread::sleep(Duration::from_millis(350));
+        let t = std::thread::spawn(move || watch(&l, &c, &AtomicBool::new(false), timing));
+        let end = Instant::now() + Duration::from_secs(10);
+        while std::fs::read_to_string(&control).unwrap() != "1" {
+            assert!(Instant::now() < end, "the port was never switched off");
+            std::thread::sleep(Duration::from_millis(5));
+        }
         std::fs::write(&log, "Checkmate!\nDFU mode device disconnected\nDownload mode device found\n").unwrap();
         assert_eq!(t.join().unwrap(), 1);
         assert_eq!(std::fs::read_to_string(&control).unwrap(), "0", "the port is enabled again");
